@@ -71,8 +71,10 @@ class FakeWorld:
         self.blocks = {"blk-1": Block(id="blk-1", vehicle_id="veh-1", operator_id="OP-1", start=T0 + timedelta(hours=1),
                                       end=T0 + timedelta(hours=1 + BLOCK_HOURS), needs=needs)}
         quals = ["bus"] if t.operators_qualified else ["van"]
+        hours = {"OP-1": t.operator_hours_today if t.assigned_operator_hours_today is None
+                 else t.assigned_operator_hours_today, "OP-2": t.operator_hours_today}
         self.operators = {o: Operator(id=o, qualifications=quals, lift_trained=t.operators_lift_trained,
-                                      hours_today=t.operator_hours_today, on_extra_board=(o == "OP-2"))
+                                      hours_today=hours[o], on_extra_board=(o == "OP-2"))
                           for o in ("OP-1", "OP-2")}
         self.work_orders: dict[str, WorkOrder] = {}
         if t.human_wo_exists:
@@ -139,7 +141,9 @@ class FakeWorld:
         ops = [o for o in self.operators.values()
                if o.hours_today + BLOCK_HOURS <= self.policy.limits.max_operator_hours_day
                and (block.needs.type in o.qualifications) and (o.lift_trained or not block.needs.lift)]
-        if not viol and not ops:
+        current_ok = block.operator_id in {o.id for o in ops}   # keep the assigned operator if allowed
+        swap = [o for o in ops if o.id != block.operator_id]
+        if not viol and not current_ok and not swap:
             if all(o.hours_today + BLOCK_HOURS > self.policy.limits.max_operator_hours_day for o in self.operators.values()):
                 viol.append("operator_hours")
             else:
@@ -153,12 +157,14 @@ class FakeWorld:
             "create_work_order": {"vehicle_id": run.vehicle_id, "description": "fault"},
             "set_vehicle_unavailable": {"vehicle_id": run.vehicle_id},
             "reassign_block": {"block_id": block.id, "to_vehicle_id": fits[0].id, "from_vehicle_id": run.vehicle_id},
-            "assign_operator": {"block_id": block.id, "operator_id": ops[0].id, "from_operator_id": block.operator_id},
+            "assign_operator": {"block_id": block.id, "operator_id": swap[0].id if swap else None,
+                                "from_operator_id": block.operator_id},
             "publish_rider_alert": {"block_id": block.id, "message": "Bus change"},
         }
         steps = [Step(action=a, params=params[a], idempotency_key=ids.step_key(run.run_id, a, pv),  # type: ignore[arg-type]
                       compensation=_step_comp(a))  # type: ignore[arg-type]
-                 for a in SAGA_ORDER if not (a == "create_work_order" and human_wo)]
+                 for a in SAGA_ORDER if not (a == "create_work_order" and human_wo)
+                 and not (a == "assign_operator" and current_ok)]
         run.plan = Plan(decision="pull_now", steps=steps, reasoning="fake")
         run.status = "AWAITING_APPROVAL"
         self.proposed_at[run.run_id] = self.now

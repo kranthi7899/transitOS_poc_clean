@@ -21,10 +21,22 @@ def go(make_world, scenario_id):
 
 
 def test_01_happy_path_five_steps_in_saga_order_then_return(make_world):
-    obs = go(make_world, "severe_fault_with_spare")
+    # Integration fix (justified in coordination/handoffs/INTEGRATION.md): the original derivation ran on
+    # severe_fault_with_spare and assumed every plan reassigns the operator. The workflow keeps the
+    # block's operator unless that operator fails a hard limit (Track D A13), so the five-step saga is
+    # exercised where the assigned operator would exceed max hours; the baseline is checked below.
+    obs = go(make_world, "operator_swap_needed")
     fw = [w.action for w in obs.forward_writes() if w.ok and w.action != RETURN_ACTION]
     assert fw == SAGA_ORDER
     assert fw[-1] == "publish_rider_alert"
+    assert obs.forward_writes()[-1].action == RETURN_ACTION
+    assert obs.runs[0].status == "DONE"
+
+
+def test_01b_baseline_keeps_operator_saga_order_then_return(make_world):
+    obs = go(make_world, "severe_fault_with_spare")
+    fw = [w.action for w in obs.forward_writes() if w.ok and w.action != RETURN_ACTION]
+    assert fw == [a for a in SAGA_ORDER if a != "assign_operator"]
     assert obs.forward_writes()[-1].action == RETURN_ACTION
     assert obs.runs[0].status == "DONE"
 

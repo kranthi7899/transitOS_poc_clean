@@ -8,6 +8,8 @@ Baseline world (before tweaks), all in agency "agency-a":
   1 wheelchair position, lift.  Two ready spares veh-2, veh-3 (full capability).  OP-1 (assigned) and
   OP-2 (extra board) qualified and lift-trained, hours_today=4.  Block length 4h.  min_spares=1,
   max_operator_hours_day=10 => using one of two spares is allowed, using the last one is not.
+  The block keeps its operator unless that operator fails a hard limit (then assign_operator is a plan
+  step); so the baseline plan has four writes and `operator_swap_needed` has all five.
 """
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ class Tweaks:
     block_wheelchair_positions: int = 1
     block_needs_lift: bool = True
     operator_hours_today: float = 4.0     # applied to every operator
+    assigned_operator_hours_today: float | None = None  # override for the block's assigned operator (OP-1)
     operators_qualified: bool = True      # False => no operator holds the block's required qualification
     operators_lift_trained: bool = True
     human_wo_exists: bool = False         # an open human-opened WO already exists for the vehicle
@@ -113,6 +116,8 @@ def _s(id_: str, title: str, expected: Outcome, script, events=None, **kw) -> Sc
 SCENARIOS: tuple[Scenario, ...] = (
     _s("severe_fault_with_spare", "Severe fault, spare available, full happy path",
        Outcome.PLAN_VALID, _FULL, expect_wo_creates=1),
+    _s("operator_swap_needed", "Assigned operator would exceed max hours -> all five saga steps incl. operator swap",
+       Outcome.PLAN_VALID, _FULL, tweaks=Tweaks(assigned_operator_hours_today=7.0), expect_wo_creates=1),
     _s("pm_overdue_urgent", "PM 1200 mi overdue (urgent) -> plan",
        Outcome.PLAN_VALID, _FULL, events=[pm_event(1200)], expect_wo_creates=1),
     _s("pm_overdue_minor", "PM 200 mi overdue (not urgent) -> monitor, no writes",

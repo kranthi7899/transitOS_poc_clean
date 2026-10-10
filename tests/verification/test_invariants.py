@@ -10,7 +10,8 @@ from transitos.verification.scenarios import BY_ID
 
 @pytest.fixture
 def good():
-    return drive(FakeWorld(), BY_ID["severe_fault_with_spare"])
+    # the full five-step saga (+ return); the baseline scenario keeps the block's operator (4 steps)
+    return drive(FakeWorld(), BY_ID["operator_swap_needed"])
 
 
 def _write(obs, action):
