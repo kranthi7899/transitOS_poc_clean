@@ -82,12 +82,13 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     def unavailable(vid: str, body: dict = Body(default={}), a: str = tenant):
         ctx.write_gate()
         v = vehicle(a, vid)
-        return set_status(a, v, "out_of_service", "api", {"unavailable": {"start": body.get("start"), "end": body.get("end")}})
+        return set_status(a, v, "out_of_service", body.get("changed_by") or "api",
+                          {"unavailable": {"start": body.get("start"), "end": body.get("end")}})
 
     @app.post("/vehicles/{vid}/available")
-    def available(vid: str, a: str = tenant):
+    def available(vid: str, body: dict = Body(default={}), a: str = tenant):
         ctx.write_gate()
-        return set_status(a, vehicle(a, vid), "ready", "api")
+        return set_status(a, vehicle(a, vid), "ready", (body or {}).get("changed_by") or "api")
 
     @app.post("/blocks/{bid}/reassign")
     def reassign(bid: str, body: dict = Body(...), a: str = tenant):

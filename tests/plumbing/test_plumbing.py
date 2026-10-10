@@ -136,7 +136,7 @@ def test_webhook_hmac_reject_and_duplicate(db):
 def test_webhook_http_route_and_dvir(db):
     rx = WebhookReceiver(db, AG)
     c = client(rx.app())
-    body = json.dumps({"eventId": "d1", "vehicle": {"id": "T-77"}, "defect": {"text": "brakes", "reportedByRole": "operator"},
+    body = json.dumps({"eventId": "d1", "vehicle": {"id": "T-77"}, "dvir": {"defect_text": "brakes", "reported_by_role": "operator"},
                        "time": "2026-01-01T00:00:00Z"}).encode()
     assert c.post("/webhook", content=body, headers={"X-Signature": "sha256=x"}).status_code == 401
     assert c.post("/webhook", content=body, headers={"X-Signature": sign("dev-secret", body)}).status_code == 200

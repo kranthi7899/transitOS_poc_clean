@@ -32,14 +32,14 @@ def ingest_payload(conn: sqlite3.Connection, agency: str, p: dict[str, Any]) -> 
     if conn.execute("SELECT 1 FROM telematics_seen WHERE agency=? AND vendor_event_id=?", (agency, vendor_id)).fetchone():
         return False
     veh = p["vehicle"]["id"]
-    if "defect" in p:  # DVIR (assumed A13: DVIRs arrive on the same webhook/feed with a `defect` object)
-        d = p["defect"]
-        text = d.get("text", "")
+    if "dvir" in p:  # DVIR on the same webhook/feed: {eventId, vehicle, dvir:{defect_text, reported_by_role}, time}
+        d = p["dvir"]
+        text = d.get("defect_text", "")
         ev = make_event(
             agency, "telematics",
             ids.defect_id(agency, veh, p["time"], hashlib.sha1(text.encode()).hexdigest()[:12]),
             "DefectReported", p["time"],
-            {"native_vehicle_id": veh, "defect_text": text, "reported_by_role": d.get("reportedByRole", "operator")})
+            {"native_vehicle_id": veh, "defect_text": text, "reported_by_role": d.get("reported_by_role", "operator")})
     else:
         f = p["fault"]
         lamps = f.get("lamps", {})

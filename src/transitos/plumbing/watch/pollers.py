@@ -45,7 +45,9 @@ class MaintenancePoller(Poller):
                     self.agency, self.product, ids.wo_open_id(self.agency, wo_no), "WorkOrderOpened",
                     wo.get("opened_at") or wo["updated_at"],
                     {"native_asset_id": asset, "wo_no": wo_no, "opened_by": wo.get("opened_by", "human")}), key))
-            if wo["status"] == "closed" and prev != "closed":
+            # A cancelled WO (our own saga compensation; mock: status=closed + cancelled=true, A's A12)
+            # is not a repair: no WorkOrderClosed, so no run is resumed for return-to-service.
+            if wo["status"] == "closed" and prev != "closed" and not wo.get("cancelled"):
                 out.append((make_event(
                     self.agency, self.product, ids.wo_close_id(self.agency, wo_no), "WorkOrderClosed",
                     wo.get("closed_at") or wo["updated_at"],
