@@ -1,0 +1,19 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "native_operator_id": {
+      "title": "Native Operator Id",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "native_operator_id",
+    "status"
+  ],
+  "title": "OperatorAvailabilityChangedData",
+  "type": "object"
+}

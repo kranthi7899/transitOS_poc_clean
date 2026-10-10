@@ -1,0 +1,66 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "qualifications": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Qualifications",
+      "type": "array"
+    },
+    "lift_trained": {
+      "default": false,
+      "title": "Lift Trained",
+      "type": "boolean"
+    },
+    "hours_today": {
+      "default": 0.0,
+      "title": "Hours Today",
+      "type": "number"
+    },
+    "hours_week": {
+      "default": 0.0,
+      "title": "Hours Week",
+      "type": "number"
+    },
+    "available_from": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Available From"
+    },
+    "available_to": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Available To"
+    },
+    "on_extra_board": {
+      "default": false,
+      "title": "On Extra Board",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "Operator",
+  "type": "object"
+}

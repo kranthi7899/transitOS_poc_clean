@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "Needs": {
+      "properties": {
+        "seats": {
+          "default": 0,
+          "title": "Seats",
+          "type": "integer"
+        },
+        "wheelchair_positions": {
+          "default": 0,
+          "title": "Wheelchair Positions",
+          "type": "integer"
+        },
+        "lift": {
+          "default": false,
+          "title": "Lift",
+          "type": "boolean"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "title": "Needs",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "vehicle_id": {
+      "title": "Vehicle Id",
+      "type": "string"
+    },
+    "operator_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Operator Id"
+    },
+    "start": {
+      "format": "date-time",
+      "title": "Start",
+      "type": "string"
+    },
+    "end": {
+      "format": "date-time",
+      "title": "End",
+      "type": "string"
+    },
+    "start_depot": {
+      "default": "",
+      "title": "Start Depot",
+      "type": "string"
+    },
+    "needs": {
+      "$ref": "#/$defs/Needs"
+    }
+  },
+  "required": [
+    "id",
+    "vehicle_id",
+    "start",
+    "end"
+  ],
+  "title": "Block",
+  "type": "object"
+}

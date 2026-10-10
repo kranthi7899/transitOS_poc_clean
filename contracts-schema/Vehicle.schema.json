@@ -1,0 +1,66 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "agency": {
+      "title": "Agency",
+      "type": "string"
+    },
+    "seats": {
+      "title": "Seats",
+      "type": "integer"
+    },
+    "wheelchair_positions": {
+      "default": 0,
+      "title": "Wheelchair Positions",
+      "type": "integer"
+    },
+    "lift_ok": {
+      "default": false,
+      "title": "Lift Ok",
+      "type": "boolean"
+    },
+    "type": {
+      "default": "bus",
+      "title": "Type",
+      "type": "string"
+    },
+    "status": {
+      "default": "ready",
+      "enum": [
+        "ready",
+        "in_service",
+        "out_of_service",
+        "reserved"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "depot": {
+      "default": "",
+      "title": "Depot",
+      "type": "string"
+    },
+    "ev_soc": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ev Soc"
+    }
+  },
+  "required": [
+    "id",
+    "agency",
+    "seats"
+  ],
+  "title": "Vehicle",
+  "type": "object"
+}

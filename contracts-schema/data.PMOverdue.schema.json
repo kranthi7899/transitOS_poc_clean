@@ -1,0 +1,29 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "native_asset_id": {
+      "title": "Native Asset Id",
+      "type": "string"
+    },
+    "service_code": {
+      "title": "Service Code",
+      "type": "string"
+    },
+    "due_mi": {
+      "title": "Due Mi",
+      "type": "integer"
+    },
+    "meter_mi": {
+      "title": "Meter Mi",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "native_asset_id",
+    "service_code",
+    "due_mi",
+    "meter_mi"
+  ],
+  "title": "PMOverdueData",
+  "type": "object"
+}

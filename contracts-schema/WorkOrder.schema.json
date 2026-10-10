@@ -1,0 +1,73 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "native_no": {
+      "title": "Native No",
+      "type": "string"
+    },
+    "asset_vehicle_id": {
+      "title": "Asset Vehicle Id",
+      "type": "string"
+    },
+    "status": {
+      "default": "open",
+      "enum": [
+        "open",
+        "in_progress",
+        "closed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "opened_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Opened At"
+    },
+    "closed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Closed At"
+    },
+    "source": {
+      "default": "system",
+      "enum": [
+        "system",
+        "human"
+      ],
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "native_no",
+    "asset_vehicle_id"
+  ],
+  "title": "WorkOrder",
+  "type": "object"
+}

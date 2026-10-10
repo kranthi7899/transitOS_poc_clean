@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "Lamps": {
+      "properties": {
+        "stop": {
+          "default": false,
+          "title": "Stop",
+          "type": "boolean"
+        },
+        "warn": {
+          "default": false,
+          "title": "Warn",
+          "type": "boolean"
+        },
+        "protect": {
+          "default": false,
+          "title": "Protect",
+          "type": "boolean"
+        }
+      },
+      "title": "Lamps",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "native_vehicle_id": {
+      "title": "Native Vehicle Id",
+      "type": "string"
+    },
+    "spn": {
+      "title": "Spn",
+      "type": "integer"
+    },
+    "fmi": {
+      "title": "Fmi",
+      "type": "integer"
+    },
+    "lamps": {
+      "$ref": "#/$defs/Lamps"
+    },
+    "occurrence_count": {
+      "default": 1,
+      "title": "Occurrence Count",
+      "type": "integer"
+    },
+    "source": {
+      "default": "sensor",
+      "enum": [
+        "sensor",
+        "human"
+      ],
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "native_vehicle_id",
+    "spn",
+    "fmi"
+  ],
+  "title": "VehicleFaultDetectedData",
+  "type": "object"
+}

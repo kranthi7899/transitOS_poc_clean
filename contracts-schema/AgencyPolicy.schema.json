@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "Limits": {
+      "properties": {
+        "min_spares": {
+          "default": 1,
+          "title": "Min Spares",
+          "type": "integer"
+        },
+        "max_operator_hours_day": {
+          "default": 10.0,
+          "title": "Max Operator Hours Day",
+          "type": "number"
+        },
+        "approval_timeout_min": {
+          "default": 15,
+          "title": "Approval Timeout Min",
+          "type": "integer"
+        },
+        "pm_urgent_overdue_mi": {
+          "default": 1000,
+          "title": "Pm Urgent Overdue Mi",
+          "type": "integer"
+        }
+      },
+      "title": "Limits",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "agency": {
+      "title": "Agency",
+      "type": "string"
+    },
+    "kill_switch": {
+      "default": false,
+      "title": "Kill Switch",
+      "type": "boolean"
+    },
+    "autonomy": {
+      "additionalProperties": {
+        "enum": [
+          "recommend",
+          "approve",
+          "act"
+        ],
+        "type": "string"
+      },
+      "title": "Autonomy",
+      "type": "object"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits"
+    }
+  },
+  "required": [
+    "agency"
+  ],
+  "title": "AgencyPolicy",
+  "type": "object"
+}

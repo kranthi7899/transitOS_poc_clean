@@ -1,0 +1,69 @@
+{
+  "description": "Audit record (design \u00a72.8).",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "plan_version": {
+      "title": "Plan Version",
+      "type": "integer"
+    },
+    "trigger_event_id": {
+      "title": "Trigger Event Id",
+      "type": "string"
+    },
+    "facts_digest": {
+      "additionalProperties": true,
+      "title": "Facts Digest",
+      "type": "object"
+    },
+    "model": {
+      "default": "stub",
+      "title": "Model",
+      "type": "string"
+    },
+    "prompt_version": {
+      "default": "v0",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "recommendation": {
+      "additionalProperties": true,
+      "title": "Recommendation",
+      "type": "object"
+    },
+    "human_action": {
+      "additionalProperties": true,
+      "title": "Human Action",
+      "type": "object"
+    },
+    "actions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Actions",
+      "type": "array"
+    },
+    "outcome": {
+      "default": "pending",
+      "enum": [
+        "done",
+        "compensated",
+        "escalated",
+        "rejected",
+        "pending"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "plan_version",
+    "trigger_event_id"
+  ],
+  "title": "DecisionRecord",
+  "type": "object"
+}

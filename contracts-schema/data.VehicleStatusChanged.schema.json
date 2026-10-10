@@ -1,0 +1,30 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "native_vehicle_id": {
+      "title": "Native Vehicle Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "in_service",
+        "out_of_service",
+        "reserved"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "changed_by": {
+      "default": "",
+      "title": "Changed By",
+      "type": "string"
+    }
+  },
+  "required": [
+    "native_vehicle_id",
+    "status"
+  ],
+  "title": "VehicleStatusChangedData",
+  "type": "object"
+}

@@ -1,0 +1,265 @@
+{
+  "$defs": {
+    "Plan": {
+      "properties": {
+        "decision": {
+          "enum": [
+            "pull_now",
+            "pull_at_block_end",
+            "monitor"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "pull_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pull At"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "reasoning": {
+          "default": "",
+          "title": "Reasoning",
+          "type": "string"
+        },
+        "alternatives": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "fallback_used": {
+          "default": false,
+          "title": "Fallback Used",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "title": "Plan",
+      "type": "object"
+    },
+    "Step": {
+      "properties": {
+        "action": {
+          "enum": [
+            "create_work_order",
+            "set_vehicle_unavailable",
+            "reassign_block",
+            "assign_operator",
+            "publish_rider_alert",
+            "set_vehicle_available"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "idempotency_key": {
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "compensation": {
+          "anyOf": [
+            {
+              "enum": [
+                "create_work_order",
+                "set_vehicle_unavailable",
+                "reassign_block",
+                "assign_operator",
+                "publish_rider_alert",
+                "set_vehicle_available"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compensation"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "done",
+            "failed",
+            "compensated"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "idempotency_key"
+      ],
+      "title": "Step",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "agency": {
+      "title": "Agency",
+      "type": "string"
+    },
+    "vehicle_id": {
+      "title": "Vehicle Id",
+      "type": "string"
+    },
+    "trigger_event": {
+      "additionalProperties": true,
+      "title": "Trigger Event",
+      "type": "object"
+    },
+    "status": {
+      "default": "STARTED",
+      "title": "Status",
+      "type": "string"
+    },
+    "facts": {
+      "additionalProperties": true,
+      "title": "Facts",
+      "type": "object"
+    },
+    "violations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Violations",
+      "type": "array"
+    },
+    "plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Plan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "plan_version": {
+      "default": 1,
+      "title": "Plan Version",
+      "type": "integer"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "enum": [
+            "approve",
+            "reject",
+            "edit",
+            "expired"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision"
+    },
+    "decided_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decided By"
+    },
+    "decided_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decided At"
+    },
+    "steps_done": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "title": "Steps Done",
+      "type": "array"
+    },
+    "compensations_done": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "title": "Compensations Done",
+      "type": "array"
+    },
+    "wo_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Wo Id"
+    },
+    "audit_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Audit Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "agency",
+    "vehicle_id",
+    "trigger_event"
+  ],
+  "title": "RunState",
+  "type": "object"
+}

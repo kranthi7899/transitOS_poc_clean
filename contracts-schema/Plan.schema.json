@@ -1,0 +1,127 @@
+{
+  "$defs": {
+    "Step": {
+      "properties": {
+        "action": {
+          "enum": [
+            "create_work_order",
+            "set_vehicle_unavailable",
+            "reassign_block",
+            "assign_operator",
+            "publish_rider_alert",
+            "set_vehicle_available"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "idempotency_key": {
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "compensation": {
+          "anyOf": [
+            {
+              "enum": [
+                "create_work_order",
+                "set_vehicle_unavailable",
+                "reassign_block",
+                "assign_operator",
+                "publish_rider_alert",
+                "set_vehicle_available"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compensation"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "done",
+            "failed",
+            "compensated"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "idempotency_key"
+      ],
+      "title": "Step",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "decision": {
+      "enum": [
+        "pull_now",
+        "pull_at_block_end",
+        "monitor"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "pull_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pull At"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "reasoning": {
+      "default": "",
+      "title": "Reasoning",
+      "type": "string"
+    },
+    "alternatives": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "fallback_used": {
+      "default": false,
+      "title": "Fallback Used",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "decision"
+  ],
+  "title": "Plan",
+  "type": "object"
+}

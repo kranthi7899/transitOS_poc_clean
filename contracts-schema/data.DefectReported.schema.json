@@ -1,0 +1,24 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "native_vehicle_id": {
+      "title": "Native Vehicle Id",
+      "type": "string"
+    },
+    "defect_text": {
+      "title": "Defect Text",
+      "type": "string"
+    },
+    "reported_by_role": {
+      "default": "operator",
+      "title": "Reported By Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "native_vehicle_id",
+    "defect_text"
+  ],
+  "title": "DefectReportedData",
+  "type": "object"
+}

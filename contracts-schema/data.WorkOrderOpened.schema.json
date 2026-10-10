@@ -1,0 +1,28 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "native_asset_id": {
+      "title": "Native Asset Id",
+      "type": "string"
+    },
+    "wo_no": {
+      "title": "Wo No",
+      "type": "string"
+    },
+    "opened_by": {
+      "default": "human",
+      "enum": [
+        "system",
+        "human"
+      ],
+      "title": "Opened By",
+      "type": "string"
+    }
+  },
+  "required": [
+    "native_asset_id",
+    "wo_no"
+  ],
+  "title": "WorkOrderOpenedData",
+  "type": "object"
+}

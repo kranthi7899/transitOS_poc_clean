@@ -1,0 +1,68 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "specversion": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Specversion",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "source": {
+      "description": "adapter/<product>/<agency_id>",
+      "title": "Source",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "VehicleFaultDetected",
+        "PMOverdue",
+        "DefectReported",
+        "WorkOrderOpened",
+        "VehicleStatusChanged",
+        "WorkOrderClosed",
+        "OperatorAvailabilityChanged"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "title": "Time",
+      "type": "string"
+    },
+    "datacontenttype": {
+      "const": "application/json",
+      "default": "application/json",
+      "title": "Datacontenttype",
+      "type": "string"
+    },
+    "agencyid": {
+      "title": "Agencyid",
+      "type": "string"
+    },
+    "schemaversion": {
+      "default": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "data": {
+      "additionalProperties": true,
+      "title": "Data",
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "source",
+    "type",
+    "time",
+    "agencyid",
+    "data"
+  ],
+  "title": "CloudEvent",
+  "type": "object"
+}

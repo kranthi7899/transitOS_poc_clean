@@ -1,0 +1,19 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "native_asset_id": {
+      "title": "Native Asset Id",
+      "type": "string"
+    },
+    "wo_no": {
+      "title": "Wo No",
+      "type": "string"
+    }
+  },
+  "required": [
+    "native_asset_id",
+    "wo_no"
+  ],
+  "title": "WorkOrderClosedData",
+  "type": "object"
+}
