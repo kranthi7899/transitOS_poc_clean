@@ -1,0 +1,22 @@
+# Per-agency tool registry: tool -> adapter id. Swap a product by changing one adapter id.
+agency: agency-042
+products:
+  maintenance: {base_url: "http://localhost:8101"}
+  scheduling:  {base_url: "http://localhost:8102"}
+  workforce:   {base_url: "http://localhost:8103"}
+  alerts:      {base_url: "http://localhost:8102"}   # rider alerts assumed served by the scheduling mock host
+tools:
+  get_vehicle: scheduling_mock_v1
+  get_vehicle_history: scheduling_mock_v1
+  list_affected_blocks: scheduling_mock_v1
+  list_ready_vehicles: scheduling_mock_v1
+  list_eligible_operators: workforce_mock_v1
+  find_open_work_order: maintenance_mock_v1
+  get_work_order: maintenance_mock_v1
+  create_work_order: maintenance_mock_v1
+  cancel_work_order: maintenance_mock_v1
+  set_vehicle_unavailable: scheduling_mock_v1
+  set_vehicle_available: scheduling_mock_v1
+  reassign_block: scheduling_mock_v1
+  assign_operator: workforce_mock_v1
+  publish_rider_alert: alerts_mock_v1
