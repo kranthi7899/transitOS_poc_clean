@@ -1,4 +1,4 @@
-.PHONY: setup test lint verify schemas demo report
+.PHONY: setup test lint verify schemas demo report kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka
 setup:
 	uv sync
 test:
@@ -13,3 +13,27 @@ report:
 demo:
 	uv run python -m transitos.integration.demo
 verify: schemas lint test report
+
+# ---- Kafka profile (project-local Apache Kafka under .local/, see scripts/kafka.sh) ----
+KAFKA ?= 127.0.0.1:9092
+KAFKA_ENV = TRANSITOS_BUS=kafka TRANSITOS_KAFKA=$(KAFKA)
+kafka-up:
+	scripts/kafka.sh up
+kafka-down:
+	scripts/kafka.sh down
+kafka-status:
+	scripts/kafka.sh status
+kafka-topics:
+	scripts/kafka.sh topics
+kafka-purge:
+	scripts/kafka.sh purge
+# Kafka-marked tests only (bus contract suite on KafkaBus + Kafka-specific tests incl. broker restart)
+kafka-test:
+	TRANSITOS_KAFKA=$(KAFKA) TRANSITOS_KAFKA_ADMIN=1 uv run --extra kafka pytest -q -m "kafka or kafka_admin"
+# The whole system on Kafka: every System/World uses KafkaBus; full test suite + Track F report
+verify-kafka:
+	scripts/kafka.sh status
+	uv run --extra kafka ruff check src tests
+	$(KAFKA_ENV) TRANSITOS_KAFKA_ADMIN=1 uv run --extra kafka pytest -q
+	$(KAFKA_ENV) uv run --extra kafka python -m transitos.verification.report --world transitos.integration.world:make_world --out verification-report-kafka.json
+	scripts/kafka.sh purge

@@ -86,21 +86,3 @@ class SqliteBus:
         ).fetchone()
         return CloudEvent.model_validate_json(r["payload"]) if r else None
 
-
-class KafkaBus:
-    """Full-profile bus (Kafka). Same interface as SqliteBus; not implemented in the POC."""
-
-    def __init__(self, *_, **__):
-        raise NotImplementedError("KafkaBus is a stub: the Kafka compose profile is out of scope for the local POC")
-
-    def send(self, topic: str, key: str, event: CloudEvent) -> None:
-        raise NotImplementedError
-
-    def flush(self) -> None:
-        raise NotImplementedError
-
-    def poll(self, topic: str, group: str, limit: int = 100) -> Iterator[tuple[int, CloudEvent]]:
-        raise NotImplementedError
-
-    def commit(self, topic: str, group: str, offset: int) -> None:
-        raise NotImplementedError

@@ -20,6 +20,7 @@ from . import outbox
 from .bus_sqlite import SqliteBus
 from .crosswalk import SqliteCrosswalk
 from .db import Db
+from .kafka_bus import KafkaBus
 from .relay import Relay
 
 GROUP = "crosswalk"
@@ -43,7 +44,7 @@ NATIVE_FIELD = {
 
 
 class CrosswalkService:
-    def __init__(self, db: Db, bus: SqliteBus, crosswalk: SqliteCrosswalk, group: str = GROUP):
+    def __init__(self, db: Db, bus: SqliteBus | KafkaBus, crosswalk: SqliteCrosswalk, group: str = GROUP):
         self.db, self.bus, self.xw, self.group = db, bus, crosswalk, group
         db.script(SCHEMA)
         outbox.ensure_schema(db)

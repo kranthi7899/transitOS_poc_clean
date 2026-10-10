@@ -49,8 +49,10 @@ def test_bus_offsets_replay_and_at_least_once(bus):
     assert len(list(bus.poll("t", "g"))) == 3  # replay from 0
 
 
-def test_kafka_stub():
-    with pytest.raises(NotImplementedError):
+def test_kafka_bus_without_optional_dependency_fails_clearly(monkeypatch):
+    from transitos.plumbing import kafka_bus
+    monkeypatch.setattr(kafka_bus, "_IMPORT_ERROR", ImportError("No module named 'confluent_kafka'"))
+    with pytest.raises(ImportError, match="uv sync --extra kafka"):
         KafkaBus()
 
 

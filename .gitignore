@@ -9,4 +9,6 @@ data/
 journal/*.tmp
 journal/.lock
 verification-report.json
+verification-report-kafka.json
 .playwright-mcp/
+.local/

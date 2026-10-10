@@ -6,6 +6,7 @@ from transitos.contracts.objects import DecisionRecord
 
 from .bus_sqlite import SqliteBus
 from .db import Db
+from .kafka_bus import KafkaBus
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_raw(
@@ -36,7 +37,7 @@ def ensure_schema(db: Db) -> None:
 class AuditConsumer:
     """Group `audit-raw` / `audit-resolved`. Idempotent on event id, so replay adds nothing."""
 
-    def __init__(self, db: Db, bus: SqliteBus, kind: str):
+    def __init__(self, db: Db, bus: SqliteBus | KafkaBus, kind: str):
         assert kind in ("raw", "resolved")
         self.db, self.bus, self.kind = db, bus, kind
         self.topic = TOPIC_RAW if kind == "raw" else TOPIC_RESOLVED
