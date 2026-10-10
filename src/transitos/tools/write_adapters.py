@@ -1,6 +1,6 @@
 """Write adapters. Every write: (1) kill-switch gate, (2) idempotent replay, (3) hard-limit re-check,
-(4) product call, (5) read-back. Blocked writes return Result.unavailable(product="policy", note=...)
-with note starting "kill_switch" or "hard_limit:" so callers can tell them apart from product outages.
+(4) product call, (5) read-back. Blocked writes return Result.blocked(...) (contracts/results.py:
+status unavailable, product "policy", note "kill_switch: ..." | "hard_limit: ...").
 
 Reassign/assign accept `compensation=True` (keyword, optional) to skip needs/spares/hours checks when
 restoring the original assignment during a saga rollback. Everything else is checked."""
@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
-from transitos.contracts.results import Result
+from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
 
 from .common import Deps, Http, ProductUnavailable, native_of
 from .policy import (
@@ -46,13 +46,13 @@ class _Base:
     def _run(self, agency: str, tool: str, key: str, fn: Callable[[], Result], *, idem: bool = True) -> Result:
         policy = self.deps.policy_for(agency)
         if kill_switch(agency, self.deps.killswitch, policy):
-            return Result.unavailable("policy", f"kill_switch: writes disabled for {agency}")
+            return Result.blocked(KILL_SWITCH, f"writes disabled for {agency}")
         if idem and (prior := self.deps.idem.get(agency, tool, key)) is not None:
             return prior
         try:
             res = fn()
         except HardLimit as h:
-            return Result.unavailable("policy", "hard_limit: " + "; ".join(h.violations))
+            return Result.blocked(HARD_LIMIT, "; ".join(h.violations))
         except ProductUnavailable as e:
             return Result.unavailable(e.product, e.note)
         except (KeyError, ValueError, TypeError) as e:

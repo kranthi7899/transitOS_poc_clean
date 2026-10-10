@@ -53,6 +53,30 @@
       "additionalProperties": true,
       "title": "Data",
       "type": "object"
+    },
+    "canonicalid": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Canonicalid"
+    },
+    "failurereason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failurereason"
     }
   },
   "required": [

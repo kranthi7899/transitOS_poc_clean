@@ -222,10 +222,10 @@ def test_replayed_events_create_no_new_runs(env):
 def test_update_event_invalidates_plan_awaiting_approval(env):
     rid = start(env)
     other = make_event("VehicleStatusChanged", "vs:1", {"native_vehicle_id": "BUS-44", "status": "reserved",
-                                                        "changed_by": "dispatcher", "vehicle": {"canonical": "veh-2"}})
+                                                        "changed_by": "dispatcher", "refs": {"canonical": "veh-2"}})
     assert handle_event(other, env.store, env.graph).action == "ignored"  # no run for that vehicle
     mine = make_event("VehicleStatusChanged", "vs:2", {"native_vehicle_id": "BUS-44", "status": "reserved",
-                                                       "changed_by": "dispatcher", "vehicle": {"canonical": "veh-1"}})
+                                                       "changed_by": "dispatcher", "refs": {"canonical": "veh-1"}})
     assert handle_event(mine, env.store, env.graph).action == "signaled"
     approve(env, rid)
     assert env.world.effects == [] and run_of(env, rid)["plan_version"] == 2  # re-proposed, no write

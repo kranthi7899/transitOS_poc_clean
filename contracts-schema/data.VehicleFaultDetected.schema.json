@@ -20,10 +20,71 @@
       },
       "title": "Lamps",
       "type": "object"
+    },
+    "VehicleRefs": {
+      "description": "Added by the crosswalk to every resolved vehicle event as `data[\"refs\"]` (the ONE canonical shape;\nthe envelope also carries `canonicalid`). Absent on events.raw.",
+      "properties": {
+        "canonical": {
+          "title": "Canonical",
+          "type": "string"
+        },
+        "telematics": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telematics"
+        },
+        "maintenance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maintenance"
+        },
+        "scheduling": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scheduling"
+        }
+      },
+      "required": [
+        "canonical"
+      ],
+      "title": "VehicleRefs",
+      "type": "object"
     }
   },
   "additionalProperties": true,
   "properties": {
+    "refs": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VehicleRefs"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "native_vehicle_id": {
       "title": "Native Vehicle Id",
       "type": "string"

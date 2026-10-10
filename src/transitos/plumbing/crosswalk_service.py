@@ -59,9 +59,7 @@ class CrosswalkService:
                 maintenance=ids.get("maintenance"), scheduling=ids.get("scheduling")).model_dump()
         else:
             data["operator_canonical"] = canonical
-        out = ev.model_copy(update={"data": data})
-        out.__pydantic_extra__ = {**(ev.__pydantic_extra__ or {}), "canonicalid": canonical}
-        return out
+        return ev.model_copy(update={"data": data, "canonicalid": canonical})
 
     def _handle(self, conn, ev: CloudEvent) -> None:
         row = conn.execute("SELECT status FROM xw_processed WHERE grp=? AND event_id=?", (self.group, ev.id)).fetchone()
@@ -75,9 +73,7 @@ class CrosswalkService:
             if row:  # already parked and reported; wait for resolve()
                 return
             self.xw.add_unresolved_in(conn, ev.agencyid, product, native, ev)
-            failed = ev.model_copy()
-            failed.__pydantic_extra__ = {**(ev.__pydantic_extra__ or {}),
-                                         "failurereason": f"unresolved {entity} {product}:{native}"}
+            failed = ev.model_copy(update={"failurereason": f"unresolved {entity} {product}:{native}"})
             outbox.add(conn, failed, TOPIC_FAILED, f"{product}:{native}", dedupe_id=f"failed:{ev.id}")
             conn.execute("INSERT INTO xw_processed VALUES(?,?,'parked')", (self.group, ev.id))
             return

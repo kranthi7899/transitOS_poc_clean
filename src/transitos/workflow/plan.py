@@ -3,22 +3,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import ValidationError
-
 from transitos.contracts.ids import step_key
 from transitos.contracts.objects import Plan, Step
 from transitos.contracts.tools import COMPENSATION, SAGA_ORDER
 from transitos.workflow.reasoning import ModelOutput
-
-
-def _comp(action: str, params: dict):
-    """Local workaround: frozen-v1 ActionName may not include 'cancel_work_order' (main now allows it)."""
-    c = COMPENSATION[action]
-    try:
-        Step(action=action, params=params, idempotency_key="x", compensation=c)  # type: ignore[arg-type]
-        return c
-    except ValidationError:
-        return None
 
 
 def step_name(action: str, params: dict) -> str:
@@ -54,6 +42,6 @@ def build_plan(run_id: str, plan_version: int, out: ModelOutput, vehicle_id: str
                     f"Service change: block {bid} will run with a different vehicle."}))
     raw.sort(key=lambda t: SAGA_ORDER.index(t[0]))  # stable: saga order, then block order
     steps = [Step(action=a, params=p, idempotency_key=step_key(run_id, step_name(a, p), plan_version),
-                  compensation=_comp(a, p)) for a, p in raw]  # type: ignore[arg-type]
+                  compensation=COMPENSATION[a]) for a, p in raw]  # type: ignore[arg-type]
     return Plan(decision=out.decision, pull_at=pull_at, steps=steps, reasoning=out.reasoning,
                 alternatives=out.alternatives, assumptions=list(out.assumptions))

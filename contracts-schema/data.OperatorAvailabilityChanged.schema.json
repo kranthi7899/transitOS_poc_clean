@@ -8,6 +8,18 @@
     "status": {
       "title": "Status",
       "type": "string"
+    },
+    "operator_canonical": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Operator Canonical"
     }
   },
   "required": [

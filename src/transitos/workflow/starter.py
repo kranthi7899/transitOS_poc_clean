@@ -22,6 +22,7 @@ from transitos.contracts.envelope import (
     UPDATE_TYPES,
     CloudEvent,
 )
+from transitos.contracts.events import caused_by_us, resolved_vehicle_id
 from transitos.contracts.ids import run_id as make_run_id
 from transitos.contracts.objects import RunState
 from transitos.workflow.graph import initial_state, run_config
@@ -35,18 +36,13 @@ class HandleResult:
 
 
 def vehicle_id_of(event: CloudEvent) -> str | None:
-    """Canonical vehicle id added by the crosswalk. ASSUMED A11: data['vehicle']['canonical'] (VehicleRefs)."""
-    d = event.data
-    v = d.get("vehicle")
-    if isinstance(v, dict) and v.get("canonical"):
-        return v["canonical"]
-    return d.get("canonical_vehicle_id") or d.get("vehicle_id") or (v if isinstance(v, str) else None)
+    """Canonical vehicle id added by the crosswalk: data["refs"]["canonical"] (contracts.events)."""
+    return resolved_vehicle_id(event.data)
 
 
 def _is_self_inflicted(event: CloudEvent) -> bool:
-    """Events caused by our own writes must not invalidate the plan (A12)."""
-    d = event.data
-    return d.get("opened_by") == "system" or str(d.get("changed_by", "")).startswith("transitos")
+    """Events caused by our own writes must not invalidate the plan (contracts.events.caused_by_us)."""
+    return caused_by_us(event.data)
 
 
 def _drive(graph, run_id: str, payload) -> None:

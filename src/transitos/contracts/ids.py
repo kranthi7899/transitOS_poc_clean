@@ -37,3 +37,19 @@ def run_id(agency: str, vehicle_id: str, trigger_event_id: str) -> str:
 def step_key(run: str, step_name: str, plan_version: int) -> str:
     """Idempotency key for a write step (design §4.5)."""
     return f"{run}:{step_name}:{plan_version}"
+
+
+COMP_PREFIX = "comp:"
+
+
+def compensation_key(run: str, step_name: str, plan_version: int) -> str:
+    """Idempotency key of the compensation for the step `step_name` (design §4.6)."""
+    return step_key(run, COMP_PREFIX + step_name, plan_version)
+
+
+def compensated_key(run: str, comp_key: str) -> str | None:
+    """Inverse of compensation_key: the forward step key a compensation key undoes (None if not one)."""
+    rest = comp_key[len(run) + 1:] if comp_key.startswith(run + ":") else None
+    if not rest or not rest.startswith(COMP_PREFIX):
+        return None
+    return f"{run}:{rest[len(COMP_PREFIX):]}"

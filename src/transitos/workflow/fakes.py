@@ -175,8 +175,8 @@ class FakeWriteTools:
             return Result.success(self.w.vehicles[vehicle_id])
         return self._run("set_vehicle_available", key, None, f, comp="comp:" in key)
 
-    def reassign_block(self, agency, block_id, to_vehicle_id, key):
-        comp = "comp:" in key
+    def reassign_block(self, agency, block_id, to_vehicle_id, key, *, compensation=False):
+        comp = compensation or "comp:" in key
 
         def f():
             b = self.w.blocks[block_id]
@@ -192,11 +192,11 @@ class FakeWriteTools:
             return Result.success(b)
         return self._run("reassign_block", key, block_id, f, comp=comp)
 
-    def assign_operator(self, agency, block_id, operator_id, key):
+    def assign_operator(self, agency, block_id, operator_id, key, *, compensation=False):
         def f():
             self.w.blocks[block_id].operator_id = operator_id
             return Result.success(self.w.blocks[block_id])
-        return self._run("assign_operator", key, block_id, f, comp="comp:" in key)
+        return self._run("assign_operator", key, block_id, f, comp=compensation or "comp:" in key)
 
     def publish_rider_alert(self, agency, block_id, message, key):
         def f():
@@ -242,12 +242,12 @@ def make_event(type_: str, id_: str, data: dict, agency: str = AGENCY, t: dateti
 def fault_event(vehicle: str = "veh-1", id_: str = "fault:1") -> CloudEvent:
     return make_event("VehicleFaultDetected", id_, {
         "native_vehicle_id": "T-77", "spn": 100, "fmi": 1, "lamps": {"stop": True},
-        "vehicle": {"canonical": vehicle}})
+        "refs": {"canonical": vehicle}})
 
 
 def wo_closed_event(vehicle: str = "veh-1", id_: str = "wo-close:1", wo_no: str = "1001") -> CloudEvent:
     return make_event("WorkOrderClosed", id_, {"native_asset_id": "1106", "wo_no": wo_no,
-                                              "vehicle": {"canonical": vehicle}})
+                                              "refs": {"canonical": vehicle}})
 
 
 def default_policy(**kw) -> AgencyPolicy:

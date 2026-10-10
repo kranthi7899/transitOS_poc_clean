@@ -15,13 +15,14 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from transitos.contracts.ids import step_key
+from transitos.contracts.ids import compensation_key, step_key
 from transitos.contracts.objects import (
     Block,
     DecisionRecord,
@@ -211,7 +212,7 @@ def build_graph(deps: Deps, checkpointer):
                 return res
             if res.status == "partial":  # write sent, read-back failed: reconcile, never blindly retry
                 return res
-            if res.product == "policy":  # kill switch / hard limit block: retrying is pointless
+            if res.is_blocked:  # kill switch / hard limit block: retrying is pointless
                 return res
         return res
 
@@ -235,18 +236,19 @@ def build_graph(deps: Deps, checkpointer):
 
     def compensation_for(run: RunState, step: Step) -> Result:
         w, a, p = deps.writes, run.agency, step.params
-        k = step_key(run.run_id, "comp:" + step_name(step.action, p), run.plan_version)
+        k = compensation_key(run.run_id, step_name(step.action, p), run.plan_version)
         match step.action:
             case "create_work_order":
                 return call_write(w.cancel_work_order, a, p.get("result_id", ""), k)
             case "set_vehicle_unavailable":
                 return call_write(w.set_vehicle_available, a, p["vehicle_id"], k)
             case "reassign_block":
-                return call_write(w.reassign_block, a, p["block_id"], p["from_vehicle_id"], k)
+                return call_write(partial(w.reassign_block, compensation=True), a, p["block_id"], p["from_vehicle_id"], k)
             case "assign_operator":
                 if not p.get("from_operator_id"):
                     return Result.unavailable("workflow", "no prior operator to restore")
-                return call_write(w.assign_operator, a, p["block_id"], p["from_operator_id"], k)
+                return call_write(partial(w.assign_operator, compensation=True), a, p["block_id"],
+                                  p["from_operator_id"], k)
         return Result.unavailable("workflow", f"no compensation for {step.action}")
 
     # ------------------------------------------------------------------ nodes
@@ -495,6 +497,7 @@ def build_graph(deps: Deps, checkpointer):
         s = todo[0]
         res = compensation_for(run, s)
         name = step_name(s.action, s.params)
+        comp_key = compensation_key(run.run_id, name, run.plan_version)
         at = deps.clock().isoformat()
         if res.status in ("ok", "partial"):
             for lst in (run.steps_done, run.plan.steps):
@@ -502,14 +505,14 @@ def build_graph(deps: Deps, checkpointer):
                     if x.idempotency_key == s.idempotency_key:
                         x.status = "compensated"
             run.compensations_done.append(s.model_copy(update={"status": "compensated"}, deep=True))
-            record(run, ctx, action={"key": "comp:" + s.idempotency_key, "kind": "compensation", "step": name,
-                                     "status": "compensated", "at": at})
+            record(run, ctx, action={"key": comp_key, "compensates": s.idempotency_key, "kind": "compensation",
+                                     "step": name, "status": "compensated", "at": at})
             return _out(run, ctx, "compensate")
         ctx["original_reason"] = ctx.get("reason")
         ctx["reason"] = "compensation_failed"
         ctx["comp_failed"] = {"step": name, "note": res.note, "key": s.idempotency_key}
-        record(run, ctx, action={"key": "comp:" + s.idempotency_key, "kind": "compensation", "step": name,
-                                 "status": "failed", "note": res.note, "at": at})
+        record(run, ctx, action={"key": comp_key, "compensates": s.idempotency_key, "kind": "compensation",
+                                 "step": name, "status": "failed", "note": res.note, "at": at})
         return _out(run, ctx, "escalate")
 
     def escalate(state: WState):

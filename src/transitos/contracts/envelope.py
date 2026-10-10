@@ -37,3 +37,6 @@ class CloudEvent(BaseModel):
     agencyid: str
     schemaversion: int = 1
     data: dict[str, Any]
+    # CloudEvents extension attributes (optional, additive):
+    canonicalid: str | None = None    # events.resolved: canonical vehicle/operator id (also the partition key)
+    failurereason: str | None = None  # events.failed: why the event could not be resolved
