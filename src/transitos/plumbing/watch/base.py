@@ -21,6 +21,24 @@ CREATE TABLE IF NOT EXISTS adapter_state(
 Emitted = tuple[CloudEvent, str]  # (event, partition key)
 
 
+class UpstreamError(Exception):
+    """Product unreachable / non-2xx. Independent of the HTTP client library (httpx.Client in production,
+    Starlette's TestClient - built on httpx2, whose exception classes are not httpx's - in-process)."""
+
+
+def _http_errors() -> tuple[type[BaseException], ...]:
+    errs: tuple[type[BaseException], ...] = (httpx.HTTPError, OSError)
+    try:
+        import httpx2  # type: ignore[import-not-found]
+        errs += (httpx2.HTTPError,)
+    except ImportError:
+        pass
+    return errs
+
+
+HTTP_ERRORS = _http_errors()
+
+
 def make_event(agency: str, product: str, event_id: str, type_: str, time: str | datetime, data: dict[str, Any]) -> CloudEvent:
     return CloudEvent(
         id=event_id, source=f"adapter/{product}/{agency}", type=type_, time=time,  # type: ignore[arg-type]
@@ -62,9 +80,13 @@ class Poller:
         outbox.ensure_schema(db)
 
     def get(self, path: str, **params: Any) -> Any:
-        r = self.client.get(path, params={k: v for k, v in params.items() if v is not None},
-                            headers={"X-Agency": self.agency})
-        r.raise_for_status()
+        try:
+            r = self.client.get(path, params={k: v for k, v in params.items() if v is not None},
+                                headers={"X-Agency": self.agency})
+        except HTTP_ERRORS as e:
+            raise UpstreamError(f"{path}: {e!r}") from e
+        if r.status_code >= 400:
+            raise UpstreamError(f"{path}: http {r.status_code}")
         return r.json()
 
     def build(self, cursor: str | None, last_seen: dict) -> tuple[list[Emitted], str | None, dict]:
@@ -75,7 +97,7 @@ class Poller:
         cursor, last_seen = load_state(self.db, self.name)
         try:
             events, new_cursor, new_seen = self.build(cursor, last_seen)
-        except httpx.HTTPError as e:  # timeout / 429 / 5xx: keep state, try again next tick
+        except UpstreamError as e:  # timeout / 429 / 5xx: keep state, try again next tick
             self.last_error = repr(e)
             return 0
         self.last_error = None

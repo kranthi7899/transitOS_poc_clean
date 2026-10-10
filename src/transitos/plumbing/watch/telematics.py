@@ -13,7 +13,7 @@ from transitos.contracts import ids
 
 from .. import outbox
 from ..db import Db
-from .base import Poller, load_state, make_event, raw_key, save_state
+from .base import Poller, UpstreamError, load_state, make_event, raw_key, save_state
 
 SEEN_SCHEMA = """
 CREATE TABLE IF NOT EXISTS telematics_seen(
@@ -99,12 +99,10 @@ class TelematicsBackfillPoller(Poller):
         db.script(SEEN_SCHEMA)
 
     def poll(self) -> int:
-        import httpx
-
         cursor, _ = load_state(self.db, self.name)
         try:
             data = self.get("/faults/feed", cursor=cursor)
-        except httpx.HTTPError as e:
+        except UpstreamError as e:
             self.last_error = repr(e)
             return 0
         self.last_error = None

@@ -1,0 +1,16 @@
+# Mirrors the verification scenarios' baseline policy (AgencyPolicy defaults): approve everything,
+# min_spares 1, 10h operator day, 15 min approval timeout, PM urgent at 1000 mi overdue.
+agency: agency-a
+kill_switch: false
+autonomy:
+  create_work_order: approve
+  set_vehicle_unavailable: approve
+  reassign_block: approve
+  assign_operator: approve
+  publish_rider_alert: approve
+  return_to_service: approve
+limits:
+  min_spares: 1
+  max_operator_hours_day: 10.0
+  approval_timeout_min: 15
+  pm_urgent_overdue_mi: 1000

@@ -82,7 +82,9 @@ class Http:
         last = "unknown"
         for attempt in range(self.deps.retries + 1):
             try:
-                resp = client.request(method, path, headers=headers, timeout=TIMEOUT_S, **kw)
+                # timeout is a client setting (Registry builds httpx.Client(timeout=TIMEOUT_S); injected
+                # clients bring their own) - Starlette's in-process TestClient rejects per-request timeouts
+                resp = client.request(method, path, headers=headers, **kw)
             except (httpx.TransportError, httpx.TimeoutException) as e:
                 last = f"transport error: {type(e).__name__}"
             else:

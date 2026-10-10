@@ -48,6 +48,15 @@ class RunsIndex:
     def mark_seen(self, event_id: str, run_id: str | None, action: str) -> None:
         self._x("INSERT OR IGNORE INTO events_seen VALUES(?,?,?)", event_id, run_id, action)
 
+    def seen_events(self, action: str | None = None) -> list[dict]:
+        """Rows of the event-dedupe table {event_id, run_id, action}, optionally one action (e.g. 'attached')."""
+        sql = "SELECT * FROM events_seen" + (" WHERE action=?" if action else "") + " ORDER BY rowid"
+        return [dict(r) for r in self._q(sql, *([action] if action else []))]
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
+
     # -- runs
     def claim(self, agency: str, vehicle: str, run_id: str, trigger_event_id: str) -> str:
         """Return the active run id for the vehicle (== run_id if we just claimed it)."""

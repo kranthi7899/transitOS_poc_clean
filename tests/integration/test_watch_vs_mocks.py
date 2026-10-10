@@ -153,3 +153,14 @@ def test_raw_to_resolved_with_mock_crosswalk_seed(db, mocks):
     assert res["VehicleFaultDetected"].canonicalid == "veh-1"
     assert res["PMOverdue"].data["refs"] == {"canonical": "veh-3", "telematics": "T-79", "maintenance": "1108",
                                              "scheduling": "BUS-46"}
+
+
+@pytest.mark.parametrize("mode", ["timeout", "http_429"])
+def test_poller_survives_upstream_chaos_via_testclient(db, mocks, mode):
+    """TestClient raises httpx2 errors, not httpx ones: the poller must still treat them as upstream errors."""
+    mocks.chaos["maintenance"].set(mode)
+    p = MaintenancePoller(db, mocks.c("maintenance"), AG)
+    assert p.poll() == 0 and "http" in (p.last_error or "")
+    mocks.chaos["maintenance"].clear()
+    mocks.c("maintenance").post("/sim/meter", json={"asset": "1108", "meter_mi": 25100}, headers=H)
+    assert p.poll() == 1
