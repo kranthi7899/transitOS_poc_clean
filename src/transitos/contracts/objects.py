@@ -63,6 +63,7 @@ class WorkOrder(BaseModel):
 ActionName = Literal[
     "create_work_order", "set_vehicle_unavailable", "reassign_block",
     "assign_operator", "publish_rider_alert", "set_vehicle_available",
+    "cancel_work_order",
 ]
 StepStatus = Literal["pending", "done", "failed", "compensated"]
 

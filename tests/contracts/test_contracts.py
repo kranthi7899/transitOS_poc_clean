@@ -54,3 +54,8 @@ def test_plan_and_runstate_roundtrip():
 def test_result_semantics():
     assert Result[int].success(1).ok
     assert not Result[int].unavailable("scheduling").ok
+
+
+def test_every_compensation_is_a_valid_step_action():
+    for action, comp in COMPENSATION.items():
+        Step(action=action, idempotency_key="k", compensation=comp)

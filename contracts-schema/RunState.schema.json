@@ -72,7 +72,8 @@
             "reassign_block",
             "assign_operator",
             "publish_rider_alert",
-            "set_vehicle_available"
+            "set_vehicle_available",
+            "cancel_work_order"
           ],
           "title": "Action",
           "type": "string"
@@ -95,7 +96,8 @@
                 "reassign_block",
                 "assign_operator",
                 "publish_rider_alert",
-                "set_vehicle_available"
+                "set_vehicle_available",
+                "cancel_work_order"
               ],
               "type": "string"
             },
