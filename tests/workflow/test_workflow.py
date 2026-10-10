@@ -167,18 +167,29 @@ def test_kill_switch_on_at_start_is_recommend_only(make_env):
 
 
 def test_compensation_failure_escalates_with_exact_state(env):
-    env.world.fail_writes.add("publish_rider_alert")
-    env.world.fail_compensations.add("assign_operator")
+    # (integration: was driven by a failed rider alert; an alert failure no longer compensates, see below)
+    env.world.fail_writes.add("assign_operator")
+    env.world.fail_compensations.add("reassign_block")
     rid = start(env)
     approve(env, rid)
     esc = env.store.get_escalation(rid)
     assert esc["reason"] == "compensation_failed"
-    assert esc["comp_failed"]["step"] == "assign_operator:B1"
-    assert esc["original_reason"].startswith("step_failed:publish_rider_alert")
-    assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable", "reassign_block:B1",
-                                    "assign_operator:B1"]
+    assert esc["comp_failed"]["step"] == "reassign_block:B1"
+    assert esc["original_reason"].startswith("step_failed:assign_operator")
+    assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable", "reassign_block:B1"]
     assert env.store.get_run(rid)["status"] == "ESCALATED"
     assert env.store.get_decision(rid, 1)["outcome"] == "escalated"
+
+
+def test_failed_rider_alert_is_not_compensated(env):
+    env.world.fail_writes.add("publish_rider_alert")
+    rid = start(env)
+    approve(env, rid)
+    assert env.world.effect_names() == SAGA[:-1]          # no undo after an (irreversible) alert attempt
+    esc = env.store.get_escalation(rid)
+    assert esc["reason"].startswith("irreversible_step_failed:publish_rider_alert")
+    assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable", "reassign_block:B1",
+                                    "assign_operator:B1"]
 
 
 def test_infeasible_model_output_uses_fallback_flagged(make_env):

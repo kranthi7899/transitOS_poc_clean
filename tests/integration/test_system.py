@@ -134,3 +134,74 @@ def test_panel_kill_switch_blocks_adapter_writes_live(world):
     world.set_kill_switch(True)
     world.approve(rid)
     assert s.writes.records == [] and "kill_switch" in s.gateway.get_run(rid).violations
+
+
+def _fail_alert(world):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def around(action, key, comp):
+        on = action == "publish_rider_alert"
+        if on:
+            world.mocks.chaos["alerts"].set("timeout")
+        try:
+            yield
+        finally:
+            if on:
+                world.mocks.chaos["alerts"].set("timeout", False)
+    world.system.writes.around = around
+
+
+def test_rider_alert_failure_keeps_safety_steps_and_escalates(world):
+    """The irreversible last step failed: no compensation may follow an alert attempt (Track F's
+    rider_alert_last); the vehicle stays pulled, the block stays on the spare, a human takes over."""
+    _fail_alert(world)
+    rid = fault_via_mock(world)
+    world.approve(rid)
+    esc = world.system.store.get_escalation(rid)
+    assert esc["reason"].startswith("irreversible_step_failed:publish_rider_alert")
+    assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable", "reassign_block:blk-1",
+                                    "assign_operator:blk-1"]
+    assert not [w for w in world.system.writes.records if w.compensation]
+    assert check_all(world.observe()) == []
+
+
+def _reject_assign(world):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def around(action, key, comp):
+        on = action == "assign_operator" and not comp
+        if on:
+            world.mocks.chaos["workforce"].set("reject_write")
+        try:
+            yield
+        finally:
+            if on:
+                world.mocks.chaos["workforce"].set("reject_write", False)
+    world.system.writes.around = around
+
+
+def test_failure_after_reassign_escalates_with_exact_state(world):
+    """Today: compensating in strict reverse order stops at reassign_block - the scheduling product refuses
+    to put the block back on the faulted vehicle while it is out of service - and the run escalates with
+    the exact applied state (nothing silent)."""
+    _reject_assign(world)
+    rid = fault_via_mock(world)
+    world.approve(rid)
+    esc = world.system.store.get_escalation(rid)
+    assert esc["reason"] == "compensation_failed" and "out of service" in esc["comp_failed"]["note"]
+    assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable", "reassign_block:blk-1"]
+    assert check_all(world.observe()) == []
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "DECISION NEEDED: strict reverse compensation cannot complete against the real scheduling product - "
+    "reassigning the block back to the faulted vehicle is refused (409, vehicle out of service) because "
+    "set_vehicle_unavailable is undone only afterwards. Options in coordination/handoffs/INTEGRATION.md."))
+def test_failure_after_reassign_compensates_every_step_in_reverse(world):
+    _reject_assign(world)
+    rid = fault_via_mock(world)
+    world.approve(rid)
+    comps = [w for w in world.system.writes.records if w.compensation and w.ok]
+    assert [c.action for c in comps] == ["reassign_block", "set_vehicle_available", "cancel_work_order"]

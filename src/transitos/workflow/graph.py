@@ -494,6 +494,11 @@ def build_graph(deps: Deps, checkpointer):
         record(run, ctx, action={"key": step.idempotency_key, "kind": "write", "step": name,
                                  "status": "failed", "note": res.note, "at": at})
         ctx["reason"] = f"step_failed:{name}:{res.note or res.status}"
+        if COMPENSATION.get(step.action) is None:
+            # Irreversible step (rider alert): a failed attempt may still have reached riders, and nothing but
+            # return-to-service may follow an alert attempt. Keep the applied (safety) steps, escalate.
+            ctx["reason"] = f"irreversible_step_failed:{name}:{res.note or res.status}"
+            return _out(run, ctx, "escalate")
         status(run, "COMPENSATING")
         return _out(run, ctx, "compensate")
 
