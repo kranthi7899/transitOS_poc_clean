@@ -37,7 +37,9 @@ class AuditedRunsIndex(RunsIndex):
 
 
 class GraphRunGateway:
-    """RunGateway: list/get runs from the LangGraph checkpoint; decisions resume the interrupt."""
+    """RunGateway: list/get runs from the LangGraph checkpoint; decisions resume the interrupt.
+    Each accepted human decision is appended to the system's ordered operations log BEFORE the resume,
+    so it precedes (in `seq`) every write it causes."""
 
     def __init__(self, system: System):
         self.s = system
@@ -69,6 +71,8 @@ class GraphRunGateway:
             raise DecisionConflict(f"run {run_id} is not awaiting plan approval (status {run.status})")
         if plan_version != run.plan_version:
             raise StaleVersion(f"current plan_version is {run.plan_version}")
+        self.s.log_human("approval" if decision in ("approve", "edit") else "rejection", run_id, run.plan_version,
+                         scope="plan", decision=decision, by=user)
         resume_approval(self.s.graph, self.s.store, run_id, decision, user, edits, at=self.s.clock.now())
         return self.get_run(run_id)  # type: ignore[return-value]
 
@@ -78,6 +82,8 @@ class GraphRunGateway:
             raise RunNotFound(run_id)
         if "return_gate" not in (self._snap(run_id).next or ()):
             raise DecisionConflict(f"run {run_id} is not awaiting return-to-service approval")
+        self.s.log_human("approval" if decision == "approve" else "rejection", run_id, run.plan_version,
+                         scope="return_to_service", decision=decision, by=user)
         resume_return(self.s.graph, run_id, decision, user)
         return self.get_run(run_id)  # type: ignore[return-value]
 
@@ -131,18 +137,19 @@ class StoreAuditReader:
 
 
 class KillSwitchPort:
-    """Panel KillSwitchStore port over Track C's SQLite kill switch (read live by adapters + workflow)."""
+    """Panel KillSwitchStore port over Track C's SQLite kill switch (read live by adapters + workflow).
+    Toggles are logged (ordered) before they take effect."""
 
-    def __init__(self, store: KillSwitchStore, on_set: Callable[[str, bool], None] | None = None):
-        self.store, self.on_set = store, on_set
+    def __init__(self, store: KillSwitchStore, before_set: Callable[[str, bool], None] | None = None):
+        self.store, self.before_set = store, before_set
 
     def is_on(self, agency: str) -> bool:
         return self.store.get(agency)
 
     def set(self, agency: str, on: bool) -> None:
+        if self.before_set:
+            self.before_set(agency, on)
         self.store.set(agency, on)
-        if self.on_set:
-            self.on_set(agency, on)
 
 
 class CrosswalkUnresolved:

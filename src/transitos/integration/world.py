@@ -15,8 +15,9 @@ How each World verb maps onto the real system:
   restart      (extra, not in F's Protocol) System.restart(): rebuild from the same SQLite files
 
 Observation: writes = the integration write log (every call that reached a Track C adapter);
-audit = approvals/rejections/expiries/kill-switch toggles as they were submitted through the panel,
-plus one `write` event per action key found in Track B's append-only DecisionStore (the real audit).
+audit = the system's ordered operations log (decisions accepted by the panel's RunGateway, approval
+expiries from the timer, kill-switch toggles from the panel port), plus one `write` event per action key
+found in Track B's append-only DecisionStore (the real audit of what the workflow did).
 Final vehicles/blocks/WOs/alerts are read straight from the mock products' stores (god's-eye view,
 unaffected by chaos).
 """
@@ -55,9 +56,7 @@ class IntegrationWorld:
         self.mocks = Mocks.start(SimClock(T0))
         self.mocks.seed(AGENCY)
         self.system = s = System(AGENCY, self.mocks, tempfile.mkdtemp(prefix="transitos-world-"))
-        self.audit: list[AuditEvent] = []
         self.chaos = dict(scenario.chaos)
-        s.on_killswitch = None
         if t.human_wo_exists:
             r = self.mocks.clients["maintenance"].post(
                 "/workorders", json={"asset": NATIVE_ASSET, "description": "brake check", "opened_by": "human"},
@@ -103,41 +102,30 @@ class IntegrationWorld:
         self.system.publish_raw(event)
         self.system.run_until_idle()
 
-    def _decide(self, run_id: str, decision: str, scope: str, by: str, kind: str) -> None:
+    def _decide(self, run_id: str, decision: str, scope: str, by: str) -> None:
         s = self.system
         run = s.gateway.get_run(run_id)
         if run is None:
             return
-        seq = s.seq.next()  # the human action precedes every write it causes
-        r = s.panel_client.post(f"/runs/{run_id}/decision",
-                                json={"decision": decision, "plan_version": run.plan_version, "user": by,
-                                      "scope": scope})
-        if r.status_code == 200 and not r.json().get("already_decided"):
-            self.audit.append(AuditEvent(seq=seq, kind=kind, run_id=run_id, plan_version=run.plan_version,  # type: ignore[arg-type]
-                                         data={"scope": scope, "by": by}))
+        # the panel's RunGateway logs the accepted decision (ordered before any write it causes)
+        s.panel_client.post(f"/runs/{run_id}/decision", json={"decision": decision, "plan_version": run.plan_version,
+                                                              "user": by, "scope": scope})
         s.run_until_idle()
 
     def approve(self, run_id: str, scope: str = "plan", by: str = "dispatcher") -> None:
-        self._decide(run_id, "approve", scope, by, "approval")
+        self._decide(run_id, "approve", scope, by)
 
     def reject(self, run_id: str, by: str = "dispatcher") -> None:
-        self._decide(run_id, "reject", "plan", by, "rejection")
+        self._decide(run_id, "reject", "plan", by)
 
     def advance_clock(self, hours: float) -> None:
-        s = self.system
-        s.clock.advance(hours=hours)
+        self.system.clock.advance(hours=hours)
         self.mocks.clients["telematics"].post("/sim/flush", headers=self._h)
-        before = len(s.expired)
-        s.run_until_idle()
-        for rid in s.expired[before:]:
-            self.audit.append(AuditEvent(seq=s.seq.next(), kind="expiry", run_id=rid))
+        self.system.run_until_idle()  # approval timers fire (logged as expiry by the system)
 
     def set_kill_switch(self, on: bool) -> None:
-        s = self.system
-        seq = s.seq.next()
-        r = s.panel_client.post("/killswitch", json={"agency": AGENCY, "on": on})
+        r = self.system.panel_client.post("/killswitch", json={"agency": AGENCY, "on": on})
         r.raise_for_status()
-        self.audit.append(AuditEvent(seq=seq, kind="kill_switch", data={"on": on}))
 
     def close_work_order(self, run_id: str) -> None:
         run = self.system.gateway.get_run(run_id)
@@ -174,7 +162,7 @@ class IntegrationWorld:
         first_seq = {}
         for w in writes:
             first_seq.setdefault((w.run_id, w.key), w.seq)
-        audit = list(self.audit)
+        audit = list(s.ops_log)
         for r in runs:
             keys = {a["key"] for rec in s.decisions.list_for_run(r.run_id) for a in rec.actions if a.get("key")}
             for k in sorted(keys):

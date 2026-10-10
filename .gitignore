@@ -6,3 +6,6 @@ __pycache__/
 .ruff_cache/
 data/
 .claude/worktrees/
+journal/*.tmp
+journal/.lock
+verification-report.json

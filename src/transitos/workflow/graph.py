@@ -587,6 +587,9 @@ def build_graph(deps: Deps, checkpointer):
     def return_to_service(state: WState):
         run, ctx = _load(state)
         resp = ctx.get("return_resume") or {}
+        prev = (deps.store.get_decision(run.run_id, run.plan_version) or {}).get("human_action") or {}
+        record(run, ctx, human_action={**prev, "return_to_service": {"decision": resp.get("decision"),
+                                                                     "by": resp.get("by")}})
         if resp.get("decision") != "approve":
             ctx["reason"] = "return_to_service_not_approved"
             return _out(run, ctx, "escalate")

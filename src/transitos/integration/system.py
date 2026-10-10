@@ -17,6 +17,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,7 @@ from transitos.tools.idem_store import IdemStore
 from transitos.tools.policy import CONFIG_DIR as TOOLS_CONFIG_DIR
 from transitos.tools.policy import KillSwitchStore, load_policy
 from transitos.tools.registry import Registry
+from transitos.verification.model import AuditEvent
 from transitos.workflow.graph import Deps, build_graph, make_checkpointer, run_config
 from transitos.workflow.limits import HardLimits
 from transitos.workflow.reasoning import Reasoner, StubReasoner
@@ -117,8 +119,9 @@ class System:
         self.seq = Seq()
         self.writes = WriteLog(self.seq, lambda: [r["run_id"] for r in self.store.list_runs()])
         self.on_resolved: Callable[[CloudEvent, HandleResult], None] | None = None  # narration hook
-        self.on_killswitch: Callable[[str, bool], None] | None = None
-        self.expired: list[str] = []
+        # ordered operations log: human decisions, approval expiries, kill-switch toggles (shares `seq`
+        # with the write log; Track F's AuditEvent shape)
+        self.ops_log: list[AuditEvent] = []
         self._build()
         if seed_crosswalk:
             for e in crosswalk_entries(agency, self.clock.now()):
@@ -153,7 +156,7 @@ class System:
         self.graph = build_graph(self.deps, self._ckpt)
         self.gateway = GraphRunGateway(self)
         self.panel = create_panel(gateway=self.gateway, crosswalk=self.xw, events=OutboxEventSink(self),
-                                  audit=StoreAuditReader(self), killswitch=KillSwitchPort(self.killswitch, self._ks),
+                                  audit=StoreAuditReader(self), killswitch=KillSwitchPort(self.killswitch, self._log_ks),
                                   unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now)
         self.panel_client = TestClient(self.panel)
 
@@ -188,9 +191,13 @@ class System:
             p = p.model_copy(update={"kill_switch": True})
         return p
 
-    def _ks(self, agency: str, on: bool) -> None:
-        if self.on_killswitch:
-            self.on_killswitch(agency, on)
+    def log_human(self, kind: str, run_id: str | None, plan_version: int | None = None, **data: Any) -> None:
+        self.ops_log.append(AuditEvent(seq=self.seq.next(), kind=kind, run_id=run_id,  # type: ignore[arg-type]
+                                       plan_version=plan_version, data=data))
+
+    def _log_ks(self, agency: str, on: bool) -> None:
+        if agency == self.agency:
+            self.log_human("kill_switch", None, on=on)
 
     # ------------------------------------------------------------------ ingress
     def _webhook(self, url: str, body: bytes, headers: dict) -> None:
@@ -226,8 +233,11 @@ class System:
         for a in self.audit_consumers:
             a.run_once()
         work += self.consume_resolved()
+        now = self.clock.now()
+        for r in self.store.awaiting_runs():  # logged before the timer resumes the run
+            if r["deadline"] and datetime.fromisoformat(r["deadline"]) <= now:
+                self.log_human("expiry", r["run_id"], None, by="timer")
         expired = expire_approvals(self.graph, self.store, self.clock.now)
-        self.expired += expired
         return work + len(expired)
 
     def run_until_idle(self, max_ticks: int = 50) -> int:
