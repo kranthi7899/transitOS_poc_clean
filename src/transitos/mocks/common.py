@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from .chaos import MODES, Chaos
 from .clock import SimClock
-from .seed import AGENCIES
+from .seed import known_agency
 from .store import Store
 
 
@@ -57,7 +57,7 @@ def make_app(
     @app.post("/sim/seed")
     def seed(x_agency: str | None = Header(default=None)):
         a = agency_of(x_agency)
-        if a not in AGENCIES:
+        if not known_agency(a):
             raise HTTPException(404, f"unknown agency {a}")
         ctx.store.clear(a)
         seeder(a)

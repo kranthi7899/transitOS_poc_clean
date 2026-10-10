@@ -2,6 +2,7 @@
 only through the crosswalk (native IDs differ per product and per agency)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -70,7 +71,26 @@ class Fleet:
     pm: list[dict[str, Any]] = field(default_factory=list)
 
 
+FleetBuilder = Callable[[datetime], Fleet]
+_CUSTOM: dict[str, FleetBuilder] = {}
+
+
+def register_fleet(agency: str, builder: FleetBuilder | None) -> None:
+    """Register (or with None remove) a custom synthetic fleet for an agency id, e.g. a verification
+    scenario baseline. /sim/seed and crosswalk_entries then use it. Process-wide registry."""
+    if builder is None:
+        _CUSTOM.pop(agency, None)
+    else:
+        _CUSTOM[agency] = builder
+
+
+def known_agency(agency: str) -> bool:
+    return agency in AGENCIES or agency in _CUSTOM
+
+
 def build_fleet(agency: str, now: datetime) -> Fleet:
+    if agency in _CUSTOM:
+        return _CUSTOM[agency](now)
     cfg = AGENCIES[agency]
     day = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     f = Fleet(agency)

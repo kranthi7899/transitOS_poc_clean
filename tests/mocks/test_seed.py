@@ -61,3 +61,27 @@ def test_second_agency_has_other_formats(make):
 def test_agency_header_required(sched):
     c, _ = sched
     assert c.get("/vehicles").status_code == 400
+
+
+def test_custom_fleet_can_be_registered_and_seeded():
+    from fastapi.testclient import TestClient
+
+    from transitos.mocks import scheduling
+    from transitos.mocks.chaos import Chaos
+    from transitos.mocks.clock import SimClock
+    from transitos.mocks.seed import Fleet, known_agency, register_fleet
+
+    def tiny(now):
+        f = Fleet("agency-x")
+        f.vehicles.append({"idx": 1, "canonical": "veh-1", "role": "spare", "sched": "X1", "tele": "TX1",
+                           "maint": "M1", "name": "Bus X1", "type": "standard", "seats": 30,
+                           "wheelchair_positions": 0, "lift_ok": False, "depot": "D", "status": "ready"})
+        return f
+    register_fleet("agency-x", tiny)
+    try:
+        c = TestClient(scheduling.create_app(SimClock(), Chaos(), None))
+        assert c.post("/sim/seed", headers={"X-Agency": "agency-x"}).status_code == 200
+        assert [v["id"] for v in c.get("/vehicles", headers={"X-Agency": "agency-x"}).json()] == ["X1"]
+    finally:
+        register_fleet("agency-x", None)
+    assert not known_agency("agency-x")
