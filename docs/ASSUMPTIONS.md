@@ -76,3 +76,14 @@ ids collided; every assumption now has one id (old track ids in the mapping tabl
 | D | A11 canonical shape / A12 self-inflicted / A13 assign only if needed / A14 escalate before model / A15 kill switch / A16 per-step autonomy / A17 stale replan / A18 write retries / A19 release slot / A20 early WO close | A29 / A30 / A31 / A32 / A33 / A34 / A35 / A36 / A37 / A38 |
 | E | A11 UnresolvedReader / A12 staleness / A13 edits shape / A14 kill switch elsewhere / A15 no auth | A39 / A40 / A41 / A33 / A42 |
 | F | A11 classification / A12 qualification + spare rule / A13 derived tests / A14 return-to-service exempt from alert-last / A15 autonomy recommend/act | A43 / A26 + A25 / A44 / A38 + A45 / A46 |
+
+## Kafka profile (appended 2026-10-10, see coordination/handoffs/KAFKA.md)
+
+| ID | Assumption | Where | Status |
+|---|---|---|---|
+| A51 | KafkaBus readers assign themselves all partitions of a topic and commit under the group id (manual assignment); one active reader per (topic, group). No dynamic rebalancing between processes of one group: the POC driver is single-process, and a crashed member would otherwise hold its partitions until the session timeout | plumbing/kafka_bus.py | decision (scale-out needs subscribe + rebalance handling) |
+| A52 | On Kafka, the order of one vehicle's events from DIFFERENT products on events.resolved is the crosswalk's consumption order: events.raw is keyed `<product>:<native id>`, so the two products' events sit on different partitions. Order per (product, native id) and the resolved stream's per-vehicle order (same for every consumer) are guaranteed. SqliteBus happened to give a total order. No scenario depends on cross-product order | plumbing, workflow | open |
+| A53 | Kafka offsets surfaced through the bus protocol are per-reader delivery tokens, comparable within one process only; the durable position is Kafka's committed offset per partition. `audit_raw/audit_resolved.bus_offset` hold the token on Kafka (informational) | plumbing/kafka_bus.py | decision (contract unchanged) |
+| A54 | Each System on Kafka uses its own topic/group namespace (stored in its data dir); canonical names only with `TRANSITOS_KAFKA_NAMESPACE=none`. Test namespaces are deleted by `scripts/kafka.sh purge` | integration/system.py | decision |
+| A55 | Kafka topics keep 7 days (retention.ms); replay from earlier than that is impossible on Kafka (SqliteBus keeps everything) | scripts/kafka.sh, kafka_bus.py | open |
+| A56 | Kafka 4.3.1 is run on the machine's JDK 24 (the brief lists 17/21 as Kafka's supported JVMs); it started and passed every test here. A deployed broker should use a JDK Kafka lists as supported | scripts/kafka.sh | open |

@@ -96,6 +96,28 @@ def _require() -> None:
         raise ImportError(INSTALL_HINT) from _IMPORT_ERROR
 
 
+def _retrying(what: str, timeout: float, fn: Any) -> Any:
+    """Run fn(), retrying Kafka errors the broker marks retriable (leader election or coordinator load
+    right after a broker start, a topic that was just created) until `timeout`; then KafkaBusError."""
+    deadline, delay = time.monotonic() + timeout, 0.05
+    while True:
+        try:
+            return fn()
+        except ck.KafkaException as e:
+            err = e.args[0] if e.args else None
+            retriable = err is not None and hasattr(err, "retriable") and (
+                err.retriable() or err.code() in (ck.KafkaError.NOT_LEADER_FOR_PARTITION,
+                                                   ck.KafkaError.LEADER_NOT_AVAILABLE,
+                                                   ck.KafkaError.UNKNOWN_TOPIC_OR_PART,
+                                                   ck.KafkaError.NOT_COORDINATOR,
+                                                   ck.KafkaError.COORDINATOR_LOAD_IN_PROGRESS,
+                                                   ck.KafkaError.COORDINATOR_NOT_AVAILABLE))
+            if not retriable or time.monotonic() > deadline:
+                raise KafkaBusError(f"{what}: {e}") from e
+            time.sleep(delay)
+            delay = min(delay * 2, 1.0)
+
+
 def _decode(msg: Any) -> CloudEvent:
     return CloudEvent.model_validate_json(msg.value())
 
@@ -109,7 +131,8 @@ class _Reader:
             "group.id": group, "enable.auto.commit": False, "enable.auto.offset.store": False,
             "auto.offset.reset": "earliest", "fetch.wait.max.ms": 50}))
         self.parts = bus._partitions(topic)
-        tps = self.c.committed([ck.TopicPartition(topic, p) for p in self.parts], timeout=bus.timeout)
+        tps = _retrying(f"committed offsets {group}/{topic}", bus.timeout, lambda: self.c.committed(
+            [ck.TopicPartition(topic, p) for p in self.parts], timeout=bus.timeout))
         low = bus._offsets(topic, self.parts, earliest=True)
         self.committed: dict[int, int] = {}
         for tp in tps:
@@ -172,12 +195,16 @@ class _Reader:
         new = {p: o for p, o in upto.items() if o > self.committed[p]}   # monotonic, like SqliteBus
         if not new:
             return
-        self.c.commit(offsets=[ck.TopicPartition(self.topic, p, o) for p, o in new.items()], asynchronous=False)
+        offsets = [ck.TopicPartition(self.topic, p, o) for p, o in new.items()]
+        _retrying(f"commit {self.group}/{self.topic}", self.bus.timeout,
+                  lambda: self.c.commit(offsets=offsets, asynchronous=False))
         self.committed.update(new)
 
     def reset(self) -> None:
         start = self.bus._offsets(self.topic, self.parts, earliest=True)
-        self.c.commit(offsets=[ck.TopicPartition(self.topic, p, o) for p, o in start.items()], asynchronous=False)
+        offsets = [ck.TopicPartition(self.topic, p, o) for p, o in start.items()]
+        _retrying(f"reset {self.group}/{self.topic}", self.bus.timeout,
+                  lambda: self.c.commit(offsets=offsets, asynchronous=False))
         self.committed, self.pending = start, []
         self._assign()
 
@@ -248,12 +275,12 @@ class KafkaBus:
         """Low or high watermark per partition, in one ListOffsets request on the admin connection (a
         consumer's own connection would queue the request behind its outstanding long-poll fetch)."""
         spec = OffsetSpec.earliest() if earliest else OffsetSpec.latest()
-        futs = self._admin.list_offsets({ck.TopicPartition(name, p): spec for p in parts},
-                                        request_timeout=self.timeout)
-        try:
+
+        def once() -> dict[int, int]:
+            futs = self._admin.list_offsets({ck.TopicPartition(name, p): spec for p in parts},
+                                            request_timeout=self.timeout)
             return {tp.partition: f.result(timeout=self.timeout).offset for tp, f in futs.items()}
-        except ck.KafkaException as e:
-            raise KafkaBusError(f"list offsets {name}: {e}") from e
+        return _retrying(f"list offsets {name}", self.timeout, once)
 
     def _reader(self, topic: str, group: str) -> _Reader:
         k = (topic, group)
@@ -388,3 +415,4 @@ class KafkaBus:
             self._producer.flush(min(self.timeout, 5.0))
         except Exception:  # noqa: BLE001,S110
             pass
+

@@ -159,13 +159,8 @@ topics() {
   kt --describe --topic 'events\.(raw|resolved|failed)'
 }
 
-purge() {
-  local keep='^(events\.raw|events\.resolved|events\.failed|__.*)$' n=0 t
-  while read -r t; do
-    [[ -z "$t" || "$t" =~ $keep ]] && continue
-    kt --delete --topic "$t" >/dev/null 2>&1 || true; n=$((n + 1))
-  done < <(kt --list)
-  log "deleted $n non-canonical topics"
+purge() {   # one batched AdminClient call (a kafka-topics.sh JVM per topic is far too slow)
+  (cd "$ROOT" && uv run --extra kafka python -m transitos.plumbing.kafka_local purge)
 }
 
 case "${1:-}" in
