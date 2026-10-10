@@ -136,11 +136,27 @@ class SchedulingReader:
         hist.sort(key=lambda h: h.get("at") or "")
         return Result.part(hist, "maintenance", note) if note else Result.success(hist)
 
+    def _with_assignment(self, agency: str, block: Block) -> Block:
+        """Workforce is the system of record for who drives a block (scheduling's copy is not updated when
+        the operator is reassigned). 404 = workforce has no record -> keep scheduling's value."""
+        if "workforce" not in self.deps.clients:
+            return block
+        r = Http("workforce", self.deps).request(agency, "GET", f"/assignments/{block.id}", ok_4xx=True)
+        if r.status_code == 404:
+            return block
+        if r.status_code >= 400:
+            raise ProductUnavailable("workforce", f"http {r.status_code}: {r.text[:120]}")
+        native = r.json().get("operator")
+        op = self.deps.crosswalk.lookup(agency, "workforce", native) if native else None
+        if native and op is None:
+            raise ProductUnavailable("crosswalk", f"unmapped workforce operator {native}")
+        return block.model_copy(update={"operator_id": op})
+
     @guarded("scheduling")
     def list_affected_blocks(self, agency: str, vehicle_id: str, start: datetime, end: datetime) -> Result[list[Block]]:
         raw = self.http.json(agency, "GET", "/blocks", params={
             "vehicle": self._native(agency, vehicle_id), "from": _iso(start), "to": _iso(end)})
-        return Result.success([map_block(self.deps, agency, b) for b in raw])
+        return Result.success([self._with_assignment(agency, map_block(self.deps, agency, b)) for b in raw])
 
     def get_block(self, agency: str, block_id: str) -> Result[Block]:
         """Not in ReadTools: used by write-side re-validation. MOCK_API has no GET /blocks/{id},
@@ -151,7 +167,7 @@ class SchedulingReader:
     def _get_block(self, agency: str, block_id: str) -> Result[Block]:
         for b in self.http.json(agency, "GET", "/blocks"):
             if b["id"] == block_id:
-                return Result.success(map_block(self.deps, agency, b))
+                return Result.success(self._with_assignment(agency, map_block(self.deps, agency, b)))
         return Result.unavailable("scheduling", f"block {block_id} not found")
 
     @guarded("scheduling")
@@ -198,9 +214,7 @@ class WorkforceReader:
         from .policy import check_lift_qualification, check_operator_hours
         limits = self.deps.policy_for(agency).limits
         elig = []
-        for op in self.operators(agency):
-            if op.id == block.operator_id:
-                continue
+        for op in self.operators(agency):  # the block's current operator is listed too when eligible
             if op.available_from and op.available_from > block.start:
                 continue
             if op.available_to and op.available_to < block.end:

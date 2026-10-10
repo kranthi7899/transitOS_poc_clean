@@ -225,7 +225,9 @@ def test_lift_qualification_limit(env):
 def test_eligible_operators_filters_by_same_rules(env):
     block = env.tools.list_affected_blocks(AGENCY, "veh-1", T0, T1).value[0]
     ids = {o.id for o in env.tools.list_eligible_operators(AGENCY, block).value}
-    assert ids == {"op-311"}  # 310 is current, 312 not lift trained, 313 over hours
+    # 310 is the current operator and eligible: listed, so the workflow can keep it (D's A13);
+    # 312 not lift trained, 313 over hours
+    assert ids == {"op-310", "op-311"}
 
 
 def test_cannot_verify_limits_when_scheduling_flaky_blocks_feed(env):

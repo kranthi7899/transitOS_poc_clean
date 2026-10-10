@@ -10,6 +10,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from transitos.contracts.events import SYSTEM_ACTOR
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
 from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
 
@@ -117,9 +118,11 @@ class SchedulingWriter(_Base):
         super().__init__(deps)
         self.reader = SchedulingReader(deps)
 
-    def _set_status(self, agency: str, vehicle_id: str, path: str, body: dict | None, want: str) -> Result[Vehicle]:
+    def _set_status(self, agency: str, vehicle_id: str, path: str, body: dict, want: str, key: str) -> Result[Vehicle]:
         native = self._native_vehicle(agency, vehicle_id, "scheduling")
-        self.http.request(agency, "POST", f"/vehicles/{native}/{path}", **({"json": body} if body is not None else {}))
+        # changed_by marks the change as ours so the resulting VehicleStatusChanged is ignored (caused_by_us)
+        self.http.request(agency, "POST", f"/vehicles/{native}/{path}",
+                          json={**body, "changed_by": f"{SYSTEM_ACTOR}:{key}"})
         back = self.reader.get_vehicle(agency, vehicle_id)
         if back.status != "ok":
             return Result.part(None, "scheduling", f"write sent, readback failed: {back.note}")
@@ -132,11 +135,11 @@ class SchedulingWriter(_Base):
                                 key: str) -> Result[Vehicle]:
         return self._run(agency, "set_vehicle_unavailable", key, lambda: self._set_status(
             agency, vehicle_id, "unavailable", {"start": _iso(start), "end": _iso(end) if end else None},
-            "out_of_service"))
+            "out_of_service", key))
 
     def set_vehicle_available(self, agency: str, vehicle_id: str, key: str) -> Result[Vehicle]:
         return self._run(agency, "set_vehicle_available", key,
-                         lambda: self._set_status(agency, vehicle_id, "available", None, "ready"))
+                         lambda: self._set_status(agency, vehicle_id, "available", {}, "ready", key))
 
     def reassign_block(self, agency: str, block_id: str, to_vehicle_id: str, key: str, *,
                        compensation: bool = False) -> Result[Block]:

@@ -34,3 +34,11 @@ Timestamps RFC3339 UTC. All list endpoints accept `updated_since` where noted.
 - `POST /alerts` {block, header_text, description_text} -> {id}; `GET /alerts` shows alerts only after `visible_after` (sim clock). `POST /alerts/{id}/correction`.
 
 ## Event ownership (which mock source produces which event) is in `transitos.contracts.events.PUBLISHER`.
+
+## v1.1 clarifications (integration; verified by tests/integration against the real mocks)
+- `updated_since` / `since` filters are inclusive (`>=`): consumers dedupe by deterministic event id (outbox UNIQUE).
+- Maintenance: cancelling a system WO sets `status=closed` plus `cancelled: true`; a cancelled WO is not a repair (no `WorkOrderClosed`).
+- Telematics DVIR on the webhook/feed: `{eventId, vehicle:{id,name}, dvir:{defect_text, reported_by_role}, time}` (no `fault` key).
+- Scheduling `POST /vehicles/{id}/unavailable|available` accept optional body `changed_by` (default `api`), echoed in `/status-changes`. TransitOS sends `transitos:<idempotency key>`.
+- Workforce `GET /availability-changes?since=` items: `{operator, status, changed_at}`. `GET /assignments/{block}` -> `{block, operator}` is the system of record for who drives a block (scheduling's `operator` is not updated by `POST /blocks/{id}/operator`).
+- Workforce CSV / `GET /operators/{id}`: `available_from` / `available_to` are RFC3339 UTC on the current sim day.

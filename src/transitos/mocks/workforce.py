@@ -43,13 +43,24 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
             raise HTTPException(404, "operator not found")
         return o
 
+    def rendered(o: dict) -> dict:
+        """Daily export: availability window as RFC3339 UTC on the current sim day (MOCK_API: all
+        timestamps RFC3339). Stored internally as HH:MM; full timestamps pass through unchanged."""
+        day = clock.now().strftime("%Y-%m-%d")
+        out = dict(o)
+        for k in ("available_from", "available_to"):
+            v = out.get(k)
+            if isinstance(v, str) and len(v) == 5 and v[2] == ":":
+                out[k] = f"{day}T{v}:00Z"
+        return out
+
     @app.get("/export/operators.csv")
     def export(a: str = tenant):
         buf = io.StringIO()
         w = csv.DictWriter(buf, fieldnames=COLUMNS, lineterminator="\n")
         w.writeheader()
         for o in st.all(a, "operators"):
-            row = dict(o)
+            row = rendered(o)
             row["lift_trained"] = str(row["lift_trained"]).lower()
             row["on_extra_board"] = str(row["on_extra_board"]).lower()
             w.writerow(row)
@@ -57,7 +68,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
 
     @app.get("/operators/{oid}")
     def get_operator(oid: str, a: str = tenant):
-        return op(a, oid)
+        return rendered(op(a, oid))
 
     @app.get("/assignments/{bid}")
     def get_assignment(bid: str, a: str = tenant):

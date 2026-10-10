@@ -1,10 +1,11 @@
 # Per-agency tool registry: tool -> adapter id. Swap a product by changing one adapter id.
 agency: agency-042
 products:
-  maintenance: {base_url: "http://localhost:8101"}
-  scheduling:  {base_url: "http://localhost:8102"}
-  workforce:   {base_url: "http://localhost:8103"}
-  alerts:      {base_url: "http://localhost:8102"}   # rider alerts assumed served by the scheduling mock host
+  # ports of `python -m transitos.mocks.run` (transitos.mocks.run.PORTS)
+  scheduling:  {base_url: "http://localhost:8101"}
+  maintenance: {base_url: "http://localhost:8103"}
+  workforce:   {base_url: "http://localhost:8104"}
+  alerts:      {base_url: "http://localhost:8105"}
 tools:
   get_vehicle: scheduling_mock_v1
   get_vehicle_history: scheduling_mock_v1
