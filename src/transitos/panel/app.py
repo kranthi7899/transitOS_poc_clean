@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from html import escape
 from typing import Any, Literal
@@ -34,6 +35,7 @@ class DecisionBody(BaseModel):
     plan_version: int
     edits: dict[str, Any] | None = None
     user: str
+    scope: Literal["plan", "return_to_service"] = "plan"  # return_to_service: the separate return approval
 
 
 class DefectBody(BaseModel):
@@ -119,11 +121,33 @@ async def _form(request: Request) -> dict[str, str]:
 def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                audit: AuditReader, killswitch: KillSwitchStore,
                unresolved: UnresolvedReader | None = None,
-               agencies: list[str] | None = None) -> FastAPI:
+               agencies: list[str] | None = None,
+               clock: Callable[[], datetime] | None = None) -> FastAPI:
+    """clock: time source for panel-created events (the sim clock in the integrated system)."""
     app = FastAPI(title="TransitOS panel")
     unresolved = unresolved or (crosswalk if hasattr(crosswalk, "list_unresolved") else None)
 
+    def do_return(run_id: str, body: DecisionBody) -> dict[str, Any]:
+        run = gateway.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "run not found")
+        if body.decision == "edit":
+            raise HTTPException(422, "return-to-service takes approve or reject")
+        if run.status == "DONE":
+            return {**_summary(run), "already_decided": True}
+        if run.status != "RETURNING":
+            raise HTTPException(409, f"run is not awaiting return-to-service approval (status {run.status})")
+        try:
+            run = gateway.submit_return(run_id, body.decision, body.user)
+        except RunNotFound:
+            raise HTTPException(404, "run not found")
+        except (StaleVersion, DecisionConflict) as exc:
+            raise HTTPException(409, str(exc) or type(exc).__name__)
+        return {**_summary(run), "already_decided": False}
+
     def do_decision(run_id: str, body: DecisionBody) -> dict[str, Any]:
+        if body.scope == "return_to_service":
+            return do_return(run_id, body)
         run = gateway.get_run(run_id)
         if run is None:
             raise HTTPException(404, "run not found")
@@ -172,7 +196,7 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
 
     @app.post("/defects", status_code=202)
     def defects(body: DefectBody):
-        ev = build_defect_event(body)
+        ev = build_defect_event(body, clock() if clock else None)
         events.publish(ev)
         return {"event_id": ev.id, "type": ev.type, "source": ev.data["source"]}
 
@@ -240,7 +264,16 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                        for r in audit.for_run(run_id))
         b += ("<div class='card'><h2>Audit trail</h2><table><tr><th>Plan</th><th>Outcome</th>"
               f"<th>Human</th><th>Actions</th></tr>{hist}</table></div>")
-        if run.decision is None:
+        if run.status == "RETURNING":
+            rid = _e(run_id)
+            b += (f"<div class='card'><h2>Return to service</h2><form method='post' action='/ui/runs/{rid}/decision'>"
+                  f"<input type='hidden' name='plan_version' value='{run.plan_version}'>"
+                  "<input type='hidden' name='scope' value='return_to_service'>"
+                  "<input name='user' placeholder='your name' required><div class='row'>"
+                  "<button class='ok' name='decision' value='approve'>Approve return</button>"
+                  "<button class='no' name='decision' value='reject'>Keep out of service</button>"
+                  "</div></form></div>")
+        elif run.decision is None:
             rid = _e(run_id)
             hidden = f"<input type='hidden' name='plan_version' value='{run.plan_version}'>"
             btn = lambda d, cls, label: (
@@ -263,7 +296,7 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         try:
             edits = json.loads(f["edits"]) if f.get("edits", "").strip() else None
             body = DecisionBody(decision=f.get("decision", ""), plan_version=int(f.get("plan_version", "")),
-                                edits=edits, user=f.get("user", ""))
+                                edits=edits, user=f.get("user", ""), scope=f.get("scope") or "plan")
             res = do_decision(run_id, body)
             msg, code = f"Recorded {_e(body.decision)} (status {_e(res['status'])})", 200
         except HTTPException as exc:
@@ -348,7 +381,7 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                               defect_text=f.get("defect_text", ""), user=f.get("user", ""))
         except ValueError as exc:
             raise HTTPException(422, str(exc))
-        ev = build_defect_event(body)
+        ev = build_defect_event(body, clock() if clock else None)
         events.publish(ev)
         return _page("Report received", f"<div class='card'>Event {_e(ev.id)} queued.</div>")
 

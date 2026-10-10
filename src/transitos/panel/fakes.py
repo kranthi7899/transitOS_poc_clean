@@ -44,6 +44,17 @@ class FakeRunGateway:
         return run
 
 
+    def submit_return(self, run_id, decision, user):
+        run = self.runs.get(run_id)
+        if run is None:
+            raise RunNotFound(run_id)
+        if run.status != "RETURNING":
+            raise DecisionConflict(run_id)
+        self.resume_calls.append((run_id, f"return:{decision}", run.plan_version, None, user))
+        run.status = "DONE" if decision == "approve" else "ESCALATED"
+        return run
+
+
 class FakeEventSink:
     def __init__(self) -> None:
         self.events: list[CloudEvent] = []

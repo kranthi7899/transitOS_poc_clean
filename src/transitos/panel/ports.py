@@ -27,6 +27,11 @@ class RunGateway(Protocol):
         """Resume the run's interrupt. May raise RunNotFound, StaleVersion, DecisionConflict."""
         ...
 
+    def submit_return(self, run_id: str, decision: str, user: str) -> RunState:
+        """Resume the separate return-to-service approval (run status RETURNING).
+        May raise RunNotFound, DecisionConflict."""
+        ...
+
 
 class EventSink(Protocol):
     def publish(self, event: CloudEvent) -> None:

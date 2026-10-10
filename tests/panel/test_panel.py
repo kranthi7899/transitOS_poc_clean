@@ -126,3 +126,26 @@ def test_html_form_decision_and_killswitch(env):
     c.post("/ui/killswitch", content="agency=ag1&on=true", follow_redirects=False,
            headers={"content-type": "application/x-www-form-urlencoded"})
     assert ks.is_on("ag1")
+
+
+def test_return_to_service_approval_is_a_separate_scope(env):
+    c, gw, *_ = env
+    body = {**dec(), "scope": "return_to_service"}
+    assert c.post(f"/runs/{RID}/decision", json=body).status_code == 409   # not awaiting return yet
+    gw.runs[RID].status, gw.runs[RID].decision = "RETURNING", "approve"   # plan approved earlier
+    assert "Approve return" in c.get(f"/ui/runs/{RID}").text
+    r = c.post(f"/runs/{RID}/decision", json=body)
+    assert r.status_code == 200 and r.json()["status"] == "DONE" and r.json()["already_decided"] is False
+    again = c.post(f"/runs/{RID}/decision", json=body)
+    assert again.status_code == 200 and again.json()["already_decided"] is True
+    assert [x[1] for x in gw.resume_calls] == ["return:approve"]
+    assert c.post(f"/runs/{RID}/decision", json={**body, "decision": "edit"}).status_code == 422
+
+
+def test_defect_event_time_uses_injected_clock():
+    t = datetime(2026, 10, 10, 6, 0, tzinfo=UTC)
+    sink = FakeEventSink()
+    app = create_app(gateway=FakeRunGateway(), crosswalk=FakeCrosswalk(), events=sink, audit=FakeAuditReader(),
+                     killswitch=FakeKillSwitch(), clock=lambda: t)
+    TestClient(app).post("/defects", json={"agency": "ag1", "native_vehicle_id": "T-77", "defect_text": "x"})
+    assert sink.events[0].time == t
