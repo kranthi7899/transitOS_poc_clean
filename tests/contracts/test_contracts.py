@@ -1,16 +1,21 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
 from transitos.contracts import ids
-from transitos.contracts.envelope import CloudEvent, START_TYPES, UPDATE_TYPES, RESUME_TYPES
+from transitos.contracts.envelope import (
+    RESUME_TYPES,
+    START_TYPES,
+    UPDATE_TYPES,
+    CloudEvent,
+)
 from transitos.contracts.events import DATA_MODELS, PUBLISHER, VehicleFaultDetectedData
 from transitos.contracts.objects import Plan, RunState, Step
 from transitos.contracts.results import Result
 from transitos.contracts.tools import COMPENSATION, SAGA_ORDER
 
-NOW = datetime(2026, 10, 10, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 10, tzinfo=UTC)
 
 
 def test_every_event_type_has_model_publisher_and_role():

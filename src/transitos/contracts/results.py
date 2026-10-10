@@ -19,13 +19,13 @@ class Result(BaseModel, Generic[T]):
         return self.status == "ok"
 
     @classmethod
-    def success(cls, value: T, note: str | None = None) -> "Result[T]":
+    def success(cls, value: T, note: str | None = None) -> Result[T]:
         return cls(status="ok", value=value, note=note)
 
     @classmethod
-    def unavailable(cls, product: str, note: str | None = None) -> "Result[T]":
+    def unavailable(cls, product: str, note: str | None = None) -> Result[T]:
         return cls(status="unavailable", product=product, note=note)
 
     @classmethod
-    def part(cls, value: T, product: str, note: str | None = None) -> "Result[T]":
+    def part(cls, value: T, product: str, note: str | None = None) -> Result[T]:
         return cls(status="partial", value=value, product=product, note=note)

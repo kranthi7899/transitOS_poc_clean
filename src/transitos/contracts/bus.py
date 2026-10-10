@@ -2,7 +2,8 @@
 Semantics every implementation must give: ordered per key, at-least-once, consumer-owned offsets, replay."""
 from __future__ import annotations
 
-from typing import Iterator, Protocol
+from collections.abc import Iterator
+from typing import Protocol
 
 from .envelope import CloudEvent
 
