@@ -222,7 +222,10 @@ class KafkaBus:
         deadline = time.monotonic() + self.timeout
         created = False
         while True:
-            md = self._admin.list_topics(topic=name, timeout=self.timeout).topics.get(name)
+            try:
+                md = self._admin.list_topics(topic=name, timeout=self.timeout).topics.get(name)
+            except ck.KafkaException as e:
+                raise KafkaBusError(f"broker {self.bootstrap} unreachable: {e}") from e
             if md is not None and md.error is None and md.partitions and \
                     all(pm.leader >= 0 for pm in md.partitions.values()):
                 self._topics[name] = sorted(md.partitions)

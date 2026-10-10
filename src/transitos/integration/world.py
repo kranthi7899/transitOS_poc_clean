@@ -52,6 +52,8 @@ class IntegrationWorld:
     # ------------------------------------------------------------------ setup
     def apply(self, scenario: Scenario) -> None:
         t = scenario.tweaks
+        if self.system is not None:   # one world, one live system: release the previous one's clients
+            self.system.close()
         register_fleet(AGENCY, scenario_fleet(t))
         self.mocks = Mocks.start(SimClock(T0))
         self.mocks.seed(AGENCY)

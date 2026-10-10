@@ -8,13 +8,21 @@
     panel (E) over real ports: RunGateway (D graph), EventSink (B outbox), AuditReader (B DecisionStore),
     KillSwitchStore (C), UnresolvedReader (B crosswalk).
 
+Bus profile: `bus=` / env TRANSITOS_BUS selects `sqlite` (default, zero infra: SqliteBus in plumbing.db) or
+`kafka` (KafkaBus on TRANSITOS_KAFKA, default 127.0.0.1:9092; needs `uv sync --extra kafka` and a broker,
+see scripts/kafka.sh). On Kafka each System uses its own topic/group namespace, persisted in
+`data_dir/kafka-namespace` so restart() reconnects to the same topics and committed offsets; env
+TRANSITOS_KAFKA_NAMESPACE overrides it ("none" = the canonical topic names events.raw/...).
+
 Everything that would be "our process" lives in SQLite files under `data_dir`; `restart()` drops every
 in-memory object and rebuilds it from those files (the mock products keep running, as external products
 would). `tick()` runs each stage once, in order; `run_until_idle()` repeats until nothing moves.
 """
 from __future__ import annotations
 
+import os
 import tempfile
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +44,7 @@ from transitos.plumbing import (
     CrosswalkService,
     Db,
     DecisionStore,
+    KafkaBus,
     Relay,
     SqliteBus,
     SqliteCrosswalk,
@@ -74,6 +83,14 @@ WRITE_PRODUCTS = ("maintenance", "scheduling", "workforce", "alerts")
 INTEGRATION_CONFIG = Path(__file__).parent / "config"
 WORKFLOW_GROUP = "workflow"
 WEBHOOK_URL = "http://transitos/webhook"
+BUS_KINDS = ("sqlite", "kafka")
+
+
+def bus_kind(explicit: str | None = None) -> str:
+    kind = (explicit or os.environ.get("TRANSITOS_BUS") or "sqlite").strip().lower()
+    if kind not in BUS_KINDS:
+        raise ValueError(f"TRANSITOS_BUS must be one of {BUS_KINDS}, got {kind!r}")
+    return kind
 
 
 @dataclass
@@ -110,10 +127,11 @@ class Mocks:
 
 class System:
     def __init__(self, agency: str, mocks: Mocks, data_dir: str | Path | None = None, *,
-                 reasoner: Reasoner | None = None, seed_crosswalk: bool = True):
+                 reasoner: Reasoner | None = None, seed_crosswalk: bool = True, bus: str | None = None):
         self.agency, self.mocks, self.clock = agency, mocks, mocks.clock
         self.dir = Path(data_dir or tempfile.mkdtemp(prefix="transitos-"))
         self.dir.mkdir(parents=True, exist_ok=True)
+        self.bus_kind = bus_kind(bus)
         self.config_dir = INTEGRATION_CONFIG if (INTEGRATION_CONFIG / f"{agency}.yaml").exists() else TOOLS_CONFIG_DIR
         self.reasoner = reasoner or StubReasoner()
         self.seq = Seq()
@@ -132,7 +150,8 @@ class System:
     def _build(self) -> None:
         d = self.dir
         self.db = Db(str(d / "plumbing.db"))      # bus, outbox, adapter cursors, crosswalk, audit
-        self.bus = SqliteBus(self.db)
+        self.bus: SqliteBus | KafkaBus = SqliteBus(self.db) if self.bus_kind == "sqlite" else \
+            KafkaBus(namespace=self.kafka_namespace())
         self.relay = Relay(self.db, self.bus)
         self.xw = SqliteCrosswalk(self.db, self.bus)
         self.xw_svc = CrosswalkService(self.db, self.bus, self.xw)
@@ -160,10 +179,34 @@ class System:
                                   unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now)
         self.panel_client = TestClient(self.panel)
 
+    def kafka_namespace(self) -> str:
+        env = os.environ.get("TRANSITOS_KAFKA_NAMESPACE")
+        if env is not None:
+            return "" if env.strip().lower() in ("", "none") else env.strip()
+        f = self.dir / "kafka-namespace"
+        if not f.exists():
+            f.write_text(f"transitos-{uuid.uuid4().hex[:12]}")
+        return f.read_text().strip()
+
+    def close(self) -> None:
+        """Release every connection and bus client (end of life; restart() is the crash-and-rebuild path)."""
+        for closer in (self.bus.close if isinstance(self.bus, KafkaBus) else None, self.db.close,
+                       self._ckpt.conn.close, self.store.close):
+            if closer is None:
+                continue
+            try:
+                closer()
+            except Exception:  # noqa: BLE001,S110 - best effort
+                pass
+
     def restart(self) -> None:
         """Simulate a process restart: close every connection, rebuild every in-process object from the
         same SQLite files, then let the workflow recover (re-drive runs that died between checkpoints)."""
-        for closer in (self.db.close, self._ckpt.conn.close, self.store.close):
+        # a Kafka bus is closed without committing anything: uncommitted deliveries come back, as after a crash
+        kafka_close = self.bus.close if isinstance(self.bus, KafkaBus) else None
+        for closer in (kafka_close, self.db.close, self._ckpt.conn.close, self.store.close):
+            if closer is None:
+                continue
             try:
                 closer()
             except Exception:  # noqa: BLE001,S110 - a crashed process may leave a broken connection
@@ -211,6 +254,7 @@ class System:
         from transitos.plumbing.crosswalk_service import NATIVE_FIELD
         f, _ = NATIVE_FIELD[event.type]
         self.bus.send(TOPIC_RAW, key or f"{PUBLISHER[event.type]}:{event.data.get(f, '')}", event)
+        self.bus.flush()   # acknowledged before we return (a no-op on SqliteBus)
 
     # ------------------------------------------------------------------ the loop
     def consume_resolved(self, limit: int = 100) -> int:
