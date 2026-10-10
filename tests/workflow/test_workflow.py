@@ -156,6 +156,7 @@ def test_kill_switch_mid_run_halts_writes(env):
     esc = env.store.get_escalation(rid)
     assert esc["reason"] == "kill_switch"
     assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable"]
+    assert "kill_switch" in run_of(env, rid)["violations"]
 
 
 def test_kill_switch_on_at_start_is_recommend_only(make_env):
@@ -283,3 +284,24 @@ def test_data_unavailable_escalates_no_guess(env):
     rid = start(env)
     assert env.store.get_run(rid)["status"] == "ESCALATED"
     assert env.store.get_escalation(rid)["reason"].startswith("unavailable:")
+    assert run_of(env, rid)["violations"][-1].startswith("product_unavailable:")
+
+
+def _pm_event(over_mi: int):
+    return make_event("PMOverdue", f"pm:{over_mi}", {"native_asset_id": "1106", "service_code": "PM-A",
+                                                     "due_mi": 10000, "meter_mi": 10000 + over_mi,
+                                                     "refs": {"canonical": "veh-1"}})
+
+
+def test_pm_below_urgent_threshold_is_monitor_without_reads_or_writes(env):
+    env.world.unavailable_reads.add("get_vehicle")  # proves no gather happens for a monitor decision
+    rid = start(env, _pm_event(200))
+    run = run_of(env, rid)
+    assert run["plan"]["decision"] == "monitor" and run["status"] == "DONE"
+    assert env.world.effects == []
+
+
+def test_pm_above_urgent_threshold_plans(env):
+    rid = start(env, _pm_event(1200))
+    assert run_of(env, rid)["plan"]["decision"] != "monitor"
+    assert env.store.get_run(rid)["status"] == "AWAITING_APPROVAL"

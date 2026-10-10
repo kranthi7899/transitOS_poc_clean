@@ -252,9 +252,23 @@ def build_graph(deps: Deps, checkpointer):
         return Result.unavailable("workflow", f"no compensation for {step.action}")
 
     # ------------------------------------------------------------------ nodes
+    def pm_not_urgent(run: RunState) -> str | None:
+        """Policy rule in code (A7): PM overdue below the urgent threshold -> monitor, no plan, no writes."""
+        trig = run.trigger_event
+        if trig.get("type") != "PMOverdue":
+            return None
+        d = trig.get("data") or {}
+        over = int(d.get("meter_mi", 0)) - int(d.get("due_mi", 0))
+        thr = deps.policy().limits.pm_urgent_overdue_mi
+        return f"PM {over} mi overdue < urgent threshold {thr} mi: monitor" if over < thr else None
+
     def gather(state: WState):
         run, ctx = _load(state)
         status(run, "GATHERING")
+        if (why := pm_not_urgent(run)) is not None:
+            run.plan = Plan(decision="monitor", reasoning=why, assumptions=["policy rule (code), no model call"])
+            ctx["model"], ctx["prompt_version"] = "policy_rule", "n/a"
+            return _out(run, ctx, "policy")
         facts, err = do_gather(run)
         if err:
             ctx["reason"] = err
@@ -517,6 +531,12 @@ def build_graph(deps: Deps, checkpointer):
 
     def escalate(state: WState):
         run, ctx = _load(state)
+        # Contract-level outcome tags on RunState.violations (Track F's A11 classification convention).
+        reason = str(ctx.get("reason") or "")
+        tag = ("product_unavailable:" + reason.removeprefix("unavailable:") if reason.startswith("unavailable:")
+               else "kill_switch" if reason.startswith("kill_switch") else None)
+        if tag and tag not in run.violations:
+            run.violations.append(tag)
         detail = {
             "reason": ctx.get("reason"), "original_reason": ctx.get("original_reason"),
             "violations": run.violations, "stale_reasons": ctx.get("stale_reasons"),
@@ -604,7 +624,7 @@ def build_graph(deps: Deps, checkpointer):
         g.add_node(n, fn)
     g.add_edge(START, "gather")
     targets = {
-        "gather": ["check", "escalate"], "check": ["reason", "escalate"], "reason": ["policy", "escalate"],
+        "gather": ["check", "escalate", "policy"], "check": ["reason", "escalate"], "reason": ["policy", "escalate"],
         "policy": ["propose"], "propose": ["gate", "escalate", "close"],
         "gate": ["await_approval", "execute_step", "wait_for_repair", "route_repair"],
         "route": ["revalidate", "gate", "compensate", "escalate", "close_rejected"],
