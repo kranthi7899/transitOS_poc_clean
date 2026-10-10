@@ -9,3 +9,4 @@ data/
 journal/*.tmp
 journal/.lock
 verification-report.json
+.playwright-mcp/
