@@ -50,5 +50,25 @@ def test_crashing_world_is_reported_not_raised():
     assert rs[0].outcome == "ERROR" and "boom" in rs[0].mismatches[0]
 
 
+def test_report_json_lists_what_the_tripwire_did_not_check_without_failing_the_scenario(tmp_path):
+    """R3-2: the hours tripwire's skipped caps appear per scenario under `not_checked` (empty list when nothing was
+    skipped); they are notes, not violations, and do not change any outcome."""
+    class HoursUnknown(FakeWorld):
+        def observe(self):
+            obs = super().observe()     # only the OBSERVED copy loses its hours, not the world the run uses
+            obs.operators = [o.model_copy(update={"unknown_fields": ["hours_today"]}) for o in obs.operators]
+            return obs
+
+    res = run_scenario(HoursUnknown(), BY_ID["operator_swap_needed"])
+    assert res.passed and res.outcome == "plan-valid"
+    assert res.not_checked == ["OP-2: hours_today unknown, daily cap not checked"]
+    data = report.to_json([res, run_scenario(FakeWorld(), BY_ID["operator_swap_needed"])])
+    assert [s["not_checked"] for s in data["scenarios"]] == [res.not_checked, []]
+    assert data["passed"] == 2
+    out = tmp_path / "r.json"
+    assert report.main(["--out", str(out)]) == 0
+    assert all(s["not_checked"] == [] for s in json.loads(out.read_text())["scenarios"])
+
+
 def test_classify_empty():
     assert classify(FakeWorld().observe()) == "no-run"

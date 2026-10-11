@@ -211,15 +211,15 @@ def _qualification_items(block: Block, op: Operator, vehicle_type: str | None, f
     rb = lambda f: facts.record_basis("workforce", f, op)
     n = block.needs
     out: list[ClearanceItem] = []
-    if vehicle_type is None:
-        # R2-1: the type of the vehicle that will run the block is not known (not supplied, blank, or not chosen
-        # yet): every type-dependent qualification rule is unverifiable, never judged on a placeholder
-        why = f"{op.id}: the vehicle's type is not known, so the qualification it needs cannot be checked"
-        if any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):
-            out += [unverifiable(r, why) for r in ("operator_licence_class", "operator_endorsement",
-                                                   "operator_vehicle_training", "operator_training_expiry")]
-        else:
-            out.append(unverifiable("operator_qualification", why))
+    if vehicle_type is None and any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):
+        # R2-1 / R3-1: the vehicle's type is not known (not supplied, blank, or not chosen yet). Only the checks
+        # that depend on the type are unverifiable; everything else is judged from native data (A136)
+        out += _new_model_items(block, op, None, None, facts)
+    elif vehicle_type is None:
+        # the legacy list only names types: without the vehicle's type it says nothing (never judged on a placeholder)
+        out.append(unverifiable("operator_qualification",
+                                f"{op.id}: the vehicle's type is not known, so the legacy qualification list "
+                                "cannot be checked"))
     elif any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):        # new qualification model (D-1)
         req = facts.tables.vehicle_requirements.get(vehicle_type)
         if req is None:
@@ -239,32 +239,54 @@ def _qualification_items(block: Block, op: Operator, vehicle_type: str | None, f
     return out
 
 
-def _new_model_items(block: Block, op: Operator, vtype: str, req, facts: Facts) -> list[ClearanceItem]:
+def _passenger_endorsement_need(vtype: str | None, req, facts: Facts) -> bool | None:
+    """Whether the passenger endorsement is needed. With the type unknown it is needed when EVERY configured type
+    needs it, not needed when none does, and unknown (None) when the types disagree (R3-1, A136: computed from
+    licence_classes.yaml, never hard-coded)."""
+    if vtype is not None:
+        return bool(req.get("passenger_endorsement"))
+    flags = {bool(r.get("passenger_endorsement")) for r in facts.tables.vehicle_requirements.values()}
+    return flags.pop() if len(flags) == 1 else None
+
+
+def _new_model_items(block: Block, op: Operator, vtype: str | None, req, facts: Facts) -> list[ClearanceItem]:
+    """`vtype` None = the vehicle's type is unknown: the licence class for the type, the trained-type membership and
+    the expiry entry keyed by the type are unverifiable; the passenger endorsement (when every type needs it), lift
+    training and every other expiry are still judged (R3-1)."""
     rb = lambda f: facts.record_basis("workforce", f, op)
     out: list[ClearanceItem] = []
     order = facts.tables.licence_order
     lb = rb("licence_class")
+    no_type = f"{op.id}: the vehicle's type is not known"
     if lb == "unknown" or op.licence_class is None:
         out.append(unverifiable("operator_licence_class", f"{op.id}: licence class not on record"))
+    elif vtype is None:
+        out.append(unverifiable("operator_licence_class", f"{no_type}, so the licence class it needs is unknown"))
     else:
         need = req["min_licence_class"]
         ok = order.index(op.licence_class) >= order.index(need)
         out.append(item("operator_licence_class", "pass" if ok else "violation", lb,
                         "" if ok else f"{op.id}: licence class {op.licence_class} below {need} needed for {vtype}"))
     code = facts.tables.passenger_endorsement_code
-    needs_p = bool(req.get("passenger_endorsement"))
+    p_need = _passenger_endorsement_need(vtype, req, facts)
+    needs_p = p_need is not False
     eb, tb, vb = rb("endorsements"), rb("trained_vehicle_types"), rb("training_valid_to")
     held_p = code in op.endorsements
-    if needs_p:
+    if p_need is None:
+        out.append(unverifiable("operator_endorsement",
+                                f"{no_type}, and the configured types disagree on the passenger endorsement"))
+    elif needs_p:
         if eb == "unknown":
             out.append(unverifiable("operator_endorsement", f"{op.id}: endorsements not on record"))
         else:
             out.append(item("operator_endorsement", "pass" if held_p else "violation", eb,
                             "" if held_p else f"{op.id}: passenger endorsement {code} missing"))
-    train = req["training_type"]
+    train = req["training_type"] if req is not None else None
     held_t = train in op.trained_vehicle_types
     if tb == "unknown":
         out.append(unverifiable("operator_vehicle_training", f"{op.id}: trained vehicle types not on record"))
+    elif train is None:
+        out.append(unverifiable("operator_vehicle_training", f"{no_type}, so the type training it needs is unknown"))
     else:
         out.append(item("operator_vehicle_training", "pass" if held_t else "violation", tb,
                         "" if held_t else f"{op.id}: not trained on vehicle type {train}"))
@@ -273,7 +295,11 @@ def _new_model_items(block: Block, op: Operator, vtype: str, req, facts: Facts) 
     held: list[str] = []
     unsure: list[str] = []
     bases: list[Basis] = [vb]
-    for cred, needed, basis, has in ((code, needs_p, eb, held_p), (train, True, tb, held_t)):
+    if p_need is None:
+        unsure.append(code)
+    if train is None:
+        unsure.append("training for the vehicle's type")
+    for cred, needed, basis, has in ((code, p_need is True, eb, held_p), (train, train is not None, tb, held_t)):
         if not needed:
             continue
         bases.append(basis)

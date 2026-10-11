@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from .invariants import check_by_invariant
+from .invariants import check_by_invariant, hard_limits_not_checked
 from .model import Observation, Violation
 from .scenarios import Outcome, Scenario
 from .world import World
@@ -49,6 +49,7 @@ class ScenarioResult(BaseModel):
     outcome: str
     mismatches: list[str] = Field(default_factory=list)
     invariants: dict[str, list[Violation]] = Field(default_factory=dict)
+    not_checked: list[str] = Field(default_factory=list)   # R3-2: tripwire notes; never affect `passed`
     observation: Observation | None = None
 
     @property
@@ -110,4 +111,5 @@ def run_scenario(world: World, scenario: Scenario, keep_observation: bool = Fals
         mism.append(f"{attached} attached events != expected {scenario.expect_attached}")
     return ScenarioResult(scenario_id=scenario.id, title=scenario.title, expected=scenario.expected.value,
                           outcome=outcome, mismatches=mism, invariants=check_by_invariant(obs),
+                          not_checked=hard_limits_not_checked(obs),
                           observation=obs if keep_observation else None)

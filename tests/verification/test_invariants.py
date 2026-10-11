@@ -91,6 +91,15 @@ def test_tripwire_skips_unknown_hours_and_says_so_instead_of_passing_on_a_placeh
 
 def test_tripwire_reports_nothing_unchecked_when_hours_are_known(good):
     assert inv.hard_limits_not_checked(good) == []
+    assert inv.check_all(good).not_checked == []
+
+
+def test_check_all_carries_the_unchecked_notes_without_making_them_violations(good):
+    """R3-2: check_all returns the violations (a list, as before) and, alongside, what was not checked."""
+    op = next(o for o in good.operators if o.id == _write(good, "assign_operator").params["operator_id"])
+    op.unknown_fields = ["hours_week"]
+    found = inv.check_all(good)
+    assert found == [] and found.not_checked == [f"{op.id}: hours_week unknown, weekly cap not checked"]
 
 
 # idempotent writes

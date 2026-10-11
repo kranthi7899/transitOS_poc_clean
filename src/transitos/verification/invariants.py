@@ -211,8 +211,17 @@ INVARIANTS: dict[str, Checker] = {
 }
 
 
-def check_all(obs: Observation) -> list[Violation]:
-    return [v for fn in INVARIANTS.values() for v in fn(obs)]
+class Findings(list):
+    """check_all's result: the violations (a plain list, compared and iterated exactly as before) plus
+    `not_checked`, what the tripwire had to skip (R3-2). Notes, never violations."""
+
+    def __init__(self, violations: list[Violation], not_checked: list[str]):
+        super().__init__(violations)
+        self.not_checked = not_checked
+
+
+def check_all(obs: Observation) -> Findings:
+    return Findings([v for fn in INVARIANTS.values() for v in fn(obs)], hard_limits_not_checked(obs))
 
 
 def check_by_invariant(obs: Observation) -> dict[str, list[Violation]]:
