@@ -31,27 +31,30 @@ def _date(v):
     return v
 
 
-def block(spec, bid="b1", op="op-1", start_h=1.0, hours=4.0) -> Block:
+def block(spec, bid="b1", op="op-1", start_h=1.0, hours=4.0, unknown=()) -> Block:
     spec = dict(spec or {})
     start_h, hours = spec.pop("start_h", start_h), spec.pop("hours", hours)
-    needs = {"seats": 30, "wheelchair_positions": 1, "lift": True, "type": "standard", **spec}
+    needs = {"seats": 30, "wheelchair_positions": 1, "lift": True, "type": "standard", **spec,
+             "unknown_fields": list(unknown or ())}
     return Block(id=bid, vehicle_id="veh-1", operator_id=op, start=T0 + timedelta(hours=start_h),
                  end=T0 + timedelta(hours=start_h + hours), start_depot="North", needs=Needs(**needs))
 
 
-def vehicle(spec, vid="veh-2") -> Vehicle:
+def vehicle(spec, vid="veh-2", unknown=()) -> Vehicle:
     base = {"type": "standard", "seats": 40, "wheelchair_positions": 2, "lift_ok": True, "status": "ready"}
-    return Vehicle(id=vid, agency="a", depot="North", **{**base, **(spec or {})})
+    return Vehicle(id=vid, agency="a", depot="North", unknown_fields=list(unknown or ()), **{**base, **(spec or {})})
 
 
-def operator(spec, oid="op-1", expires=None, window=None) -> Operator:
+def operator(spec, oid="op-1", expires=None, window=None, unknown=()) -> Operator:
     far = datetime(2030, 1, 1, tzinfo=UTC)
     base = {"licence_class": "B", "endorsements": ["P"], "trained_vehicle_types": ["standard"],
             "training_valid_to": {"P": far, "standard": far, "lift": far}, "lift_trained": True,
-            "hours_today": 4.0, "hours_week": 20.0}
+            "hours_today": 4.0, "hours_week": 20.0, "medical_valid_to": far,
+            "unknown_fields": list(unknown or ())}
     spec = {k: _date(v) for k, v in (spec or {}).items()}
-    if "last_duty_end_h" in spec:
-        spec["last_duty_end"] = T0 + timedelta(hours=spec.pop("last_duty_end_h"))
+    for key in ("last_duty_end", "duty_start_today"):
+        if f"{key}_h" in spec:
+            spec[key] = T0 + timedelta(hours=spec.pop(f"{key}_h"))
     base.update(spec)
     for cred, d in (expires or {}).items():
         base["training_valid_to"] = {**base["training_valid_to"], cred: _date(d)}
@@ -83,7 +86,10 @@ def run_row(row):
         o = row["option"]
         blocks = {b[0]: block(None, b[0], b[3] if len(b) > 3 else f"op-{n + 1}", b[1], b[2])
                   for n, b in enumerate(o["blocks"])}
-        ops = {x: operator(o.get("operator"), x) for x in ("op-1", "op-2")}
+        ids = {"op-1", "op-2"} | {b.operator_id for b in blocks.values() if b.operator_id} | \
+              {a[2] for a in o["assign"] if len(a) > 2}
+        per = o.get("operators", {})
+        ops = {x: operator({**(o.get("operator") or {}), **per.get(x, {})}, x) for x in sorted(ids)}
         com = o.get("commitments", {})
         commitments = None if com is None else {
             k: [(T0 + timedelta(hours=s), T0 + timedelta(hours=e), bid) for s, e, bid in v] for k, v in com.items()}
@@ -92,9 +98,10 @@ def run_row(row):
         opt = Option(tuple(Assign(a[0], a[1], a[2] if len(a) > 2 else None) for a in o["assign"]))
         c = evaluate_option(opt, f, pol, T0)
         return c.items, c
-    b = block(g.get("block"))
-    v = vehicle(g.get("vehicle"))
-    op = operator(g.get("operator"), expires=g.get("expires"), window=g.get("operator_window_h"))
+    b = block(g.get("block"), unknown=g.get("needs_unknown"))
+    v = vehicle(g.get("vehicle"), unknown=g.get("vehicle_unknown"))
+    op = operator(g.get("operator"), expires=g.get("expires"), window=g.get("operator_window_h"),
+                  unknown=g.get("operator_unknown"))
     f = Facts(blocks={b.id: b}, vehicles={v.id: v}, operators={op.id: op}, ready_count=3, commitments={},
               profiles=profiles(g.get("drop"), g.get("legacy")))
     items = vehicle_items(b, v, f, pol) + operator_items(b, op, v.type, f, pol)
@@ -109,6 +116,9 @@ def test_golden_table_matches_policy_text(row):
         assert c is not None and c.excluded == exp["excluded"], [i.model_dump() for i in c.items]
         return
     got = [i for i in items if i.rule == row["rule"]]
+    if exp.get("absent"):
+        assert not got, (row["id"], [i.model_dump() for i in got])
+        return
     assert got, (row["rule"], [i.model_dump() for i in items])
     sev = ["pass", "not_evaluated", "warn", "unverifiable", "violation"]
     it = max(got, key=lambda i: sev.index(i.status))      # per-block repeats: the worst verdict stands

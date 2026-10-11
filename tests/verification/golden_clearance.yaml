@@ -10,6 +10,13 @@
 #   drop:     capability-profile fields the product does not supply (workforce or scheduling)
 #   legacy:   true -> only the legacy `qualifications` list is supplied
 #   policy:   AgencyPolicy overrides (vehicle_fit, limits.*)
+#   operator_unknown / vehicle_unknown / needs_unknown: contract field names listed in that record's
+#             `unknown_fields` (C-2: the cell was blank or the key absent for THIS record)
+#   operator: duty_start_today_h, last_duty_end_h (hours after 06:00); medical_valid_to as a date
+#   option:   blocks [[id, start_h, hours, current_operator]], assign [[block, spare, new_operator]],
+#             operators {op-id: overrides} (per operator, on top of `operator`), commitments {"vehicle:<id>" |
+#             "operator:<id>": [[start_h, end_h, block]]}
+# `expect.absent: true` means the rule must produce no item at all.
 # `expect.status` / `basis` / `requires_ack` are compared with the item named by `rule`.
 
 # ---- Q1: vehicle type is graded ------------------------------------------------------------------------
@@ -291,3 +298,299 @@
   kill_switch: false
   rule: kill_switch
   expect: {status: pass}
+
+# =========================================================================================================
+# Step 1b rows (reviewer R1 findings F2, F3, F5, F7, F8; supervisor rulings). Written from the policy text
+#   R  = supervisor rulings for Step 1b (F2 per-field qualification, F3 per-row unknown via C-2, F5 kept plus
+#        new hours, F8 medical card is a legal rule)
+#   C2 = coordination/requests/C-2.md (per-row unknown_fields)
+# before the code that implements them existed.
+# =========================================================================================================
+
+# ---- F2: qualification is decided per field; the legacy list only when NONE of the new fields is supplied ----
+- id: partial_qual_licence_column_missing_makes_only_licence_unverifiable
+  source: "R F2: a missing licence_class makes ONLY operator_licence_class unverifiable; A Q3 unknown on a legal rule = unverifiable"
+  given: {drop: [licence_class]}
+  rule: operator_licence_class
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: partial_qual_licence_missing_endorsement_judged_from_native_data_pass
+  source: "R F2: endorsement, training and expiry are judged from native data"
+  given: {drop: [licence_class]}
+  rule: operator_endorsement
+  expect: {status: pass, basis: native}
+- id: partial_qual_licence_missing_known_missing_endorsement_is_violation
+  source: "R F2 + A Q1: known missing qualification is a hard violation"
+  given: {drop: [licence_class], operator: {endorsements: []}}
+  rule: operator_endorsement
+  expect: {status: violation, basis: native}
+- id: partial_qual_licence_missing_known_untrained_type_is_violation
+  source: "R F2 + A Q1: known missing qualification"
+  given: {drop: [licence_class], operator: {trained_vehicle_types: [cutaway]}}
+  rule: operator_vehicle_training
+  expect: {status: violation, basis: native}
+- id: partial_qual_licence_missing_known_expiry_is_violation
+  source: "R F2 + P Review Focus 1: expired on the day it expires"
+  given: {drop: [licence_class], expires: {P: "2026-10-10"}}
+  rule: operator_training_expiry
+  expect: {status: violation, basis: native}
+- id: partial_qual_licence_missing_legacy_list_is_not_used
+  source: "R F2: the legacy list is used only when NONE of the new qualification fields is supplied"
+  given: {drop: [licence_class], operator: {qualifications: [van]}}
+  rule: operator_qualification
+  expect: {absent: true}
+- id: partial_qual_endorsements_column_missing_is_unverifiable
+  source: "A Q3: unknown on a legal rule = unverifiable"
+  given: {drop: [endorsements]}
+  rule: operator_endorsement
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: partial_qual_endorsements_missing_licence_still_judged
+  source: "R F2 (per field)"
+  given: {drop: [endorsements], operator: {licence_class: C}}
+  rule: operator_licence_class
+  expect: {status: violation, basis: native}
+- id: partial_qual_training_column_missing_is_unverifiable
+  source: "A Q3"
+  given: {drop: [trained_vehicle_types]}
+  rule: operator_vehicle_training
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: partial_qual_training_column_missing_expiry_not_a_silent_pass
+  source: "A Q3: never a silent pass (whether the type training is held, and so dated, is unknown)"
+  given: {drop: [trained_vehicle_types]}
+  rule: operator_training_expiry
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- F3: blank cells and undeclared keys are unknown for THAT record (C-2), never a default value ----------
+- id: blank_hours_today_is_unverifiable_not_zero
+  source: "R F3 / C2: blank hours must not become 0 (a silent pass); A Q3"
+  given: {operator: {hours_today: 0.0}, operator_unknown: [hours_today]}
+  rule: operator_hours_day
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_hours_today_ignores_any_value_left_in_the_record
+  source: "R F3: a listed field is unknown for that record (value not read)"
+  given: {operator: {hours_today: 9.0}, operator_unknown: [hours_today]}
+  rule: operator_hours_day
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_hours_week_is_unverifiable
+  source: "R F3 / C2"
+  given: {operator: {hours_week: 0.0}, operator_unknown: [hours_week]}
+  rule: operator_hours_week
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_lift_trained_is_unverifiable_not_violation
+  source: "R F3: blank lift_trained must not become False (a violation); A Q3"
+  given: {operator: {lift_trained: false}, operator_unknown: [lift_trained]}
+  rule: operator_lift_training
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_available_from_is_unverifiable_not_open
+  source: "R F3: blank availability must not become 'no limit' (a silent pass)"
+  given: {operator_unknown: [available_from]}
+  rule: operator_availability
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_available_to_is_unverifiable
+  source: "R F3"
+  given: {operator_unknown: [available_to]}
+  rule: operator_availability
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_licence_class_cell_is_unverifiable
+  source: "C2 + A Q3"
+  given: {operator: {licence_class: B}, operator_unknown: [licence_class]}
+  rule: operator_licence_class
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_endorsements_cell_is_unknown_not_none_held
+  source: "R F3: a blank cell is unknown, not an empty list (A73 corrected)"
+  given: {operator: {endorsements: []}, operator_unknown: [endorsements]}
+  rule: operator_endorsement
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_trained_types_cell_is_unknown
+  source: "R F3"
+  given: {operator: {trained_vehicle_types: []}, operator_unknown: [trained_vehicle_types]}
+  rule: operator_vehicle_training
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_training_valid_to_cell_is_unknown
+  source: "R F3"
+  given: {operator_unknown: [training_valid_to]}
+  rule: operator_training_expiry
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_legacy_qualifications_cell_is_unknown
+  source: "R F3 (legacy-only product)"
+  given: {legacy: true, operator: {qualifications: []}, operator_unknown: [qualifications]}
+  rule: operator_qualification
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_vehicle_seats_is_unverifiable
+  source: "R F3: a missing scheduling field is unknown, not a default"
+  given: {vehicle: {seats: 0}, vehicle_unknown: [seats]}
+  rule: vehicle_seats
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_vehicle_wheelchair_is_unverifiable
+  source: "R F3: missing wheelchair_positions must not default to 0"
+  given: {vehicle: {wheelchair_positions: 0}, vehicle_unknown: [wheelchair_positions]}
+  rule: vehicle_wheelchair
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_vehicle_lift_is_unverifiable
+  source: "R F3: missing lift_ok must not default to False"
+  given: {vehicle: {lift_ok: false}, vehicle_unknown: [lift_ok]}
+  rule: vehicle_lift
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_vehicle_type_is_unverifiable
+  source: "R F3: missing type must not default to 'bus'; A Q3 (safety rule)"
+  given: {vehicle: {type: bus}, vehicle_unknown: [type]}
+  rule: vehicle_fit
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: vehicle_type_not_supplied_by_product_is_unverifiable
+  source: "A Q3: unknown on a safety rule = unverifiable (vehicle fit cannot be graded without a type)"
+  given: {drop: [type]}
+  rule: vehicle_fit
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: blank_vehicle_length_falls_back_to_assumed_default
+  source: "A Q3: resolution order native, derived, agency default tagged ASSUMED, unknown (A66 typical length)"
+  given: {block: {max_vehicle_length_ft: 45}, vehicle: {type: standard, length_ft: 99}, vehicle_unknown: [length_ft]}
+  rule: vehicle_length
+  expect: {status: pass, basis: assumed}
+- id: needs_seats_undeclared_is_unverifiable
+  source: "R F3: missing block-needs keys must not default to 'no requirement'"
+  given: {vehicle: {seats: 10}, needs_unknown: [seats]}
+  rule: vehicle_seats
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: needs_wheelchair_undeclared_is_unverifiable
+  source: "R F3"
+  given: {block: {wheelchair_positions: 0}, vehicle: {wheelchair_positions: 0}, needs_unknown: [wheelchair_positions]}
+  rule: vehicle_wheelchair
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: needs_lift_undeclared_is_unverifiable
+  source: "R F3"
+  given: {block: {lift: false}, vehicle: {lift_ok: false}, needs_unknown: [lift]}
+  rule: vehicle_lift
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: needs_lift_undeclared_makes_lift_training_unverifiable
+  source: "R F3 (whether lift training is required is unknown)"
+  given: {block: {lift: false}, operator: {lift_trained: false}, needs_unknown: [lift]}
+  rule: operator_lift_training
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: needs_type_undeclared_is_unverifiable
+  source: "R F3"
+  given: {block: {type: null}, needs_unknown: [type]}
+  rule: vehicle_fit
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: needs_length_limit_undeclared_is_unverifiable
+  source: "R F3 + A Q1 (a declared restriction is a hard block; whether one exists is unknown)"
+  given: {vehicle: {type: articulated, length_ft: 60}, needs_unknown: [max_vehicle_length_ft]}
+  rule: vehicle_length
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: needs_length_limit_declared_none_is_no_restriction
+  source: "A Q1: only a DECLARED restriction applies (key present, no limit)"
+  given: {vehicle: {type: articulated, length_ft: 60}}
+  rule: vehicle_length
+  expect: {absent: true}
+
+# ---- F8: the medical card is a LEGAL rule -----------------------------------------------------------------
+- id: medical_valid_card_passes
+  source: "R F8: medical card is a legal rule"
+  given: {operator: {medical_valid_to: "2027-01-01"}}
+  rule: operator_medical
+  expect: {status: pass, basis: native}
+- id: medical_expiring_on_the_block_day_is_violation
+  source: "R F8 (known expired = violation) + P Review Focus 1 / A69 reading (the expiry day is expired)"
+  given: {operator: {medical_valid_to: "2026-10-10"}}
+  rule: operator_medical
+  expect: {status: violation, basis: native}
+- id: medical_column_missing_is_unverifiable
+  source: "R F8: unknown = unverifiable (requires_ack), NOT not_evaluated"
+  given: {drop: [medical_valid_to]}
+  rule: operator_medical
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: medical_no_date_on_record_is_unverifiable
+  source: "R F8"
+  given: {operator: {medical_valid_to: null}}
+  rule: operator_medical
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: medical_blank_cell_is_unverifiable
+  source: "R F8 + C2"
+  given: {operator_unknown: [medical_valid_to]}
+  rule: operator_medical
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- optional rules with data: rest and spread --------------------------------------------------------------
+- id: rest_known_and_long_enough_passes
+  source: "P table: optional rule evaluated when data exists (min_rest_hours 8)"
+  given: {operator: {last_duty_end_h: -12}}
+  rule: operator_rest
+  expect: {status: pass, basis: native}
+- id: spread_known_breach_is_warning
+  source: "P table: optional rule known breach = warn (D A72: needs acknowledgement); max_spread_hours 15"
+  given: {operator: {duty_start_today_h: -11}}
+  rule: operator_spread
+  expect: {status: warn, basis: native, requires_ack: true}
+- id: spread_within_limit_passes
+  source: "P D-1 max_spread_hours 15: 15h exactly is not above it"
+  given: {operator: {duty_start_today_h: -10}}
+  rule: operator_spread
+  expect: {status: pass, basis: native}
+- id: rest_blank_cell_is_not_evaluated
+  source: "P table: optional rule, unknown = not_evaluated (C2 per-row)"
+  given: {operator: {last_duty_end_h: -1}, operator_unknown: [last_duty_end]}
+  rule: operator_rest
+  expect: {status: not_evaluated, basis: unknown, requires_ack: false}
+
+# ---- time edges: touching blocks, midnight crossing ----------------------------------------------------------
+- id: touching_blocks_share_a_spare_without_double_booking
+  source: "P Review Focus 7: a spare may serve non-overlapping blocks (D A125: a block is [start, end), so end-to-start is not overlap)"
+  option: {blocks: [[b1, 1, 2], [b2, 3, 2]], spares: [veh-2, veh-3], ready: 2, assign: [[b1, veh-2], [b2, veh-2]]}
+  rule: double_booking
+  expect: {status: pass, basis: native}
+- id: touching_blocks_consume_one_spare
+  source: "P Review Focus 7: one spare consumed"
+  option: {blocks: [[b1, 1, 2], [b2, 3, 2]], spares: [veh-2, veh-3], ready: 2, assign: [[b1, veh-2], [b2, veh-2]]}
+  rule: last_spare
+  expect: {status: pass, basis: native}
+- id: touching_blocks_same_operator_is_not_double_booked
+  source: "P 1.3 double-booking + D A125"
+  option: {blocks: [[b1, 1, 2, op-1], [b2, 3, 2, op-2]], spares: [veh-2], ready: 3, assign: [[b1, veh-2], [b2, veh-2, op-1]]}
+  rule: double_booking
+  expect: {status: pass, basis: native}
+- id: midnight_block_is_expired_when_the_credential_expires_on_the_day_it_ends
+  source: "P Review Focus 1 (violation on the day it expires) + A69 (the block's end day)"
+  given: {block: {start_h: 17, hours: 4}, expires: {P: "2026-10-11"}}
+  rule: operator_training_expiry
+  expect: {status: violation, basis: native}
+- id: midnight_block_passes_when_the_credential_outlives_it
+  source: "P Review Focus 1 (converse)"
+  given: {block: {start_h: 17, hours: 4}, expires: {P: "2026-10-12"}}
+  rule: operator_training_expiry
+  expect: {status: pass, basis: native}
+- id: midnight_block_hours_count_in_full
+  source: "A Q1 daily hours cap 10h: 6.5h + 4h block across midnight = 10.5h"
+  given: {block: {start_h: 17, hours: 4}, operator: {hours_today: 6.5}}
+  rule: operator_hours_day
+  expect: {status: violation, basis: native}
+
+# ---- F5: a kept operator who is also given another block accumulates both ----------------------------------
+- id: kept_plus_new_block_breaks_daily_cap
+  source: "R F5: sum every affected block the operator ends up on (kept plus newly assigned): 4h + 4h + 4h = 12h > 10h"
+  option: {blocks: [[b1, 1, 4, op-1], [b2, 6, 4, op-2]], spares: [veh-2], ready: 4, assign: [[b1, veh-2], [b2, veh-2, op-1]], operator: {hours_today: 4.0}}
+  rule: operator_hours_day
+  expect: {status: violation, basis: native}
+- id: kept_plus_new_block_breaks_weekly_cap
+  source: "R F5 + P D-1 weekly 70h: 64h + 4h + 4h = 72h"
+  option: {blocks: [[b1, 1, 4, op-1], [b2, 6, 4, op-2]], spares: [veh-2], ready: 4, assign: [[b1, veh-2], [b2, veh-2, op-1]], operator: {hours_today: 1.0, hours_week: 64.0}}
+  rule: operator_hours_week
+  expect: {status: violation, basis: native}
+- id: kept_plus_new_block_within_caps_is_not_excluded
+  source: "R F5 (converse): 2h + 4h + 4h = 10h, not above the cap"
+  option: {blocks: [[b1, 1, 4, op-1], [b2, 6, 4, op-2]], spares: [veh-2], ready: 4, assign: [[b1, veh-2], [b2, veh-2, op-1]], operator: {hours_today: 2.0}}
+  expect: {excluded: false}
+
+# ---- operator overlapping a commitment -----------------------------------------------------------------------
+- id: kept_operator_overlapping_another_commitment_is_double_booking
+  source: "A Q1: double-booking is a hard rule (operator side)"
+  option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2]], commitments: {"operator:op-1": [[2, 4, other]]}}
+  rule: double_booking
+  expect: {status: violation, basis: native}
+- id: new_operator_overlapping_another_commitment_is_double_booking
+  source: "A Q1: double-booking"
+  option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2, op-2]], commitments: {"operator:op-2": [[0, 1.5, other]]}}
+  rule: double_booking
+  expect: {status: violation, basis: native}
+- id: operator_commitment_touching_the_block_is_not_double_booking
+  source: "A Q1 + D A125 (end-to-start is not overlap)"
+  option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2]], commitments: {"operator:op-1": [[3, 5, other]]}}
+  rule: double_booking
+  expect: {status: pass, basis: native}

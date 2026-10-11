@@ -101,7 +101,10 @@ class FakeWorld:
         self.operators = {o: Operator(id=o, licence_class=g("operator_licence_class", "B"), endorsements=endorsements,
                                       trained_vehicle_types=trained, training_valid_to=valid,
                                       lift_trained=t.operators_lift_trained, hours_today=hours[o],
-                                      hours_week=g("operator_hours_week", 20.0), on_extra_board=(o == "OP-2"))
+                                      hours_week=g("operator_hours_week", 20.0), on_extra_board=(o == "OP-2"),
+                                      # F8: the medical card is a legal rule; the baseline carries a valid card
+                                      # (as integration/fleets.py) so the 24 scenarios keep their meaning
+                                      medical_valid_to=day + timedelta(days=365))
                           for o in ("OP-1", "OP-2")}
         self.profiles = {"scheduling": native_profile("scheduling"),
                          "workforce": native_profile("workforce", drop=tuple(g("drop_operator_fields", ())))}

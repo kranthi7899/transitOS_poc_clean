@@ -29,8 +29,8 @@ def test_decision_record_for_missing_data_lists_every_unverifiable_and_not_evalu
     by_status = {}
     for c in last.clearance:
         by_status.setdefault(c["status"], set()).add(c["rule"])
-    assert by_status["unverifiable"] == {"operator_qualification", "operator_hours_week"}
-    assert {"operator_medical", "operator_rest", "operator_spread"} <= by_status["not_evaluated"]
+    assert by_status["unverifiable"] == {"operator_qualification", "operator_hours_week", "operator_medical"}
+    assert {"operator_rest", "operator_spread"} <= by_status["not_evaluated"]   # medical is legal (F8)
     assert set(last.acknowledged) == by_status["unverifiable"]
 
 

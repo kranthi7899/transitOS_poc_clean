@@ -1,20 +1,29 @@
 """The rules. Each returns `ClearanceItem`s; none raises on missing data (it reports `unverifiable` or
 `not_evaluated` with basis `unknown`). Pure: facts in, items out.
 
-Classification (amendment A): hard safety/legal rules exclude only on a KNOWN violation; unknown data on them
-is `unverifiable` (stays on the list, ranks lower, needs approver acknowledgement); optional rules (rest,
-spread, medical card) are `not_evaluated` without data and `warn` on a known breach."""
+Classification (amendment A; Step 1b rulings): hard safety/legal rules exclude only on a KNOWN violation;
+unknown data on them is `unverifiable` (stays on the list, ranks lower, needs approver acknowledgement); the
+medical card is a legal rule (F8). Optional rules (rest, spread) are `not_evaluated` without data and `warn` on
+a known breach.
+
+Missing data is resolved PER RECORD (C-2, F3): a contract field listed in the record's `unknown_fields` (the
+source left it blank or absent) is unknown for that record, ahead of the product's capability profile; a block
+need listed in `Needs.unknown_fields` was not declared, so "no requirement" is never assumed. An item's basis is
+the weakest basis of every input it read, so a pass is a clean native pass only when all its inputs were native."""
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from transitos.contracts.clearance import Basis, ClearanceItem, ClearanceStatus
 from transitos.contracts.objects import Block, Operator, Vehicle
 from transitos.contracts.policy import AgencyPolicy
 
-from .facts import Datum, Facts
+from .facts import Datum, Facts, weakest
 
 EPS = 1e-9
+NEW_QUALIFICATION_FIELDS = ("licence_class", "endorsements", "trained_vehicle_types", "training_valid_to")
 
 
 def item(rule: str, status: ClearanceStatus, basis: Basis, detail: str = "", ack: bool = False) -> ClearanceItem:
@@ -25,31 +34,58 @@ def unverifiable(rule: str, why: str) -> ClearanceItem:
     return item(rule, "unverifiable", "unknown", why, True)
 
 
+def clearance_error(where: str, e: BaseException) -> ClearanceItem:
+    """Fail closed (amendment A Q2): an exception inside clearance is a violation for the candidate it was
+    judging, never a crash of the caller and never a pass."""
+    return item("clearance_error", "violation", "unknown", f"{where}: {type(e).__name__}: {e}"[:200])
+
+
+def guarded(where: str, fn: Callable[..., list[ClearanceItem]], *args) -> list[ClearanceItem]:
+    """Run one direct rule call (vehicle_items / operator_items / ...) for ONE candidate; any exception excludes
+    that candidate with a `clearance_error` item (F4) instead of propagating."""
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        return [clearance_error(where, e)]
+
+
 def block_hours(b: Block) -> float:
     return (b.end - b.start).total_seconds() / 3600.0
 
 
 def overlaps(s1: datetime, e1: datetime, s2: datetime, e2: datetime) -> bool:
+    """Half-open intervals [start, end): blocks that touch end-to-start do not overlap (A125)."""
     return s1 < e2 and s2 < e1
 
 
+def need_unknown(block: Block, key: str) -> bool:
+    """The block did not declare this need (C-2): 'no requirement' must not be assumed."""
+    return key in (block.needs.unknown_fields or ())
+
+
 # ---- vehicle rules --------------------------------------------------------------------------------
-def _capacity(facts: Facts, rule: str, field: str, short: bool, detail: str, label: str) -> ClearanceItem:
-    basis = facts.basis("scheduling", field)
+def _capacity(block: Block, v: Vehicle, facts: Facts, rule: str, field: str, need_key: str, short: Callable[[], bool],
+              detail: Callable[[], str], label: str) -> ClearanceItem:
+    if need_unknown(block, need_key):
+        return unverifiable(rule, f"block {block.id} does not declare its {need_key} need; cannot check {label}")
+    basis = facts.record_basis("scheduling", field, v)
     if basis == "unknown":
-        return unverifiable(rule, f"scheduling does not supply {field}; cannot check {label}")
-    return item(rule, "violation" if short else "pass", basis, detail if short else "")
+        return unverifiable(rule, f"{v.id}: scheduling does not supply {field}; cannot check {label}")
+    bad = short()
+    return item(rule, "violation" if bad else "pass", basis, detail() if bad else "")
 
 
 def vehicle_fit_item(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolicy) -> ClearanceItem | None:
     """Graded fit (Q1): exact is best; a larger class is a warning needing acknowledgement (or an exclusion
     when the agency sets vehicle_fit=exact); a smaller class, or classes we cannot order, never qualify."""
+    if need_unknown(block, "type"):
+        return unverifiable("vehicle_fit", f"block {block.id} does not declare its vehicle type need")
     need = block.needs.type
     if need is None:
         return None
-    basis = facts.basis("scheduling", "type")
+    basis = facts.record_basis("scheduling", "type", v)
     if basis == "unknown":
-        return unverifiable("vehicle_fit", "scheduling does not supply the vehicle type")
+        return unverifiable("vehicle_fit", f"{v.id}: scheduling does not supply the vehicle type")
     if v.type == need:
         return item("vehicle_fit", "pass", basis, f"{v.id}: exact type {need}")
     order = facts.tables.vehicle_order
@@ -66,23 +102,27 @@ def vehicle_fit_item(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolic
 
 
 def resolve_length(v: Vehicle, facts: Facts) -> Datum:
-    """Vehicle length in the resolution order: native record, then the tagged class default (A66), else unknown."""
-    if v.length_ft is not None and facts.basis("scheduling", "length_ft") != "unknown":
-        return Datum(v.length_ft, facts.basis("scheduling", "length_ft"), "recorded length")
-    if v.type in facts.tables.typical_length_ft:
+    """Vehicle length in the resolution order: native record, then the tagged class default (A66), else unknown.
+    The class default needs a KNOWN type."""
+    lb = facts.record_basis("scheduling", "length_ft", v)
+    if v.length_ft is not None and lb != "unknown":
+        return Datum(v.length_ft, lb, "recorded length")
+    if facts.record_basis("scheduling", "type", v) != "unknown" and v.type in facts.tables.typical_length_ft:
         return Datum(facts.tables.typical_length_ft[v.type], "assumed",
                      f"assumed typical length for class {v.type} (A66)")
     return Datum(None, "unknown", f"no length on record and none assumed for type {v.type}")
 
 
 def vehicle_length_item(block: Block, v: Vehicle, facts: Facts) -> ClearanceItem | None:
+    if need_unknown(block, "max_vehicle_length_ft"):
+        return unverifiable("vehicle_length", f"block {block.id} does not say whether it has a length limit")
     limit = block.needs.max_vehicle_length_ft
     if limit is None:
         return None
     length = resolve_length(v, facts)
     if length.value is None:
         return unverifiable("vehicle_length", f"{v.id}: {length.note}")
-    over = length.value > limit + EPS   # a breach on an ASSUMED default excludes and says it is assumed (A70)
+    over = length.value > limit + EPS   # a breach on an ASSUMED default excludes and says it is assumed (A70; F9)
     return item("vehicle_length", "violation" if over else "pass", length.basis,
                 f"{v.id}: {length.note} {length.value:g} ft vs block limit {limit:g} ft")
 
@@ -91,17 +131,17 @@ def vehicle_items(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolicy) 
     n = block.needs
     out = [item("vehicle_ready", "pass" if v.status == "ready" else "violation", "native",
                 "" if v.status == "ready" else f"{v.id} is {v.status}, not ready")]
-    if n.seats:
-        out.append(_capacity(facts, "vehicle_seats", "seats", v.seats < n.seats,
-                             f"{v.id} has {v.seats} seats, needs {n.seats}", "seats"))
-    if n.wheelchair_positions:
-        out.append(_capacity(facts, "vehicle_wheelchair", "wheelchair_positions",
-                             v.wheelchair_positions < n.wheelchair_positions,
-                             f"{v.id} has {v.wheelchair_positions} wheelchair positions, needs {n.wheelchair_positions}",
-                             "wheelchair positions"))
-    if n.lift:
-        out.append(_capacity(facts, "vehicle_lift", "lift_ok", not v.lift_ok,
-                             f"{v.id} lift not operational", "the lift"))
+    if n.seats or need_unknown(block, "seats"):
+        out.append(_capacity(block, v, facts, "vehicle_seats", "seats", "seats", lambda: v.seats < n.seats,
+                             lambda: f"{v.id} has {v.seats} seats, needs {n.seats}", "seats"))
+    if n.wheelchair_positions or need_unknown(block, "wheelchair_positions"):
+        out.append(_capacity(block, v, facts, "vehicle_wheelchair", "wheelchair_positions", "wheelchair_positions",
+                             lambda: v.wheelchair_positions < n.wheelchair_positions,
+                             lambda: f"{v.id} has {v.wheelchair_positions} wheelchair positions, "
+                                     f"needs {n.wheelchair_positions}", "wheelchair positions"))
+    if n.lift or need_unknown(block, "lift"):
+        out.append(_capacity(block, v, facts, "vehicle_lift", "lift_ok", "lift", lambda: not v.lift_ok,
+                             lambda: f"{v.id} lift not operational", "the lift"))
     for extra in (vehicle_fit_item(block, v, facts, policy), vehicle_length_item(block, v, facts)):
         if extra is not None:
             out.append(extra)
@@ -128,7 +168,7 @@ def day_hours_item(op_id: str, hours_today: float, block_hrs: float, limit: floa
 
 def lift_training_item(op: Operator, basis: Basis) -> ClearanceItem:
     if basis == "unknown":
-        return unverifiable("operator_lift_training", f"{op.id}: workforce does not supply lift training")
+        return unverifiable("operator_lift_training", f"{op.id}: lift training (or the block's lift need) not known")
     return item("operator_lift_training", "pass" if op.lift_trained else "violation", basis,
                 "" if op.lift_trained else
                 f"lift_qualification: operator {op.id} is not lift-trained but block needs a lift")
@@ -136,10 +176,11 @@ def lift_training_item(op: Operator, basis: Basis) -> ClearanceItem:
 
 def _hours_items(block: Block, op: Operator, facts: Facts, policy: AgencyPolicy) -> list[ClearanceItem]:
     lim, bh = policy.limits, block_hours(block)
-    today_b, week_b = facts.basis("workforce", "hours_today"), facts.basis("workforce", "hours_week")
+    today_b = facts.record_basis("workforce", "hours_today", op)
+    week_b = facts.record_basis("workforce", "hours_week", op)
     out: list[ClearanceItem] = []
     if today_b == "unknown":
-        out.append(unverifiable("operator_hours_day", f"{op.id}: workforce does not supply hours worked today"))
+        out.append(unverifiable("operator_hours_day", f"{op.id}: hours worked today not known"))
     else:
         out.append(day_hours_item(op.id, op.hours_today, bh, lim.max_operator_hours_day, today_b))
     cap = lim.max_operator_hours_week
@@ -154,81 +195,110 @@ def _hours_items(block: Block, op: Operator, facts: Facts, policy: AgencyPolicy)
                         f"operator_hours_week: {op.id} weekly hours not supplied, but today's {op.hours_today:.1f}h "
                         f"+ {bh:.1f}h block already exceeds max {cap:g}h (lower bound)"))
     else:
-        out.append(unverifiable("operator_hours_week", f"{op.id}: workforce does not supply hours in the 8-day window"))
+        out.append(unverifiable("operator_hours_week", f"{op.id}: hours in the 8-day window not known"))
     return out
 
 
+def _lift_basis(block: Block, op: Operator, facts: Facts) -> Basis:
+    return "unknown" if need_unknown(block, "lift") else facts.record_basis("workforce", "lift_trained", op)
+
+
 def _qualification_items(block: Block, op: Operator, vehicle_type: str | None, facts: Facts) -> list[ClearanceItem]:
-    wb = lambda f: facts.basis("workforce", f)
+    """Per field (F2): the new model is used whenever ANY of its fields is supplied for this operator; each of
+    licence class, endorsement, type training and expiry is then judged from its own data. The legacy list is
+    used only when NONE of the new fields is supplied."""
+    rb = lambda f: facts.record_basis("workforce", f, op)
     n = block.needs
     out: list[ClearanceItem] = []
-    if wb("licence_class") != "unknown":                       # new qualification model (D-1)
+    if any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):        # new qualification model (D-1)
         req = facts.tables.vehicle_requirements.get(vehicle_type) if vehicle_type else None
         if vehicle_type is not None and req is None:
             for rule in ("operator_licence_class", "operator_endorsement", "operator_vehicle_training"):
                 out.append(unverifiable(rule, f"{op.id}: no licence requirement on record for vehicle type {vehicle_type}"))
         elif req is not None:
-            out += _new_model_items(block, op, vehicle_type, req, facts)
-    elif wb("qualifications") != "unknown" and op.qualifications:   # legacy list
+            out += _new_model_items(block, op, vehicle_type, req, facts)   # type: ignore[arg-type]
+    elif rb("qualifications") != "unknown":                               # legacy list only
         vt = vehicle_type or n.type
         if vt is not None:
             ok = vt in op.qualifications
-            out.append(item("operator_qualification", "pass" if ok else "violation", wb("qualifications"),
+            out.append(item("operator_qualification", "pass" if ok else "violation", rb("qualifications"),
                             "" if ok else f"operator_qualification: {op.id} lacks {vt}"))
     else:
         out.append(unverifiable("operator_qualification",
-                                f"{op.id}: workforce supplies no qualification data (licence, endorsement or training)"))
-    if n.lift:
-        out.append(lift_training_item(op, wb("lift_trained")))
+                                f"{op.id}: no qualification data on record (licence, endorsement or training)"))
+    if n.lift or need_unknown(block, "lift"):
+        out.append(lift_training_item(op, _lift_basis(block, op, facts)))
     return out
 
 
 def _new_model_items(block: Block, op: Operator, vtype: str, req, facts: Facts) -> list[ClearanceItem]:
-    wb = lambda f: facts.basis("workforce", f)
+    rb = lambda f: facts.record_basis("workforce", f, op)
     out: list[ClearanceItem] = []
     order = facts.tables.licence_order
-    if op.licence_class is None:
+    lb = rb("licence_class")
+    if lb == "unknown" or op.licence_class is None:
         out.append(unverifiable("operator_licence_class", f"{op.id}: licence class not on record"))
     else:
         need = req["min_licence_class"]
         ok = order.index(op.licence_class) >= order.index(need)
-        out.append(item("operator_licence_class", "pass" if ok else "violation", wb("licence_class"),
+        out.append(item("operator_licence_class", "pass" if ok else "violation", lb,
                         "" if ok else f"{op.id}: licence class {op.licence_class} below {need} needed for {vtype}"))
     code = facts.tables.passenger_endorsement_code
     needs_p = bool(req.get("passenger_endorsement"))
+    eb, tb, vb = rb("endorsements"), rb("trained_vehicle_types"), rb("training_valid_to")
     held_p = code in op.endorsements
     if needs_p:
-        eb = wb("endorsements")
         if eb == "unknown":
-            out.append(unverifiable("operator_endorsement", f"{op.id}: workforce does not supply endorsements"))
+            out.append(unverifiable("operator_endorsement", f"{op.id}: endorsements not on record"))
         else:
             out.append(item("operator_endorsement", "pass" if held_p else "violation", eb,
                             "" if held_p else f"{op.id}: passenger endorsement {code} missing"))
     train = req["training_type"]
     held_t = train in op.trained_vehicle_types
-    tb = wb("trained_vehicle_types")
     if tb == "unknown":
-        out.append(unverifiable("operator_vehicle_training", f"{op.id}: workforce does not supply trained vehicle types"))
+        out.append(unverifiable("operator_vehicle_training", f"{op.id}: trained vehicle types not on record"))
     else:
         out.append(item("operator_vehicle_training", "pass" if held_t else "violation", tb,
                         "" if held_t else f"{op.id}: not trained on vehicle type {train}"))
-    creds = [c for c, held in ((code, needs_p and held_p), (train, held_t),
-                               ("lift", block.needs.lift and op.lift_trained)) if held]
-    if creds:
-        out.append(_expiry_item(block, op, creds, wb("training_valid_to")))
+    # expiry of every credential this block needs that the operator is KNOWN to hold; a credential whose holding
+    # is unknown makes the expiry check unverifiable (never a silent pass)
+    held: list[str] = []
+    unsure: list[str] = []
+    bases: list[Basis] = [vb]
+    for cred, needed, basis, has in ((code, needs_p, eb, held_p), (train, True, tb, held_t)):
+        if not needed:
+            continue
+        bases.append(basis)
+        if basis == "unknown":
+            unsure.append(cred)
+        elif has:
+            held.append(cred)
+    if block.needs.lift or need_unknown(block, "lift"):
+        lb2 = _lift_basis(block, op, facts)
+        bases.append(lb2)
+        if lb2 == "unknown":
+            unsure.append("lift")
+        elif op.lift_trained:
+            held.append("lift")
+    if held or unsure:
+        out.append(_expiry_item(block, op, held, unsure, vb, weakest(*bases)))
     return out
 
 
-def _expiry_item(block: Block, op: Operator, creds: list[str], basis: Basis) -> ClearanceItem:
-    if basis == "unknown":
-        return unverifiable("operator_training_expiry", f"{op.id}: workforce does not supply expiry dates")
-    expired = [c for c in creds if c in op.training_valid_to and _expired(op.training_valid_to[c], block)]
-    undated = [c for c in creds if c not in op.training_valid_to]
-    if expired:
-        return item("operator_training_expiry", "violation", basis,
-                    f"{op.id}: {', '.join(expired)} expired on or before the block's day")
-    if undated:
-        return unverifiable("operator_training_expiry", f"{op.id}: no expiry date on record for {', '.join(undated)}")
+def _expiry_item(block: Block, op: Operator, held: list[str], unsure: list[str], dates_basis: Basis,
+                 basis: Basis) -> ClearanceItem:
+    if held and dates_basis != "unknown":
+        expired = [c for c in held if c in op.training_valid_to and _expired(op.training_valid_to[c], block)]
+        if expired:   # a KNOWN held credential, KNOWN expired: a violation whatever else is unknown
+            return item("operator_training_expiry", "violation", dates_basis,
+                        f"{op.id}: {', '.join(expired)} expired on or before the block's day")
+    if dates_basis == "unknown":
+        return unverifiable("operator_training_expiry", f"{op.id}: expiry dates not on record")
+    undated = [c for c in held if c not in op.training_valid_to]
+    if undated or unsure:
+        why = [f"no expiry date on record for {', '.join(undated)}"] if undated else []
+        why += [f"not known whether {', '.join(unsure)} is held"] if unsure else []
+        return unverifiable("operator_training_expiry", f"{op.id}: " + "; ".join(why))
     return item("operator_training_expiry", "pass", basis)
 
 
@@ -237,39 +307,43 @@ def operator_items(block: Block, op: Operator, vehicle_type: str | None, facts: 
     """All operator rules for one block. `vehicle_type` is the type of the vehicle that will run it
     (None while the vehicle is not chosen yet: the type-dependent qualification rules are then skipped
     and re-run at option level)."""
-    wb = lambda f: facts.basis("workforce", f)
+    rb = lambda f, fields=None: facts.record_basis("workforce", f, op, fields)
     lim = policy.limits
     out = _hours_items(block, op, facts, policy)
     out += _qualification_items(block, op, vehicle_type, facts)
-    ab = wb("availability")
+    ab = rb("availability")
     if ab == "unknown":
-        out.append(unverifiable("operator_availability", f"{op.id}: workforce does not supply an availability window"))
-    else:
+        out.append(unverifiable("operator_availability", f"{op.id}: availability window not known"))
+    else:   # a bound the product holds as empty is open (A126); a blank cell is listed as unknown (F3)
         bad = (op.available_from is not None and op.available_from > block.start) or \
               (op.available_to is not None and op.available_to < block.end)
         out.append(item("operator_availability", "violation" if bad else "pass", ab,
                         f"operator_not_available: {op.id} outside the block window" if bad else ""))
-    # optional rules (A72): not_evaluated without data; a known breach warns and needs acknowledgement
-    if wb("medical_valid_to") == "unknown" or op.medical_valid_to is None:
-        out.append(item("operator_medical", "not_evaluated", "unknown", f"{op.id}: no medical card date on record"))
+    # medical card: a LEGAL rule (F8): known expired = violation, unknown = unverifiable
+    mb = rb("medical_valid_to")
+    if mb == "unknown" or op.medical_valid_to is None:
+        out.append(unverifiable("operator_medical", f"{op.id}: no medical card date on record"))
     else:
         bad = _expired(op.medical_valid_to, block)
-        out.append(item("operator_medical", "violation" if bad else "pass", wb("medical_valid_to"),
+        out.append(item("operator_medical", "violation" if bad else "pass", mb,
                         f"{op.id}: medical card expired" if bad else ""))
-    if wb("duty_times") == "unknown" or op.last_duty_end is None:
+    # optional rules (A72): not_evaluated without data; a known breach warns and needs acknowledgement
+    rest_b = rb("duty_times", ("last_duty_end",))
+    if rest_b == "unknown" or op.last_duty_end is None:
         out.append(item("operator_rest", "not_evaluated", "unknown", f"{op.id}: previous duty end not on record"))
     else:
         rest = (block.start - op.last_duty_end).total_seconds() / 3600.0
         short = rest < lim.min_rest_hours - EPS
-        out.append(item("operator_rest", "warn" if short else "pass", wb("duty_times"),
+        out.append(item("operator_rest", "warn" if short else "pass", rest_b,
                         f"{op.id}: {rest:.1f}h rest before the block, minimum {lim.min_rest_hours:g}h" if short else "",
                         short))
-    if wb("duty_times") == "unknown" or op.duty_start_today is None:
+    spread_b = rb("duty_times", ("duty_start_today",))
+    if spread_b == "unknown" or op.duty_start_today is None:
         out.append(item("operator_spread", "not_evaluated", "unknown", f"{op.id}: duty start not on record"))
     else:
         spread = (block.end - op.duty_start_today).total_seconds() / 3600.0
         long = spread > lim.max_spread_hours + EPS
-        out.append(item("operator_spread", "warn" if long else "pass", wb("duty_times"),
+        out.append(item("operator_spread", "warn" if long else "pass", spread_b,
                         f"{op.id}: duty spread {spread:.1f}h, maximum {lim.max_spread_hours:g}h" if long else "",
                         long))
     return out
@@ -294,15 +368,24 @@ def kill_switch_item(on: bool) -> ClearanceItem:
     return item("kill_switch", "violation" if on else "pass", "native", "writes disabled" if on else "")
 
 
-def min_distinct_spares(blocks: list[Block], candidates: dict[str, list[str]]) -> int | None:
-    """Fewest distinct spares that can cover all blocks when a spare may serve several non-overlapping
-    blocks (greedy interval assignment, earliest start first, reuse before consuming a new spare).
-    None when some block has no candidate."""
+# Search cap for the exact minimum (F6, A127). The agency fleets have at most 8 affected blocks with a handful of
+# candidates each, far below this; beyond it the greedy upper bound is used and flagged as not exact.
+MAX_SPARE_SEARCH_NODES = 200_000
+
+
+@dataclass(frozen=True)
+class SpareCount:
+    """Fewest distinct spares that cover all blocks. `n` None = some block has no candidate (or no assignment
+    exists at all); `exact` False = the search cap was hit and `n` is the greedy UPPER bound (fail closed: it can
+    only overstate what is needed)."""
+    n: int | None
+    exact: bool = True
+
+
+def _greedy_spares(order: Sequence[Block], candidates: dict[str, list[str]]) -> int | None:
     used: dict[str, list[tuple[datetime, datetime]]] = {}
-    for b in sorted(blocks, key=lambda x: (x.start, x.id)):
+    for b in order:
         cands = candidates.get(b.id, [])
-        if not cands:
-            return None
         pick = next((s for s in cands if s in used
                      and not any(overlaps(b.start, b.end, s0, e0) for s0, e0 in used[s])), None)
         if pick is None:
@@ -311,3 +394,53 @@ def min_distinct_spares(blocks: list[Block], candidates: dict[str, list[str]]) -
             return None
         used.setdefault(pick, []).append((b.start, b.end))
     return len(used)
+
+
+def count_distinct_spares(blocks: Sequence[Block], candidates: dict[str, list[str]],
+                          max_nodes: int = MAX_SPARE_SEARCH_NODES) -> SpareCount:
+    """Exact minimum number of distinct spares when a spare may serve several non-overlapping blocks (Review
+    Focus 7, F6): depth-first branch and bound over blocks in start order, reusing a compatible spare before
+    opening a new one, pruning any branch that cannot beat the best found. If the search exceeds `max_nodes`
+    the greedy result is returned as an upper bound with `exact=False`."""
+    order = sorted(blocks, key=lambda x: (x.start, x.id))
+    if any(not candidates.get(b.id) for b in order):
+        return SpareCount(None)
+    if not order:
+        return SpareCount(0)
+    greedy = _greedy_spares(order, candidates)
+    best = [greedy if greedy is not None else len(order) + 1]
+    nodes = [0]
+    used: dict[str, list[tuple[datetime, datetime]]] = {}
+
+    def search(i: int) -> bool:   # False = cap exceeded
+        nodes[0] += 1
+        if nodes[0] > max_nodes:
+            return False
+        if len(used) >= best[0]:
+            return True
+        if i == len(order):
+            best[0] = len(used)
+            return True
+        b = order[i]
+        cands = candidates[b.id]
+        reuse = [s for s in cands if s in used and not any(overlaps(b.start, b.end, s0, e0) for s0, e0 in used[s])]
+        fresh = [s for s in cands if s not in used]
+        for s in reuse + fresh:
+            used.setdefault(s, []).append((b.start, b.end))
+            ok = search(i + 1)
+            used[s].pop()
+            if not used[s]:
+                del used[s]
+            if not ok:
+                return False
+        return True
+
+    if not search(0):
+        return SpareCount(greedy, exact=False)
+    return SpareCount(best[0] if best[0] <= len(order) else None)
+
+
+def min_distinct_spares(blocks: list[Block], candidates: dict[str, list[str]]) -> int | None:
+    """Fewest distinct spares (exact, see `count_distinct_spares`; the greedy upper bound past the search cap).
+    None when some block has no candidate."""
+    return count_distinct_spares(blocks, candidates).n

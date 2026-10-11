@@ -16,8 +16,10 @@ SAGA_REASSIGN = "reassign_block"
 def world_with(vehicles, operators=None, blocks=None) -> FakeWorld:
     w = default_world()
     w.vehicles = {v.id: v for v in vehicles}
-    w.operators = {o.id: o for o in (operators or [Operator(id="OP-1", qualifications=["standard", "articulated"]),
-                                                   Operator(id="OP-2", qualifications=["standard", "articulated"])])}
+    med = T0 + timedelta(days=365)
+    w.operators = {o.id: o for o in (operators or [
+        Operator(id="OP-1", qualifications=["standard", "articulated"], medical_valid_to=med),
+        Operator(id="OP-2", qualifications=["standard", "articulated"], medical_valid_to=med)])}
     w.blocks = {b.id: b for b in (blocks or [block("B1", 1, 5)])}
     return w
 

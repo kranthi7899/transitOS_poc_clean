@@ -35,7 +35,7 @@ def blk(id="b1", start_h=1.0, hours=4.0, op="op-1", veh_id="veh-1", **needs) -> 
 def opr(id="op-1", **kw) -> Operator:
     base = {"licence_class": "B", "endorsements": ["P"], "trained_vehicle_types": ["standard"],
             "training_valid_to": {"P": FAR, "standard": FAR, "lift": FAR}, "lift_trained": True,
-            "hours_today": 4.0, "hours_week": 20.0, "available_from": T0 - timedelta(hours=1),
+            "hours_today": 4.0, "hours_week": 20.0, "medical_valid_to": FAR, "available_from": T0 - timedelta(hours=1),
             "available_to": T0 + timedelta(hours=15)}
     base.update(kw)
     return Operator(id=id, **base)
@@ -338,6 +338,39 @@ def test_last_spare_counts_distinct_spares():
     two_spares = evaluate_option(Option((Assign("b1", "veh-2"), Assign("b2", "veh-3"))), f, POL, T0)
     assert not one_spare.excluded                       # 2 ready - 1 used = 1 >= min_spares 1
     assert two_spares.excluded and one(two_spares.items, "last_spare").status == "violation"
+
+
+def test_min_distinct_spares_is_exact_where_greedy_overcounts():
+    """F6: b1 may take A or B, b2 only B, the blocks do not overlap: B serves both, so ONE spare is needed.
+    The greedy pass takes A for b1 (listed first) and then needs B as well (two)."""
+    from transitos.clearance.rules import count_distinct_spares, min_distinct_spares
+    b1, b2 = blk("b1", 1.0, 2.0), blk("b2", 4.0, 2.0)
+    assert min_distinct_spares([b1, b2], {"b1": ["A", "B"], "b2": ["B"]}) == 1
+    assert count_distinct_spares([b1, b2], {"b1": ["A", "B"], "b2": ["B"]}).exact
+
+
+def test_min_distinct_spares_overlapping_blocks_need_two_and_a_block_without_candidates_is_none():
+    from transitos.clearance.rules import min_distinct_spares
+    b1, b2 = blk("b1", 1.0, 3.0), blk("b2", 2.0, 3.0)
+    assert min_distinct_spares([b1, b2], {"b1": ["A", "B"], "b2": ["A", "B"]}) == 2
+    assert min_distinct_spares([b1, b2], {"b1": ["A"], "b2": ["A"]}) is None      # no assignment exists
+    assert min_distinct_spares([b1, b2], {"b1": ["A"], "b2": []}) is None
+
+
+def test_min_distinct_spares_past_the_search_cap_is_the_greedy_upper_bound_flagged_not_exact():
+    """F6 / A127: past the cap the count falls back to the greedy UPPER bound (fail closed: it can only
+    overstate the spares needed) and says it is not exact."""
+    from transitos.clearance.rules import count_distinct_spares
+    b1, b2 = blk("b1", 1.0, 2.0), blk("b2", 4.0, 2.0)
+    r = count_distinct_spares([b1, b2], {"b1": ["A", "B"], "b2": ["B"]}, max_nodes=1)
+    assert (r.n, r.exact) == (2, False)
+
+
+def test_min_distinct_spares_eight_sequential_blocks_one_spare_is_fast_and_exact():
+    from transitos.clearance.rules import count_distinct_spares
+    bs = [blk(f"b{k}", 2.0 * k, 2.0) for k in range(8)]
+    r = count_distinct_spares(bs, {b.id: ["A", "B", "C"] for b in bs})
+    assert (r.n, r.exact) == (1, True)
 
 
 def test_last_spare_unknown_ready_count_is_unverifiable():

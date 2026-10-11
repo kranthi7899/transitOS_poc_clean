@@ -118,25 +118,28 @@ def option_items(option: Option, facts: Facts, policy: AgencyPolicy) -> list[Cle
         if (oid := _eff_operator(a, facts)) is not None:
             by_op[oid].append(a)
     out.append(double_booking_item(option, facts))
-    # operators NEWLY assigned to several blocks accumulate hours (A71: an operator who keeps the blocks they
-    # already had is judged block by block, as before; their schedule is not ours to re-audit)
+    # An operator the option gives at least one NEW block accumulates the hours of EVERY affected block they end
+    # up on, kept and newly assigned alike (F5; A71 as corrected). An operator who only keeps the blocks they
+    # already had is judged block by block (the option does not change their workload; A128).
     lim = policy.limits
     for oid, group in by_op.items():
         op = facts.operators.get(oid)
-        group = [a for a in group if a.operator_id is not None and a.operator_id != facts.blocks[a.block_id].operator_id]
-        if op is None or len(group) < 2:
+        newly = [a for a in group if a.operator_id is not None and a.operator_id != facts.blocks[a.block_id].operator_id]
+        if op is None or not newly or len(group) < 2:
             continue
         total_block = sum(block_hours(facts.blocks[a.block_id]) for a in group)
-        if facts.basis("workforce", "hours_today") != "unknown" and \
-                op.hours_today + total_block > lim.max_operator_hours_day + EPS:
-            out.append(item("operator_hours_day", "violation", facts.basis("workforce", "hours_today"),
+        kept = len(group) - len(newly)
+        how = f"{len(group)} blocks ({kept} kept, {len(newly)} newly assigned)"
+        today_b = facts.record_basis("workforce", "hours_today", op)
+        week_b = facts.record_basis("workforce", "hours_week", op)
+        if today_b != "unknown" and op.hours_today + total_block > lim.max_operator_hours_day + EPS:
+            out.append(item("operator_hours_day", "violation", today_b,
                             f"operator_hours: {oid} {op.hours_today:.1f}h today + {total_block:.1f}h over "
-                            f"{len(group)} blocks > max {lim.max_operator_hours_day:g}h"))
-        if facts.basis("workforce", "hours_week") != "unknown" and \
-                op.hours_week + total_block > lim.max_operator_hours_week + EPS:
-            out.append(item("operator_hours_week", "violation", facts.basis("workforce", "hours_week"),
+                            f"{how} > max {lim.max_operator_hours_day:g}h"))
+        if week_b != "unknown" and op.hours_week + total_block > lim.max_operator_hours_week + EPS:
+            out.append(item("operator_hours_week", "violation", week_b,
                             f"operator_hours_week: {oid} {op.hours_week:.1f}h + {total_block:.1f}h over "
-                            f"{len(group)} blocks > max {lim.max_operator_hours_week:g}h"))
+                            f"{how} > max {lim.max_operator_hours_week:g}h"))
     out.append(last_spare_item(facts.ready_count, len(by_spare), lim.min_spares))
     return out
 
