@@ -1,6 +1,6 @@
 # S2 (Phase 10 Step 2): messy identifiers and the identity resolver
 
-Branch `phase10-s2-identity` (cut from main a1e4600). Not pushed, not merged. No escalation needed: the canonical
+Branch `phase10-s2-identity`, rebased onto main ad71222 (after the S3 merge). Not pushed, not merged. No escalation needed: the canonical
 `VehicleStatus` was not touched (a retired asset is a maintenance-asset status, enforced by the maintenance mock's
 409 and a blocked write), and nothing under `contracts/` or `contracts-schema/` changed.
 
