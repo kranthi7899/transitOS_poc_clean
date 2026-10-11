@@ -1,0 +1,9 @@
+# Licence and training requirements per vehicle type. ASSUMED (A65): a simplified model in the spirit of US
+# commercial driver licensing, written in our own words; the real rules differ by state and agency.
+# licence_order lists classes from least to most privileged: a higher class covers a lower one.
+licence_order: [C, B, A]
+passenger_endorsement_code: P
+vehicle_types:
+  cutaway:     {min_licence_class: C, passenger_endorsement: true, training_type: cutaway}
+  standard:    {min_licence_class: B, passenger_endorsement: true, training_type: standard}
+  articulated: {min_licence_class: B, passenger_endorsement: true, training_type: articulated}
