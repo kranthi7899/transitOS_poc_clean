@@ -124,7 +124,7 @@ def test_seed_is_deterministic(make):
 def test_scenario_switch_drops_operator_columns_and_reset_restores(make):
     c, _ = make("workforce")
     r = c.post("/sim/operator-fields", json={"drop": ["licence_class", "hours_week", "operator", "nonsense"]}, headers=A)
-    assert r.json() == {"drop": ["licence_class", "hours_week"]}
+    assert r.json()["drop"] == ["licence_class", "hours_week"] and r.json()["blank"] == []
     header = next(csv.reader(io.StringIO(c.get("/export/operators.csv", headers=A).text)))
     assert "licence_class" not in header and "hours_week" not in header and "operator" in header
     c.post("/sim/reset", headers=A)
