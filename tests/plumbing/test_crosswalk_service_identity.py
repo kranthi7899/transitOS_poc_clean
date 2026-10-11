@@ -10,7 +10,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from transitos.contracts.crosswalk import CrosswalkEntry
-from transitos.contracts.envelope import TOPIC_FAILED, TOPIC_RAW, TOPIC_RESOLVED, CloudEvent
+from transitos.contracts.envelope import (
+    TOPIC_FAILED,
+    TOPIC_RAW,
+    TOPIC_RESOLVED,
+    CloudEvent,
+)
 from transitos.data.identifiers import make_vin
 from transitos.plumbing import CrosswalkService
 
