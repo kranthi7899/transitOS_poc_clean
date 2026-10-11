@@ -45,7 +45,7 @@ def soft_score(option: Option, facts: Facts) -> float:
     return round(s, 6)
 
 
-def _key(c: Clearance, score: float, idx: int) -> tuple:
+def _key(c: Clearance, score: float, idx: int) -> tuple:   # ranking order: A74
     return (0 if c.tier == "exact" else 1, c.unverifiable, c.warnings, -score, idx)
 
 

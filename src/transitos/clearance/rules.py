@@ -12,7 +12,7 @@ from transitos.contracts.clearance import Basis, ClearanceItem, ClearanceStatus
 from transitos.contracts.objects import Block, Operator, Vehicle
 from transitos.contracts.policy import AgencyPolicy
 
-from .facts import Facts
+from .facts import Datum, Facts
 
 EPS = 1e-9
 
@@ -65,20 +65,26 @@ def vehicle_fit_item(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolic
                 f"{v.id}: type {v.type} cannot be ordered against required {need}")
 
 
+def resolve_length(v: Vehicle, facts: Facts) -> Datum:
+    """Vehicle length in the resolution order: native record, then the tagged class default (A66), else unknown."""
+    if v.length_ft is not None and facts.basis("scheduling", "length_ft") != "unknown":
+        return Datum(v.length_ft, facts.basis("scheduling", "length_ft"), "recorded length")
+    if v.type in facts.tables.typical_length_ft:
+        return Datum(facts.tables.typical_length_ft[v.type], "assumed",
+                     f"assumed typical length for class {v.type} (A66)")
+    return Datum(None, "unknown", f"no length on record and none assumed for type {v.type}")
+
+
 def vehicle_length_item(block: Block, v: Vehicle, facts: Facts) -> ClearanceItem | None:
     limit = block.needs.max_vehicle_length_ft
     if limit is None:
         return None
-    if v.length_ft is not None and facts.basis("scheduling", "length_ft") != "unknown":
-        length, basis, how = v.length_ft, facts.basis("scheduling", "length_ft"), "recorded length"
-    elif v.type in facts.tables.typical_length_ft:
-        length, basis = facts.tables.typical_length_ft[v.type], "assumed"
-        how = f"assumed typical length for class {v.type} (A66)"
-    else:
-        return unverifiable("vehicle_length", f"{v.id}: no length on record and none assumed for type {v.type}")
-    over = length > limit + EPS
-    return item("vehicle_length", "violation" if over else "pass", basis,
-                f"{v.id}: {how} {length:g} ft vs block limit {limit:g} ft")
+    length = resolve_length(v, facts)
+    if length.value is None:
+        return unverifiable("vehicle_length", f"{v.id}: {length.note}")
+    over = length.value > limit + EPS   # a breach on an ASSUMED default excludes and says it is assumed (A70)
+    return item("vehicle_length", "violation" if over else "pass", length.basis,
+                f"{v.id}: {length.note} {length.value:g} ft vs block limit {limit:g} ft")
 
 
 def vehicle_items(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolicy) -> list[ClearanceItem]:
@@ -105,7 +111,7 @@ def vehicle_items(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolicy) 
 # ---- operator rules -------------------------------------------------------------------------------
 def _expired(valid_to: datetime, block: Block) -> bool:
     """A credential whose valid_to falls on day D is not valid for work on D or later (Review Focus 1:
-    a violation on the day it expires, not the day after). Dates are taken in valid_to's own zone."""
+    a violation on the day it expires, not the day after; A69). Dates are taken in valid_to's own zone."""
     tz = valid_to.tzinfo or UTC
     work_day = block.end.astimezone(tz).date() if block.end.tzinfo else block.end.date()
     return work_day >= valid_to.date()
@@ -143,7 +149,7 @@ def _hours_items(block: Block, op: Operator, facts: Facts, policy: AgencyPolicy)
         out.append(item("operator_hours_week", "violation" if bad else "pass", week_b,
                         f"operator_hours_week: {op.id} {op.hours_week:.1f}h in the 8-day window + {bh:.1f}h block "
                         f"= {total:.1f}h > max {cap:g}h" if bad else ""))
-    elif today_b != "unknown" and op.hours_today + bh > cap + EPS:
+    elif today_b != "unknown" and op.hours_today + bh > cap + EPS:   # derived lower bound (A71)
         out.append(item("operator_hours_week", "violation", "derived",
                         f"operator_hours_week: {op.id} weekly hours not supplied, but today's {op.hours_today:.1f}h "
                         f"+ {bh:.1f}h block already exceeds max {cap:g}h (lower bound)"))
@@ -243,7 +249,7 @@ def operator_items(block: Block, op: Operator, vehicle_type: str | None, facts: 
               (op.available_to is not None and op.available_to < block.end)
         out.append(item("operator_availability", "violation" if bad else "pass", ab,
                         f"operator_not_available: {op.id} outside the block window" if bad else ""))
-    # optional rules
+    # optional rules (A72): not_evaluated without data; a known breach warns and needs acknowledgement
     if wb("medical_valid_to") == "unknown" or op.medical_valid_to is None:
         out.append(item("operator_medical", "not_evaluated", "unknown", f"{op.id}: no medical card date on record"))
     else:

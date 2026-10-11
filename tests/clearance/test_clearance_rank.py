@@ -95,3 +95,14 @@ def test_soft_score_counts_depot_match():
     b = blk("b1")
     f = facts([b], [veh("veh-2")], [opr()])
     assert soft_score(Option((Assign("b1", "veh-2"),)), f) == 1.0
+
+
+def test_a_vehicle_that_is_not_ready_is_never_chosen_as_a_spare():
+    """Review Focus 5 (the clearance side): in service, out of service or reserved vehicles are never a spare."""
+    b = blk("b1")
+    f = facts([b], [veh("veh-2", status="out_of_service"), veh("veh-3", status="reserved"),
+                    veh("veh-4", status="in_service"), veh("veh-5")], [opr("op-1")], ready_count=3)
+    g = greedy_option([b], {"b1": ["veh-2", "veh-3", "veh-4", "veh-5"]}, {}, f, POL, T0)
+    assert g is not None and g.assignments[0].spare_id == "veh-5"
+    only_bad = facts([b], [veh("veh-2", status="out_of_service")], [opr("op-1")], ready_count=3)
+    assert greedy_option([b], {"b1": ["veh-2"]}, {}, only_bad, POL, T0) is None

@@ -194,12 +194,10 @@ class FakeWriteTools:
             to = self.w.vehicles[to_vehicle_id]
             if not comp and to.status != "ready":
                 return Result.unavailable("fake", "spare taken")
-            old = self.w.vehicles.get(b.vehicle_id)
+            if not comp and any(o.vehicle_id == to_vehicle_id and o.id != block_id and o.start < b.end
+                                and o.end > b.start for o in self.w.blocks.values()):
+                return Result.unavailable("fake", "spare double-booked")   # a spare may serve non-overlapping blocks
             b.vehicle_id = to_vehicle_id
-            if not comp:
-                to.status = "reserved"
-            elif old is not None and old.status == "reserved":
-                old.status = "ready"
             return Result.success(b)
         return self._run("reassign_block", key, block_id, f, comp=comp)
 

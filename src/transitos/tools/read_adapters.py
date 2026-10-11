@@ -238,8 +238,8 @@ def _dated(s: str | None) -> dict[str, datetime]:
 
 class WorkforceReader:
     """adapter id: workforce_mock_v1. Reads come from the daily CSV export (A3) so hours may be stale.
-    The header row decides which fields the export supplies (capability profile, Phase 10): a column that is
-    absent is unknown for every operator, never a default value."""
+    The header row decides which fields the export supplies (capability profile, Phase 10, A73): a column that
+    is absent is unknown for every operator, never a default value."""
 
     def __init__(self, deps: Deps):
         self.deps = deps

@@ -67,7 +67,7 @@ _OPS = [
 
 
 def _training(i: int, quals: str, lift: bool, day: datetime) -> dict[str, Any]:
-    """Deterministic licence/endorsement/training data for operator `i` (A67): class A where the legacy
+    """Deterministic licence/endorsement/training data for operator `i` (A67, A65): class A where the legacy
     string says ARTIC, else B; passenger endorsement for all; trained on cutaway and standard, plus
     articulated for ARTIC holders; every credential valid for at least ~7 months, staggered per operator."""
     artic = "ARTIC" in quals

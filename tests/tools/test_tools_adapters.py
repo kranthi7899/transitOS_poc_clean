@@ -276,3 +276,28 @@ def test_unknown_adapter_id_fails_loudly(tmp_path):
     (tmp_path / "x.yaml").write_text("agency: x\ntools: {get_vehicle: nope}\n")
     with pytest.raises(KeyError):
         Registry(tmp_path).toolset("x")
+
+
+# ---- Phase 10: the public check_* names are thin wrappers over clearance ---------------------------
+
+def test_check_spare_meets_needs_is_graded_not_equality():
+    from transitos.contracts.objects import Vehicle
+    needs = Needs(seats=20, type="standard")
+    mk = lambda t: Vehicle(id="v", agency="a", seats=30, type=t)
+    assert P.check_spare_meets_needs(mk("standard"), needs) == []
+    assert P.check_spare_meets_needs(mk("articulated"), needs) == []          # larger class: a warning elsewhere
+    assert P.check_spare_meets_needs(mk("cutaway"), needs)                    # smaller class never
+    from transitos.contracts.policy import AgencyPolicy
+    assert P.check_spare_meets_needs(mk("articulated"), needs, AgencyPolicy(agency="a", vehicle_fit="exact"))
+
+
+def test_hard_limits_class_keeps_its_names():
+    from transitos.contracts.objects import Block, Operator, Vehicle
+    from transitos.workflow.limits import HardLimits
+    hl = HardLimits(Limits())
+    blk = Block(id="b", vehicle_id="v", start=T0, end=T1, needs=Needs(seats=20, type="bus"))
+    assert hl.operator_violations(Operator(id="o", qualifications=["bus"], hours_today=6.0), blk) == []
+    assert hl.operator_violations(Operator(id="o", qualifications=["van"], hours_today=7.0), blk) == [
+        "operator_hours_day:o", "operator_qualification:o"]
+    assert hl.spare_violations(Vehicle(id="v", agency="a", seats=10, type="bus"), blk) == ["vehicle_seats:v"]
+    assert hl.spares_left_ok(2, 1) and not hl.spares_left_ok(1, 1) and hl.min_spares == 1

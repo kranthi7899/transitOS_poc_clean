@@ -74,7 +74,7 @@ def _eff_operator(a: Assign, facts: Facts) -> str | None:
     return a.operator_id or facts.blocks[a.block_id].operator_id
 
 
-def double_booking_item(option: Option, facts: Facts) -> ClearanceItem:
+def double_booking_item(option: Option, facts: Facts) -> ClearanceItem:   # fails closed without a feed (A74)
     """Double-booking, judged inside the option (a vehicle or operator on overlapping blocks) and against the
     schedule feed (`facts.commitments`). No feed -> fails closed."""
     if facts.commitments is None:
