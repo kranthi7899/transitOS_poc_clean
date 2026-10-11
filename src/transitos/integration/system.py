@@ -14,7 +14,13 @@ see scripts/kafka.sh). On Kafka each System uses its own topic/group namespace, 
 `data_dir/kafka-namespace` so restart() reconnects to the same topics and committed offsets; env
 TRANSITOS_KAFKA_NAMESPACE overrides it ("none" = the canonical topic names events.raw/...).
 
-Everything that would be "our process" lives in SQLite files under `data_dir`; `restart()` drops every
+Database profile: `db=` / env TRANSITOS_DB selects `sqlite` (default: files under `data_dir`) or `postgres`
+(psycopg on TRANSITOS_PG, default postgresql://transitos@127.0.0.1:54329/transitos; needs `uv sync --extra
+postgres` and a server, see scripts/postgres.sh). On Postgres each store (plumbing, runs, idem, ks, ckpt) is a
+schema `<namespace>_<store>`; the namespace is per System, persisted in `data_dir/pg-namespace` so restart()
+reconnects, and TRANSITOS_PG_NAMESPACE overrides it ("none" = the canonical `transitos`).
+
+Everything that would be "our process" lives in SQLite files under `data_dir` (or the Postgres schemas); `restart()` drops every
 in-memory object and rebuilds it from those files (the mock products keep running, as external products
 would). `tick()` runs each stage once, in order; `run_until_idle()` repeats until nothing moves.
 """
@@ -49,6 +55,8 @@ from transitos.plumbing import (
     SqliteBus,
     SqliteCrosswalk,
 )
+from transitos.plumbing import pg as pgmod
+from transitos.plumbing.storage import db_kind
 from transitos.plumbing.watch import (
     MaintenancePoller,
     SchedulingPoller,
@@ -127,11 +135,13 @@ class Mocks:
 
 class System:
     def __init__(self, agency: str, mocks: Mocks, data_dir: str | Path | None = None, *,
-                 reasoner: Reasoner | None = None, seed_crosswalk: bool = True, bus: str | None = None):
+                 reasoner: Reasoner | None = None, seed_crosswalk: bool = True, bus: str | None = None,
+                 db: str | None = None):
         self.agency, self.mocks, self.clock = agency, mocks, mocks.clock
         self.dir = Path(data_dir or tempfile.mkdtemp(prefix="transitos-"))
         self.dir.mkdir(parents=True, exist_ok=True)
         self.bus_kind = bus_kind(bus)
+        self.db_kind = db_kind(db)
         self.config_dir = INTEGRATION_CONFIG if (INTEGRATION_CONFIG / f"{agency}.yaml").exists() else TOOLS_CONFIG_DIR
         self.reasoner = reasoner or StubReasoner()
         self.seq = Seq()
@@ -149,7 +159,10 @@ class System:
     # ------------------------------------------------------------------ construction / restart
     def _build(self) -> None:
         d = self.dir
-        self.db = Db(str(d / "plumbing.db"))      # bus, outbox, adapter cursors, crosswalk, audit
+        pg = self.db_kind == "postgres"
+        ns = self.pg_namespace() if pg else ""
+        self.db = pgmod.PgDb(pgmod.schema_name(ns, "plumbing")) if pg else \
+            Db(str(d / "plumbing.db"))            # bus, outbox, adapter cursors, crosswalk, audit
         self.bus: SqliteBus | KafkaBus = SqliteBus(self.db) if self.bus_kind == "sqlite" else \
             KafkaBus(namespace=self.kafka_namespace())
         self.relay = Relay(self.db, self.bus)
@@ -162,16 +175,29 @@ class System:
         self.webhook_client = TestClient(self.webhook.app(), base_url="http://transitos")
         self.audit_consumers = [AuditConsumer(self.db, self.bus, "raw"), AuditConsumer(self.db, self.bus, "resolved")]
         self.decisions = DecisionStore(self.db)
-        self.idem = IdemStore(d / "idem.db")
-        self.killswitch = KillSwitchStore(d / "killswitch.db")
+        if pg:
+            from transitos.plumbing.pg_stores import PgIdemStore, PgKillSwitchStore
+            self.idem = PgIdemStore(pgmod.schema_name(ns, "idem"))
+            self.killswitch = PgKillSwitchStore(pgmod.schema_name(ns, "ks"))
+        else:
+            self.idem = IdemStore(d / "idem.db")
+            self.killswitch = KillSwitchStore(d / "killswitch.db")
         self.registry = Registry(self.config_dir, clients={p: c[p] for p in WRITE_PRODUCTS}, crosswalk=self.xw,
                                  idem=self.idem, killswitch=self.killswitch, sleep=lambda s: None)
         self.toolset = self.registry.toolset(a)
-        self.store = AuditedRunsIndex(str(d / "runs.db"), self.decisions)
+        if pg:
+            from transitos.plumbing.pg_stores import PgAuditedRunsIndex
+            self.store = PgAuditedRunsIndex(pgmod.schema_name(ns, "runs"), self.decisions)
+        else:
+            self.store = AuditedRunsIndex(str(d / "runs.db"), self.decisions)
         self.deps = Deps(tools=WorkflowTools(self.toolset, self.writes), policy=self.policy,
                          limits=HardLimits(self.policy().limits), store=self.store, clock=self.clock.now,
                          reasoner=self.reasoner)
-        self._ckpt = make_checkpointer(str(d / "checkpoints.db"))
+        if pg:
+            from transitos.plumbing.pg_stores import make_pg_checkpointer
+            self._ckpt = make_pg_checkpointer(pgmod.schema_name(ns, "ckpt"))
+        else:
+            self._ckpt = make_checkpointer(str(d / "checkpoints.db"))
         self.graph = build_graph(self.deps, self._ckpt)
         self.gateway = GraphRunGateway(self)
         self.panel = create_panel(gateway=self.gateway, crosswalk=self.xw, events=OutboxEventSink(self),
@@ -188,10 +214,23 @@ class System:
             f.write_text(f"transitos-{uuid.uuid4().hex[:12]}")
         return f.read_text().strip()
 
+    def pg_namespace(self) -> str:
+        env = pgmod.namespace_from_env()
+        if env is not None:
+            return env
+        f = self.dir / "pg-namespace"
+        if not f.exists():
+            f.write_text(pgmod.new_namespace())
+        return f.read_text().strip()
+
+    def _extra_closers(self) -> list[Callable[[], None]]:
+        """Postgres-backed stores own connections of their own (the SQLite ones are left to the GC, as before)."""
+        return [x.close for x in (self.idem, self.killswitch) if self.db_kind == "postgres"]
+
     def close(self) -> None:
         """Release every connection and bus client (end of life; restart() is the crash-and-rebuild path)."""
         for closer in (self.bus.close if isinstance(self.bus, KafkaBus) else None, self.db.close,
-                       self._ckpt.conn.close, self.store.close):
+                       self._ckpt.conn.close, self.store.close, *self._extra_closers()):
             if closer is None:
                 continue
             try:
@@ -204,7 +243,8 @@ class System:
         same SQLite files, then let the workflow recover (re-drive runs that died between checkpoints)."""
         # a Kafka bus is closed without committing anything: uncommitted deliveries come back, as after a crash
         kafka_close = self.bus.close if isinstance(self.bus, KafkaBus) else None
-        for closer in (kafka_close, self.db.close, self._ckpt.conn.close, self.store.close):
+        for closer in (kafka_close, self.db.close, self._ckpt.conn.close, self.store.close,
+                       *self._extra_closers()):
             if closer is None:
                 continue
             try:

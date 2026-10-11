@@ -12,6 +12,7 @@ import os
 import pytest
 
 from transitos.plumbing.kafka_bus import broker_reachable, kafka_available
+from transitos.plumbing.pg import pg_available, server_reachable
 
 
 def _kafka_skip_reason() -> str | None:
@@ -24,7 +25,7 @@ def _kafka_skip_reason() -> str | None:
     return None
 
 
-def pytest_collection_modifyitems(config, items):
+def _kafka_modify(config, items):
     reason = _kafka_skip_reason()
     admin = os.environ.get("TRANSITOS_KAFKA_ADMIN") == "1"
     for item in items:
@@ -33,3 +34,27 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason=reason))
         elif item.get_closest_marker("kafka_admin") and not admin:
             item.add_marker(pytest.mark.skip(reason="stops/starts the local broker; set TRANSITOS_KAFKA_ADMIN=1"))
+
+
+def _pg_skip_reason() -> str | None:
+    """Tests marked `postgres` run when psycopg is installed and a server answers on 127.0.0.1:54329
+    (or TRANSITOS_PG is set, in which case an unreachable server FAILS instead of skipping)."""
+    if not pg_available():
+        return "psycopg not installed (uv sync --extra postgres)"
+    if os.environ.get("TRANSITOS_PG"):
+        return None
+    if not server_reachable(timeout=0.5):
+        return "no Postgres on 127.0.0.1:54329 (make postgres-up) and TRANSITOS_PG not set"
+    return None
+
+
+def pytest_collection_modifyitems(config, items):
+    _kafka_modify(config, items)
+    reason = _pg_skip_reason()
+    admin = os.environ.get("TRANSITOS_PG_ADMIN") == "1"
+    for item in items:
+        marked = item.get_closest_marker("postgres") or item.get_closest_marker("postgres_admin")
+        if reason and marked:
+            item.add_marker(pytest.mark.skip(reason=reason))
+        elif item.get_closest_marker("postgres_admin") and not admin:
+            item.add_marker(pytest.mark.skip(reason="stops/starts the local server; set TRANSITOS_PG_ADMIN=1"))
