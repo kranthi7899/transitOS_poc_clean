@@ -675,11 +675,46 @@
   given: {vehicle: {type: cutaway}, vehicle_unknown: [type], operator: {licence_class: C}}
   rule: operator_licence_class
   expect: {status: unverifiable, basis: unknown, requires_ack: true}
-- id: vehicle_type_unknown_endorsement_is_unverifiable
-  source: "A Q3 + P 1.2: which endorsement is needed depends on the vehicle type"
+# R3-1 (supervisor ruling): with the type unknown, only the type-DEPENDENT checks (licence class for the type,
+# trained-type membership, the expiry entry keyed by the type) are unverifiable; every type-independent check is
+# judged from native data exactly as if the type were known. The passenger endorsement is required by every
+# configured type (licence_classes.yaml), so it is judged; a known expired credential is a violation (A Q1: known
+# missing/expired qualification is a hard violation; Review Focus 1: on the day it expires and after).
+- id: vehicle_type_unknown_endorsement_held_passes
+  source: "R3-1: P required by every configured type, so judged without the type; A Q1 (converse)"
   given: {vehicle: {type: standard}, vehicle_unknown: [type]}
   rule: operator_endorsement
-  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+  expect: {status: pass, basis: native}
+- id: vehicle_type_unknown_endorsement_missing_is_violation
+  source: "R3-1 + A Q1: known missing passenger endorsement, required whatever the type"
+  given: {vehicle: {type: standard}, vehicle_unknown: [type], operator: {endorsements: []}}
+  rule: operator_endorsement
+  expect: {status: violation, basis: native}
+- id: vehicle_type_unknown_lift_credential_expired_is_violation
+  source: "R3-1 + P Review Focus 1: a known expired lift credential on a lift block is excluded even with the type unknown"
+  given: {vehicle: {type: standard}, vehicle_unknown: [type], expires: {lift: "2026-10-09"}}
+  rule: operator_training_expiry
+  expect: {status: violation, basis: native}
+- id: vehicle_type_unknown_passenger_credential_expired_is_violation
+  source: "R3-1 + P Review Focus 1: the passenger endorsement's expiry does not depend on the type"
+  given: {vehicle: {type: standard}, vehicle_unknown: [type], expires: {P: "2026-10-10"}}
+  rule: operator_training_expiry
+  expect: {status: violation, basis: native}
+- id: vehicle_type_unknown_lift_training_valid_passes
+  source: "R3-1: lift training (block needs a lift) is type-independent: judged, passes"
+  given: {vehicle: {type: standard}, vehicle_unknown: [type]}
+  rule: operator_lift_training
+  expect: {status: pass, basis: native}
+- id: vehicle_type_unknown_lift_training_missing_is_violation
+  source: "R3-1 + A Q1: known missing lift training on a lift block, type unknown"
+  given: {vehicle: {type: standard}, vehicle_unknown: [type], operator: {lift_trained: false}}
+  rule: operator_lift_training
+  expect: {status: violation, basis: native}
+- id: vehicle_type_unknown_medical_expired_is_violation
+  source: "R3-1 + F8: the medical card does not depend on the type"
+  given: {vehicle: {type: standard}, vehicle_unknown: [type], operator: {medical_valid_to: "2026-10-10"}}
+  rule: operator_medical
+  expect: {status: violation, basis: native}
 - id: vehicle_type_unknown_training_expiry_is_unverifiable
   source: "A Q3 + P 1.2: which credentials must be in date depends on the vehicle type"
   given: {vehicle: {type: standard}, vehicle_unknown: [type]}

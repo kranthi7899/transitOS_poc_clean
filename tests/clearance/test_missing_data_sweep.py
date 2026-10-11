@@ -25,7 +25,13 @@ from transitos.clearance.evaluate import (
     noteworthy,
     safe_evaluate,
 )
-from transitos.clearance.facts import RECORD_FIELDS, Facts, native_profile
+from transitos.clearance.facts import (
+    RECORD_FIELDS,
+    Facts,
+    Tables,
+    load_tables,
+    native_profile,
+)
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle
 from transitos.contracts.policy import AgencyPolicy
 
@@ -81,8 +87,7 @@ CASES = [
     ("vehicle_fit", "vehicle", "type", "type", ["bus", "standard", "cutaway", "articulated"]),
     # R2-1: the operator rules that depend on the vehicle's type
     *[(r, "vehicle", "type", "type", ["bus", "standard", "cutaway", "articulated"])
-      for r in ("operator_licence_class", "operator_endorsement", "operator_vehicle_training",
-                "operator_training_expiry")],
+      for r in ("operator_licence_class", "operator_vehicle_training", "operator_training_expiry")],
     ("vehicle_length", "vehicle", "length_ft", "length_ft", [None, 10.0, 99.0]),          # -> assumed (Q3, A66)
     ("vehicle_seats", "needs", "seats", None, [0, 100]),
     ("vehicle_wheelchair", "needs", "wheelchair_positions", None, [0, 9]),
@@ -231,3 +236,58 @@ def test_legacy_qualification_with_the_vehicle_type_missing_is_unverifiable(vari
     for quals in (["standard"], ["bus"], ["van"]):
         got = judge("operator_qualification", base_block(), vehicle, base_operator(qualifications=quals), facts)
         assert got and all((i.status, i.basis) == ("unverifiable", "unknown") for i in got), (quals, got)
+
+
+# ---- R3-1: with the vehicle's type unknown, ONLY the type-dependent checks are unverifiable ------------------
+TYPE_UNKNOWN = [("dropped", None), ("default", "bus"), ("value='bus'", "bus"), ("value='standard'", "standard"),
+                ("value='cutaway'", "cutaway"), ("value='articulated'", "articulated")]
+TYPE_DEPENDENT = ("operator_licence_class", "operator_vehicle_training", "operator_training_expiry")
+
+
+def _type_unknown(variant, value, **op):
+    vehicle = base_vehicle() if variant == "dropped" else base_vehicle(type=value, unknown_fields=["type"])
+    facts = facts_for("type" if variant == "dropped" else None)
+    f = Facts(blocks={"b1": base_block()}, vehicles={vehicle.id: vehicle}, operators={"op-1": base_operator(**op)},
+              ready_count=3, commitments={}, profiles=facts.profiles)
+    items = safe_evaluate(Option((Assign("b1", vehicle.id),)), f, POL, T0).items
+    return {r: [(i.status, i.basis) for i in items if i.rule == r] for r in {i.rule for i in items}}
+
+
+@pytest.mark.parametrize("variant,value", TYPE_UNKNOWN)
+def test_type_unknown_exact_statuses_on_valid_data(variant, value):
+    got = _type_unknown(variant, value)
+    for r in TYPE_DEPENDENT:
+        assert got[r] == [("unverifiable", "unknown")], (r, got[r])
+    for r in ("operator_endorsement", "operator_lift_training", "operator_medical", "operator_hours_day",
+              "operator_hours_week", "operator_availability"):
+        assert got[r] == [("pass", "native")], (r, got[r])
+
+
+@pytest.mark.parametrize("variant,value", TYPE_UNKNOWN)
+@pytest.mark.parametrize("op,rule", [
+    ({"training_valid_to": {"P": FAR, "standard": FAR, "lift": PAST}}, "operator_training_expiry"),
+    ({"training_valid_to": {"P": PAST, "standard": FAR, "lift": FAR}}, "operator_training_expiry"),
+    ({"endorsements": []}, "operator_endorsement"),
+    ({"lift_trained": False}, "operator_lift_training"),
+    ({"medical_valid_to": PAST}, "operator_medical"),
+], ids=["lift_expired", "P_expired", "P_missing", "lift_untrained", "medical_expired"])
+def test_type_unknown_known_type_independent_breaches_are_violations(variant, value, op, rule):
+    """R3-1: a known expired lift or passenger credential, a missing P (every configured type needs it), missing
+    lift training on a lift block, an expired medical card: violations (excluded), never acknowledgeable."""
+    assert _type_unknown(variant, value, **op)[rule] == [("violation", "native")]
+
+
+def test_type_unknown_endorsement_follows_the_configured_types_not_a_constant():
+    """A136: P is judged without the type only because EVERY configured type needs it; add a type that does not
+    and the endorsement check becomes unverifiable when the type is unknown."""
+    t = load_tables()
+    mixed = Tables(t.licence_order, t.passenger_endorsement_code,
+                   {**t.vehicle_requirements, "van": {"min_licence_class": "C", "passenger_endorsement": False,
+                                                      "training_type": "van"}},
+                   t.vehicle_order, t.typical_length_ft)
+    vehicle = base_vehicle(type="bus", unknown_fields=["type"])
+    f = Facts(blocks={"b1": base_block()}, vehicles={vehicle.id: vehicle},
+              operators={"op-1": base_operator(endorsements=[])}, ready_count=3, commitments={},
+              profiles=facts_for(None).profiles, tables=mixed)
+    items = safe_evaluate(Option((Assign("b1", vehicle.id),)), f, POL, T0).items
+    assert [(i.status, i.basis) for i in items if i.rule == "operator_endorsement"] == [("unverifiable", "unknown")]

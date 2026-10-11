@@ -40,8 +40,8 @@ WORKFORCE = {
     "duty_start_today": ["operator_spread"],
 }
 VEHICLE = {"seats": ["vehicle_seats"], "wheelchair_positions": ["vehicle_wheelchair"], "lift_ok": ["vehicle_lift"],
-           "type": ["vehicle_fit", "operator_licence_class", "operator_endorsement", "operator_vehicle_training",
-                    "operator_training_expiry"]}   # R2-1: the operator rules depend on the vehicle's type
+           "type": ["vehicle_fit", "operator_licence_class", "operator_vehicle_training",
+                    "operator_training_expiry"]}   # R2-1/R3-1: the operator rules that depend on the vehicle's type
 NEEDS = {"seats": ["vehicle_seats"], "wheelchair_positions": ["vehicle_wheelchair"],
          "lift": ["vehicle_lift", "operator_lift_training", "operator_training_expiry"], "type": ["vehicle_fit"],
          "max_vehicle_length_ft": ["vehicle_length"]}
@@ -60,10 +60,13 @@ def env(mocks):
     return e
 
 
-def judge(env):
+def judge(env, from_export: bool = False):
+    """`from_export`: take the operator straight from the workforce export, not from the eligible list (which
+    already drops an operator with a KNOWN violation), to judge it on the planner's option path."""
     block = next(b for b in env.tools.list_blocks(AG, T5, T7).value if b.id == BLOCK)
     vehicle = env.tools.get_vehicle(AG, SPARE).value
-    op = next(o for o in env.tools.list_eligible_operators(AG, block).value if o.id == OP)
+    ops = env.tools._optional("operators")[0](AG) if from_export else env.tools.list_eligible_operators(AG, block).value
+    op = next(o for o in ops if o.id == OP)
     profiles = {k: CapabilityProfile.from_dict(v) for k, v in env.tools.capability_profiles(AG).value.items()}
     facts = Facts(blocks={block.id: block}, vehicles={vehicle.id: vehicle}, operators={op.id: op}, ready_count=3,
                   commitments={}, profiles=profiles)
@@ -101,3 +104,24 @@ def test_missing_source_data_is_never_a_pass_and_never_a_violation(env, kind, fi
         want = "not_evaluated" if rule in OPTIONAL else "unverifiable"
         assert got, f"{rule} said nothing when {kind}.{field} was {how}ped/blanked"
         assert all((i.status, i.basis) == (want, "unknown") for i in got), [i.model_dump() for i in got]
+
+
+@pytest.mark.parametrize("how", ["drop", "blank"])
+def test_vehicle_type_missing_judges_type_independent_checks_exactly(env, how):
+    """R3-1 through the real products: the spare's type dropped or blanked. Endorsement and lift training are
+    still judged (pass); the type-dependent checks are unverifiable; then OP-310's lift credential is set to
+    yesterday and the expiry check becomes a VIOLATION, not an acknowledgeable unverifiable."""
+    make_missing(env, "vehicles", "type", how)
+    got = {r: {(i.status, i.basis) for i in judge(env) if i.rule == r} for r in (
+        "operator_endorsement", "operator_lift_training", "operator_licence_class", "operator_vehicle_training",
+        "operator_training_expiry")}
+    assert got["operator_endorsement"] == got["operator_lift_training"] == {("pass", "native")}
+    assert got["operator_licence_class"] == got["operator_vehicle_training"] == {("unverifiable", "unknown")}
+    assert got["operator_training_expiry"] == {("unverifiable", "unknown")}
+    env.c("workforce").post("/sim/operator", headers=H, json={"operator": OP_NATIVE, "training_valid_to":
+        "P=2030-01-01T00:00:00Z;cutaway=2030-01-01T00:00:00Z;standard=2030-01-01T00:00:00Z;"
+        "articulated=2030-01-01T00:00:00Z;lift=2026-01-04T00:00:00Z"})
+    block = next(b for b in env.tools.list_blocks(AG, T5, T7).value if b.id == BLOCK)
+    assert OP not in {o.id for o in env.tools.list_eligible_operators(AG, block).value}   # excluded up front
+    assert {(i.status, i.basis) for i in judge(env, from_export=True)
+            if i.rule == "operator_training_expiry"} == {("violation", "native")}
