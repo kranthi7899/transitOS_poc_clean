@@ -595,7 +595,7 @@ def build_graph(deps: Deps, checkpointer):
             run.plan_version += 1  # fresh idempotency keys, fresh approval; no write happened
             run.acknowledged = []
             return _out(run, ctx, "reason")
-        # F1: re-judge the APPROVED plan's own option against the fresh facts and replace its clearance.
+        # F1: re-judge the APPROVED plan's own option against the fresh facts and replace its clearance (A132).
         fresh = rejudge(run, mf, wrote)
         old = {(i.rule, i.status, i.basis) for i in run.plan.clearance}
         appeared = [i for i in fresh if i.status in ("warn", "unverifiable", "violation")

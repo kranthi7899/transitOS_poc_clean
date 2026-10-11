@@ -43,7 +43,7 @@ def clearance_error(where: str, e: BaseException) -> ClearanceItem:
 
 def guarded(where: str, fn: Callable[..., list[ClearanceItem]], *args) -> list[ClearanceItem]:
     """Run one direct rule call (vehicle_items / operator_items / ...) for ONE candidate; any exception excludes
-    that candidate with a `clearance_error` item (F4) instead of propagating."""
+    that candidate with a `clearance_error` item (F4, A133) instead of propagating."""
     try:
         return fn(*args)
     except Exception as e:  # noqa: BLE001
@@ -320,7 +320,7 @@ def operator_items(block: Block, op: Operator, vehicle_type: str | None, facts: 
               (op.available_to is not None and op.available_to < block.end)
         out.append(item("operator_availability", "violation" if bad else "pass", ab,
                         f"operator_not_available: {op.id} outside the block window" if bad else ""))
-    # medical card: a LEGAL rule (F8): known expired = violation, unknown = unverifiable
+    # medical card: a LEGAL rule (F8, A134): known expired = violation, unknown = unverifiable
     mb = rb("medical_valid_to")
     if mb == "unknown" or op.medical_valid_to is None:
         out.append(unverifiable("operator_medical", f"{op.id}: no medical card date on record"))

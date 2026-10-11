@@ -81,7 +81,7 @@ def map_vehicle(deps: Deps, agency: str, raw: dict) -> Vehicle:
 
 def scheduling_profile(vehicles: list[dict]) -> CapabilityProfile:
     """What the scheduling product supplies, from the payload itself (F3): a vehicle field is native when every
-    vehicle record carries the key (a null or blank value is then per-record unknown), else unknown."""
+    vehicle record carries the key (a null or blank value is then per-record unknown), else unknown (A131)."""
     keys = set.intersection(*(set(v) for v in vehicles)) if vehicles else set()
     return CapabilityProfile("scheduling", {f: ("native" if f in keys else "unknown") for f in _VEHICLE_FIELDS})
 
@@ -89,7 +89,7 @@ def scheduling_profile(vehicles: list[dict]) -> CapabilityProfile:
 def _needs(raw: dict | None) -> Needs:
     """Block needs. A key the block does not carry (or a blank value) is NOT declared: listed in
     `Needs.unknown_fields`, never read as "no requirement" (F3). For the two optional restrictions (`type`,
-    `max_vehicle_length_ft`) an explicit null declares that there is none."""
+    `max_vehicle_length_ft`) an explicit null declares that there is none (A130)."""
     n = raw if isinstance(raw, dict) else {}
     unknown = [k for k in ("seats", "wheelchair_positions", "lift") if _blank(n.get(k))]
     unknown += [k for k in ("type", "max_vehicle_length_ft") if k not in n or (n[k] is not None and _blank(n[k]))]
