@@ -211,19 +211,26 @@ def _qualification_items(block: Block, op: Operator, vehicle_type: str | None, f
     rb = lambda f: facts.record_basis("workforce", f, op)
     n = block.needs
     out: list[ClearanceItem] = []
-    if any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):        # new qualification model (D-1)
-        req = facts.tables.vehicle_requirements.get(vehicle_type) if vehicle_type else None
-        if vehicle_type is not None and req is None:
+    if vehicle_type is None:
+        # R2-1: the type of the vehicle that will run the block is not known (not supplied, blank, or not chosen
+        # yet): every type-dependent qualification rule is unverifiable, never judged on a placeholder
+        why = f"{op.id}: the vehicle's type is not known, so the qualification it needs cannot be checked"
+        if any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):
+            out += [unverifiable(r, why) for r in ("operator_licence_class", "operator_endorsement",
+                                                   "operator_vehicle_training", "operator_training_expiry")]
+        else:
+            out.append(unverifiable("operator_qualification", why))
+    elif any(rb(f) != "unknown" for f in NEW_QUALIFICATION_FIELDS):        # new qualification model (D-1)
+        req = facts.tables.vehicle_requirements.get(vehicle_type)
+        if req is None:
             for rule in ("operator_licence_class", "operator_endorsement", "operator_vehicle_training"):
                 out.append(unverifiable(rule, f"{op.id}: no licence requirement on record for vehicle type {vehicle_type}"))
-        elif req is not None:
-            out += _new_model_items(block, op, vehicle_type, req, facts)   # type: ignore[arg-type]
+        else:
+            out += _new_model_items(block, op, vehicle_type, req, facts)
     elif rb("qualifications") != "unknown":                               # legacy list only
-        vt = vehicle_type or n.type
-        if vt is not None:
-            ok = vt in op.qualifications
-            out.append(item("operator_qualification", "pass" if ok else "violation", rb("qualifications"),
-                            "" if ok else f"operator_qualification: {op.id} lacks {vt}"))
+        ok = vehicle_type in op.qualifications
+        out.append(item("operator_qualification", "pass" if ok else "violation", rb("qualifications"),
+                        "" if ok else f"operator_qualification: {op.id} lacks {vehicle_type}"))
     else:
         out.append(unverifiable("operator_qualification",
                                 f"{op.id}: no qualification data on record (licence, endorsement or training)"))
@@ -303,11 +310,17 @@ def _expiry_item(block: Block, op: Operator, held: list[str], unsure: list[str],
     return item("operator_training_expiry", "pass", basis)
 
 
+def known_vehicle_type(v: Vehicle, facts: Facts) -> str | None:
+    """The vehicle's type for the OPERATOR rules: None when the product does not supply it or this record's
+    type was blank (the adapters' placeholder must never be judged; R2-1)."""
+    return None if facts.record_basis("scheduling", "type", v) == "unknown" else v.type
+
+
 def operator_items(block: Block, op: Operator, vehicle_type: str | None, facts: Facts,
                    policy: AgencyPolicy) -> list[ClearanceItem]:
-    """All operator rules for one block. `vehicle_type` is the type of the vehicle that will run it
-    (None while the vehicle is not chosen yet: the type-dependent qualification rules are then skipped
-    and re-run at option level)."""
+    """All operator rules for one block. `vehicle_type` is the KNOWN type of the vehicle that will run it (use
+    `known_vehicle_type`). None (not known, or not chosen yet) makes every type-dependent qualification rule
+    unverifiable (R2-1); candidate pre-filters then keep the operator and the option level re-judges it."""
     rb = lambda f, fields=None: facts.record_basis("workforce", f, op, fields)
     lim = policy.limits
     out = _hours_items(block, op, facts, policy)

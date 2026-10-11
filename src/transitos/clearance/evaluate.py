@@ -20,6 +20,7 @@ from .rules import (
     clearance_error,
     item,
     kill_switch_item,
+    known_vehicle_type,
     last_spare_item,
     min_distinct_spares,
     operator_items,
@@ -161,7 +162,7 @@ def evaluate_option(option: Option, facts: Facts, policy: AgencyPolicy, at: date
             items.append(item("operator_eligible", "violation", "native",
                               f"operator {oid} is not among the operators eligible for block {b.id}"))
         else:
-            items += operator_items(b, op, v.type, facts, policy)
+            items += operator_items(b, op, known_vehicle_type(v, facts), facts, policy)   # R2-1
     items += option_items(option, facts, policy)
     return _clearance(items)
 
