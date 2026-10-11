@@ -120,6 +120,19 @@ def dirty_fleet_number(clean: str, rng: random.Random) -> str:
     return f"{prefix}_{digits}"
 
 
+def dirty_vin(clean: str, rng: random.Random) -> str:
+    """Seeded hand-typed rendering of a VIN: lower case, groups split by spaces or hyphens, letter O for zero.
+    The characters' values never change, so a valid VIN stays valid after normalisation."""
+    style = rng.randrange(4)
+    if style == 0:
+        return clean.lower()
+    if style == 1:
+        return f"{clean[:3]} {clean[3:9]} {clean[9:]}"
+    if style == 2:
+        return clean.replace("0", "O")
+    return f"{clean[:8]}-{clean[8:]}".lower()
+
+
 def dirty_plate(clean: str, rng: random.Random) -> str:
     """Seeded messy rendering of a plate: spacing, hyphens, case, letter O typed for zero."""
     compact = clean.replace(" ", "")

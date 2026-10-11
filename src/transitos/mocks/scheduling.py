@@ -18,13 +18,17 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     st = ctx.store
     tenant = Depends(ctx.tenant)
     KEYS = ("id", "seats", "wheelchair_positions", "lift_ok", "type", "status", "depot", "length_ft", "updated_at")
+    IDENTITY = ("vin", "plate", "name")
 
     def seeder(a: str) -> None:
         now = iso(clock.now())
         fleet = build_fleet(a, clock.now())
         for v in fleet.vehicles:
+            if v.get("sched") is None:   # Phase 10 Step 2: not in the revenue roster (retired, non-revenue, orphan)
+                continue
             d = {k: v[k] for k in ("seats", "wheelchair_positions", "lift_ok", "type", "status", "depot")}
             d["length_ft"] = v.get("length_ft")  # optional (Phase 10): fleets that carry no length report null
+            d.update({k: v[f"sched_{k}"] for k in IDENTITY if v.get(f"sched_{k}") is not None})  # Step 2 evidence
             st.put(a, "vehicles", v["sched"], {"id": v["sched"], **d, "updated_at": now})
         for b in fleet.blocks:
             blk = {k: b[k] for k in ("id", "vehicle", "operator", "start", "end", "start_depot", "needs")}
@@ -50,7 +54,8 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         return out
 
     def render_vehicle(a: str, v: dict) -> dict:
-        return shaped(a, {k: v.get(k) for k in KEYS}, "vehicles", v["id"])
+        ident = {k: v[k] for k in IDENTITY if k in v}   # Step 2: VIN, plate, name only where the record holds them
+        return shaped(a, {**{k: v.get(k) for k in KEYS}, **ident}, "vehicles", v["id"])
 
     def render_block(a: str, b: dict) -> dict:
         return {**b, "needs": shaped(a, dict(b["needs"]), "needs", b["id"])}

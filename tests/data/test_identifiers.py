@@ -134,5 +134,9 @@ def test_dirty_helpers_are_seeded_and_keep_the_identity_recoverable():
     assert len(set(variants)) > 3
     for v in variants:   # dirt never changes the digits' values
         assert "".join(ch for ch in v.upper().replace("O", "0") if ch.isdigit()).lstrip("0") == "44"
+    from transitos.plumbing.native_id import norm_vin
+    vin = idf.make_vin(idf.synthetic_wmis()[0], "B1C2D", 2020, "Z", 1050)
+    for seed in range(8):
+        assert norm_vin(idf.dirty_vin(vin, random.Random(seed))) == vin
     pv = idf.dirty_plate("ZZ 4KT0219", random.Random(1))
     assert pv.replace(" ", "").replace("-", "").upper().replace("O", "0") == "ZZ4KT0219"
