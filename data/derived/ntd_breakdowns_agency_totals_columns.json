@@ -1,0 +1,31 @@
+{
+ "dataset": "ntd_breakdowns_agency_totals",
+ "file": "fk8n-qvag.csv",
+ "columns": [
+  "ntd_id",
+  "max_agency",
+  "max_city",
+  "max_state",
+  "max_organization_type",
+  "max_reporter_type",
+  "report_year",
+  "max_uace_code",
+  "max_uza_name",
+  "max_primary_uza_population",
+  "max_agency_voms",
+  "sum_major_mechanical_failures",
+  "sum_other_mechanical_failures",
+  "sum_total_mechanical_failures",
+  "sum_vehicle_passenger_car_miles",
+  "sum_vehicle_passenger_car_revenue",
+  "sum_train_miles",
+  "sum_train_revenue_miles",
+  "count_train_revenue_miles_questionable",
+  "count_major_mechanical_failures_questionable",
+  "count_other_mechanical_failures_questionable",
+  "count_total_mechanical_failures_questionable",
+  "count_vehicle_passenger_car_miles_questionable",
+  "count_train_miles_questionable"
+ ],
+ "rows": 1573
+}

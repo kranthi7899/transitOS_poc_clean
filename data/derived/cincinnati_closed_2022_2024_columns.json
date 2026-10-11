@@ -1,0 +1,17 @@
+{
+ "dataset": "cincinnati_closed_2022_2024",
+ "file": "closed_2022_2024.csv",
+ "columns": [
+  "job_type",
+  "work_order_status",
+  "datetime_open",
+  "datetime_first_labor",
+  "datetime_finished",
+  "datetime_closed",
+  "delay_hours",
+  "labor_hours",
+  "downtime_hrs_shop",
+  "reas_for_repair_desc"
+ ],
+ "rows": 28241
+}
