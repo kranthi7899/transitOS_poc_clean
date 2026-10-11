@@ -1,0 +1,61 @@
+# OPT-IN realistic-decode fixture: real WMIs, kept ONLY where vPIC GetWMIsForManufacturer lists them.
+# Checked 2026-10-11 by transitos.data.vpic_wmi. Not used by the default fleets (D-F, A77).
+opt_in: true
+source: vPIC GetWMIsForManufacturer
+checked_on: '2026-10-11'
+wmis:
+- wmi: 1FD
+  manufacturer: FORD MOTOR COMPANY
+  vehicle_type: Incomplete Vehicle
+- wmi: 1BA
+  manufacturer: BLUE BIRD BODY COMPANY
+  vehicle_type: Bus
+- wmi: 1BD
+  manufacturer: BLUE BIRD BODY COMPANY
+  vehicle_type: Incomplete Vehicle
+- wmi: 15G
+  manufacturer: GILLIG LLC
+  vehicle_type: Bus
+- wmi: 5FY
+  manufacturer: NEW FLYER OF AMERICA, INC.
+  vehicle_type: Bus
+- wmi: 1N9084
+  manufacturer: ELDORADO NATIONAL (CALIFORNIA), INC.
+  vehicle_type: Bus
+checked:
+- wmi: 1FD
+  searched: Ford
+  listed: true
+  listed_as: 1FD
+  name: FORD MOTOR COMPANY
+  vehicle_type: Incomplete Vehicle
+- wmi: 1BA
+  searched: Blue Bird
+  listed: true
+  listed_as: 1BA
+  name: BLUE BIRD BODY COMPANY
+  vehicle_type: Bus
+- wmi: 1BD
+  searched: Blue Bird
+  listed: true
+  listed_as: 1BD
+  name: BLUE BIRD BODY COMPANY
+  vehicle_type: Incomplete Vehicle
+- wmi: 15G
+  searched: Gillig
+  listed: true
+  listed_as: 15G
+  name: GILLIG LLC
+  vehicle_type: Bus
+- wmi: 5FY
+  searched: New Flyer
+  listed: true
+  listed_as: 5FY
+  name: NEW FLYER OF AMERICA, INC.
+  vehicle_type: Bus
+- wmi: 1N9
+  searched: ElDorado
+  listed: true
+  listed_as: 1N9084
+  name: ELDORADO NATIONAL (CALIFORNIA), INC.
+  vehicle_type: Bus

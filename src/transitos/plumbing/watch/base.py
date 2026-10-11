@@ -46,6 +46,13 @@ def make_event(agency: str, product: str, event_id: str, type_: str, time: str |
     )
 
 
+def identity_evidence(vin: Any, plate: Any, name: Any) -> dict[str, str]:
+    """Phase 10 Step 2 (B-1): the VIN, plate and name the product reported, as event data `native_vin`,
+    `native_plate`, `native_name`. A blank or absent value is left out (unknown), never sent as ''."""
+    out = {"native_vin": vin, "native_plate": plate, "native_name": name}
+    return {k: str(v) for k, v in out.items() if v is not None and str(v).strip()}
+
+
 def raw_key(product: str, native_id: str) -> str:
     return f"{product}:{native_id}"
 
@@ -88,6 +95,17 @@ class Poller:
         if r.status_code >= 400:
             raise UpstreamError(f"{path}: http {r.status_code}")
         return r.json()
+
+    def evidence(self, cache: dict, path: str, vin: str = "vin", plate: str = "plate", name: str = "name") -> dict:
+        """Identity evidence for one record read from the product (cached for one poll). A failed read leaves the
+        evidence unknown and never blocks the poll (A88): the crosswalk's exact path does not need it."""
+        if path not in cache:
+            try:
+                d = self.get(path)
+            except UpstreamError:
+                d = None
+            cache[path] = identity_evidence(d.get(vin), d.get(plate), d.get(name)) if isinstance(d, dict) else {}
+        return cache[path]
 
     def build(self, cursor: str | None, last_seen: dict) -> tuple[list[Emitted], str | None, dict]:
         raise NotImplementedError

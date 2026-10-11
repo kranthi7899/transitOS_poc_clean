@@ -44,4 +44,8 @@ class World(Protocol):
     def take_spare(self, run_id: str) -> None:
         """Another actor grabs the spare the run proposed (scheduling status change), after the proposal."""
 
+    def pick(self, canonical_id: str) -> None:
+        """Phase 10 Step 2: a human maps the first parked native id to this canonical vehicle (panel POST
+        /crosswalk); the parked events are republished. Process to quiescence."""
+
     def observe(self) -> Observation: ...

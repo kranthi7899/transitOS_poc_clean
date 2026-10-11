@@ -162,6 +162,17 @@ class CrosswalkUnresolved:
 
     def list_unresolved(self, agency: str | None = None) -> list[dict[str, Any]]:
         grouped: dict[tuple[str, str, str], list[str]] = defaultdict(list)
+        resolution: dict[tuple[str, str, str], dict | None] = {}
         for r in self.s.xw.unresolved(agency):
-            grouped[(r["agency"], r["product"], r["native_id"])].append(r["event_id"])
-        return [{"agency": a, "product": p, "native_id": n, "event_ids": e} for (a, p, n), e in grouped.items()]
+            k = (r["agency"], r["product"], r["native_id"])
+            grouped[k].append(r["event_id"])
+            if r.get("resolution") is not None:     # Phase 10 Step 2: the latest parked event's resolution
+                resolution[k] = r["resolution"]
+        out = []
+        for (a, p, n), e in grouped.items():
+            res = resolution.get((a, p, n))
+            out.append({"agency": a, "product": p, "native_id": n, "event_ids": e,
+                        "outcome": res.get("outcome") if res else None,
+                        "candidates": res.get("candidates", []) if res else [],
+                        "notes": res.get("notes", []) if res else []})
+        return out

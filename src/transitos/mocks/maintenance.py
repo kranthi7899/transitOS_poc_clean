@@ -20,11 +20,16 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         now = iso(clock.now())
         fleet = build_fleet(a, clock.now())
         for v in fleet.vehicles:
-            pm = next(p for p in fleet.pm if p["vehicle_idx"] == v["idx"])
+            if v.get("maint") is None:   # Phase 10 Step 2: no maintenance asset (an orphan telematics unit)
+                continue
+            pm = next((p for p in fleet.pm if p["vehicle_idx"] == v["idx"]), None)
             st.put(a, "assets", v["maint"], {
                 "asset": v["maint"], "description": f"{v['type']} coach {v['name']}",
-                "status": "active", "meter_mi": pm["meter_mi"],
+                "status": v.get("maint_status", "active"), "meter_mi": pm["meter_mi"] if pm else 0,
+                **{k: v[f"maint_{k}"] for k in ("vin", "plate", "name", "make") if v.get(f"maint_{k}")},  # Step 2
             })
+            if pm is None:   # no PM schedule for a retired asset
+                continue
             st.put(a, "pm", v["maint"], {
                 "asset": v["maint"], "service_code": pm["service_code"], "due_mi": pm["due_mi"],
                 "meter_mi": pm["meter_mi"], "updated_at": now,
@@ -75,6 +80,11 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     def since_ok(doc: dict, updated_since: str | None) -> bool:
         return not updated_since or parse_ts(doc["updated_at"]) >= parse_ts(updated_since)
 
+    @app.get("/assets")
+    def list_assets(a: str = tenant):   # Phase 10 Step 2: the asset register (unit, VIN, plate, name, make, status)
+        refresh(a)
+        return sorted(st.all(a, "assets"), key=lambda d: d["asset"])
+
     @app.get("/assets/{asset}")
     def get_asset(asset: str, a: str = tenant):
         refresh(a)
@@ -117,6 +127,8 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
             raise HTTPException(422, "opened_by must be system|human")
         if not asset or st.get(a, "assets", asset) is None:
             raise HTTPException(404, "asset not found")
+        if st.get(a, "assets", asset).get("status") == "retired":   # Phase 10 Step 2 (A87)
+            raise HTTPException(409, "asset is retired: no new work orders")
         n = st.next_seq(a, "wo")
         now = iso(clock.now())
         wo = {

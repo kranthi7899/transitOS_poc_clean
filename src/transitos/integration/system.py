@@ -44,6 +44,7 @@ from transitos.mocks import alerts, maintenance, scheduling, telematics, workfor
 from transitos.mocks.chaos import Chaos
 from transitos.mocks.clock import SimClock
 from transitos.mocks.crosswalk_seed import crosswalk_entries
+from transitos.mocks.seed import GENERATED
 from transitos.panel.app import create_app as create_panel
 from transitos.plumbing import (
     AuditConsumer,
@@ -56,6 +57,7 @@ from transitos.plumbing import (
     SqliteCrosswalk,
 )
 from transitos.plumbing import pg as pgmod
+from transitos.plumbing.discovery import discover_from_products
 from transitos.plumbing.storage import db_kind
 from transitos.plumbing.watch import (
     MaintenancePoller,
@@ -152,9 +154,12 @@ class System:
         # with the write log; Track F's AuditEvent shape)
         self.ops_log: list[AuditEvent] = []
         self._build()
+        self.discovery: list[dict] = []   # Phase 10 Step 2: crosswalk worked out from product reads
         if seed_crosswalk:
             for e in crosswalk_entries(agency, self.clock.now()):
                 self.xw.resolve(e)
+            if agency in GENERATED:
+                self.discovery = discover_from_products(self.xw, mocks.clients, agency, self.clock.now())
         mocks.webhook = self._webhook
 
     # ------------------------------------------------------------------ construction / restart

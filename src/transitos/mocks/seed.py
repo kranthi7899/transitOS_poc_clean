@@ -105,13 +105,19 @@ def register_fleet(agency: str, builder: FleetBuilder | None) -> None:
         _CUSTOM[agency] = builder
 
 
+GENERATED = ("agency-088",)   # Phase 10 Step 2: generated profile with messy identifiers (mocks/fleet_088.py)
+
+
 def known_agency(agency: str) -> bool:
-    return agency in AGENCIES or agency in _CUSTOM
+    return agency in AGENCIES or agency in _CUSTOM or agency in GENERATED
 
 
 def build_fleet(agency: str, now: datetime) -> Fleet:
     if agency in _CUSTOM:
         return _CUSTOM[agency](now)
+    if agency in GENERATED:
+        from .fleet_088 import build_agency_088
+        return build_agency_088(now)
     cfg = AGENCIES[agency]
     day = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     f = Fleet(agency)

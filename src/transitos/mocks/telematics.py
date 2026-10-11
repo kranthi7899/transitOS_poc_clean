@@ -39,6 +39,16 @@ def encode(payload: dict) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
+def _ident(v: dict) -> dict:
+    """Phase 10 Step 2: VIN read from the engine, licence plate and gateway install date, where the fleet has them."""
+    out = {"vin": v.get("tele_vin"), "licensePlate": v.get("tele_plate"), "installedAt": v.get("tele_installed_at")}
+    return {k: x for k, x in out.items() if x}
+
+
+def _payload_vehicle(veh: dict) -> dict:
+    return {k: veh[k] for k in ("id", "name", "vin", "licensePlate") if k in veh}
+
+
 def _http_sender(url: str, body: bytes, headers: dict) -> None:
     httpx.post(url, content=body, headers=headers, timeout=5).raise_for_status()
 
@@ -51,7 +61,13 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
     def seeder(a: str) -> None:
         fleet = build_fleet(a, clock.now())
         for v in fleet.vehicles:
-            st.put(a, "vehicles", v["tele"], {"id": v["tele"], "name": v["name"]})
+            if v.get("tele") is None:   # Phase 10 Step 2: no telematics unit (e.g. a retired bus)
+                continue
+            st.put(a, "vehicles", v["tele"], {"id": v["tele"], "name": v.get("tele_name") or v["name"], **_ident(v)})
+            if p := v.get("tele_prev"):   # a swapped-out gateway keeps its record, with the removal date
+                st.put(a, "vehicles", p["id"], {"id": p["id"], "name": p.get("name") or v["name"],
+                                                "removedAt": p["removed_at"],
+                                                **({"vin": p["vin"]} if p.get("vin") else {})})
 
     app = make_app(ctx, "telematics", seeder)
     app.state.sender = sender or _http_sender
@@ -96,7 +112,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
     def fault_payload(a: str, veh: dict, spn: int, fmi: int, lamps: dict, count: int) -> dict:
         n = st.next_seq(a, "eventId")
         return {
-            "eventId": f"evt-{n}", "vehicle": {"id": veh["id"], "name": veh["name"]},
+            "eventId": f"evt-{n}", "vehicle": _payload_vehicle(veh),
             "fault": {"spn": spn, "fmi": fmi,
                       "lamps": {"stop": bool(lamps.get("stop")), "warn": bool(lamps.get("warn")), "protect": bool(lamps.get("protect"))},
                       "occurrenceCount": count},
@@ -130,6 +146,10 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
         st.delete(x_agency, "faults", f"{body['vehicle']}:{int(body['spn'])}:{int(body['fmi'])}")
         return {"ok": True}
 
+    @app.get("/vehicles")
+    def vehicles(a: str = tenant):   # Phase 10 Step 2: the unit roster (id, name, VIN, plate, install dates)
+        return sorted(st.all(a, "vehicles"), key=lambda v: v["id"])
+
     @app.get("/faults/current")
     def current(vehicle: str | None = None, a: str = tenant):
         deliver_due(a)
@@ -152,7 +172,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
         veh = vehicle(a, body["vehicle"])
         n = st.next_seq(a, "eventId")
         payload = {
-            "eventId": f"evt-{n}", "vehicle": {"id": veh["id"], "name": veh["name"]},
+            "eventId": f"evt-{n}", "vehicle": _payload_vehicle(veh),
             "dvir": {"defect_text": body.get("defect_text", ""), "reported_by_role": body.get("reported_by_role", "operator")},
             "time": clock.iso(),
         }

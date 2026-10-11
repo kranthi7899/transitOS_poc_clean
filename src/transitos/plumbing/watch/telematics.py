@@ -13,7 +13,15 @@ from transitos.contracts import ids
 
 from .. import outbox
 from ..db import Db
-from .base import Poller, UpstreamError, load_state, make_event, raw_key, save_state
+from .base import (
+    Poller,
+    UpstreamError,
+    identity_evidence,
+    load_state,
+    make_event,
+    raw_key,
+    save_state,
+)
 
 SEEN_SCHEMA = """
 CREATE TABLE IF NOT EXISTS telematics_seen(
@@ -49,6 +57,8 @@ def ingest_payload(conn: sqlite3.Connection, agency: str, p: dict[str, Any]) -> 
             {"native_vehicle_id": veh, "spn": f["spn"], "fmi": f["fmi"],
              "lamps": {k: bool(lamps.get(k, False)) for k in ("stop", "warn", "protect")},
              "occurrence_count": f.get("occurrenceCount", 1), "source": "sensor"})
+    ev.data.update(identity_evidence(p["vehicle"].get("vin"), p["vehicle"].get("licensePlate"),
+                                     p["vehicle"].get("name")))
     conn.execute("INSERT INTO telematics_seen VALUES(?,?,?)", (agency, vendor_id, ev.id))
     outbox.add(conn, ev, "events.raw", raw_key("telematics", veh))
     return True

@@ -46,3 +46,19 @@ def test_reserved_word_autoincrement_rowid_time_and_two_arg_max():
 def test_script_split_ignores_semicolons_in_literals_and_comments():
     parts = split_script("CREATE TABLE a(x TEXT DEFAULT ';'); -- c; d\nCREATE INDEX i ON a(x);")
     assert parts == ["CREATE TABLE a(x TEXT DEFAULT ';')", "CREATE INDEX i ON a(x)"]
+
+
+def test_crosswalk_v12_statements_translate_without_sqlite_only_constructs():
+    """Step 2 (B-1): every statement the crosswalk store runs is portable; the supervisor runs it on a server."""
+    from transitos.plumbing import crosswalk as xw
+    for stmt in split_script(xw.SCHEMA) + split_script(xw.MIGRATE_V1):
+        t = translate(stmt, with_params=False)
+        assert "?" not in t and "PRAGMA" not in t.upper()
+    ddl = translate(split_script(xw.SCHEMA)[0], with_params=False)
+    assert "vf TEXT NOT NULL DEFAULT ''" in ddl and ddl.endswith(", rowid BIGSERIAL)")
+    assert translate(split_script(xw.MIGRATE_V1)[0], with_params=False).endswith(", rowid BIGSERIAL)")
+    up = translate(f"INSERT INTO xw_entries({xw.COLS}) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                   "ON CONFLICT(agency,product,native_id,vf) DO UPDATE SET valid_to=excluded.valid_to")
+    assert up.count("%s") == 10 and "ON CONFLICT(agency,product,native_id,vf)" in up
+    assert translate("ALTER TABLE xw_unresolved ADD COLUMN resolution TEXT") == \
+        "ALTER TABLE xw_unresolved ADD COLUMN resolution TEXT"
