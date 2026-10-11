@@ -18,4 +18,3 @@ Simulated-products proof of concept of cross-product agentic orchestration (vehi
 7. LLM access only through `workflow/reasoning.py` client interface; default is a stub plus code-ranked fallback (provider decision is open).
 8. Local profile = zero infra (SQLite + in-process bus). Kafka/Postgres compose profile is later; keep interfaces identical.
 9. Keep client names and client documents out of this repo.
-

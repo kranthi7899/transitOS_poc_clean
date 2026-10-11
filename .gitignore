@@ -16,3 +16,8 @@ verification-report-postgres.json
 
 journal/
 .DS_Store
+
+# Local-only Claude Code setup; stays on disk, never committed
+.claude/
+CLAUDE.local.md
+docs/JOURNAL.md
