@@ -21,6 +21,10 @@ COLUMNS = ["operator", "qualifications", "lift_trained", "hours_today", "hours_w
            "licence_class", "endorsements", "trained_vehicle_types", "training_valid_to", "medical_valid_to",
            "last_duty_end", "duty_start_today"]
 NEW_COLUMNS = COLUMNS[8:]
+# List columns: an operator KNOWN to hold none is exported as the token `none`, so an empty cell can only mean
+# "not recorded" (Phase 10 F3: a blank cell is unknown, never "none held"; A129).
+LIST_COLUMNS = ("qualifications", "endorsements", "trained_vehicle_types", "training_valid_to")
+NONE_TOKEN = "none"
 
 
 def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
@@ -60,15 +64,17 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
                 out[k] = f"{day}T{v}:00Z"
         return out
 
-    def dropped(a: str) -> set[str]:
-        cfg = st.get(a, "config", "operator_fields")
-        return set((cfg or {}).get("drop", []))
+    def field_cfg(a: str) -> dict:
+        return st.get(a, "config", "operator_fields") or {}
 
     @app.get("/export/operators.csv")
     def export(a: str = tenant):
         """Daily export. A scenario can drop operator columns (POST /sim/operator-fields): the header then
-        omits them, as a product that does not hold that data would."""
-        cols = [c for c in COLUMNS if c not in dropped(a)]
+        omits them, as a product that does not hold that data would. It can also BLANK cells (the column stays,
+        the cell is empty) for every operator or for listed ones, as a product with gaps in its data would."""
+        cfg = field_cfg(a)
+        cols = [c for c in COLUMNS if c not in set(cfg.get("drop", []))]
+        blank, blank_for = set(cfg.get("blank", [])), cfg.get("blank_for")
         buf = io.StringIO()
         w = csv.DictWriter(buf, fieldnames=cols, lineterminator="\n", extrasaction="ignore")
         w.writeheader()
@@ -76,15 +82,24 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
             row = rendered(o)
             row["lift_trained"] = str(row["lift_trained"]).lower()
             row["on_extra_board"] = str(row["on_extra_board"]).lower()
+            for c in LIST_COLUMNS:
+                if row.get(c) in ("", []):
+                    row[c] = NONE_TOKEN
+            if blank and (blank_for is None or o["operator"] in blank_for):
+                row.update({c: "" for c in blank})
             w.writerow(row)
         return Response(buf.getvalue(), media_type="text/csv")
 
     @app.post("/sim/operator-fields")
     def sim_operator_fields(body: dict = Body(...), x_agency: str = Header()):
-        """Scenario switch: drop export columns (names from COLUMNS, never `operator`), or [] to restore."""
-        drop = [c for c in body.get("drop", []) if c in COLUMNS and c != "operator"]
-        st.put(x_agency, "config", "operator_fields", {"drop": drop})
-        return {"drop": drop}
+        """Scenario switch (render-time only; stored data is untouched): `drop` export columns, `blank` cells
+        (names from COLUMNS, never `operator`) for every operator or only the native ids in `blank_for`.
+        An empty body restores the full export."""
+        ok = lambda names: [c for c in names if c in COLUMNS and c != "operator"]
+        cfg = {"drop": ok(body.get("drop", [])), "blank": ok(body.get("blank", [])),
+               "blank_for": body.get("blank_for")}
+        st.put(x_agency, "config", "operator_fields", cfg)
+        return cfg
 
     @app.get("/operators/{oid}")
     def get_operator(oid: str, a: str = tenant):

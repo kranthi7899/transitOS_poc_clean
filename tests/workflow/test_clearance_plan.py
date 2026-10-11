@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from conftest import Env  # noqa: F401  (fixtures: env, make_env)
-
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle
 from transitos.workflow.fakes import T0, FakeWorld, default_world, fault_event
 from transitos.workflow.graph import run_config
@@ -18,8 +16,10 @@ SAGA_REASSIGN = "reassign_block"
 def world_with(vehicles, operators=None, blocks=None) -> FakeWorld:
     w = default_world()
     w.vehicles = {v.id: v for v in vehicles}
-    w.operators = {o.id: o for o in (operators or [Operator(id="OP-1", qualifications=["standard", "articulated"]),
-                                                   Operator(id="OP-2", qualifications=["standard", "articulated"])])}
+    med = T0 + timedelta(days=365)
+    w.operators = {o.id: o for o in (operators or [
+        Operator(id="OP-1", qualifications=["standard", "articulated"], medical_valid_to=med),
+        Operator(id="OP-2", qualifications=["standard", "articulated"], medical_valid_to=med)])}
     w.blocks = {b.id: b for b in (blocks or [block("B1", 1, 5)])}
     return w
 
@@ -176,8 +176,97 @@ def test_human_edit_to_a_larger_spare_is_cleared_and_flagged(make_env):
     assert env.world.effects == [] and env.store.get_run(rid)["status"] == "AWAITING_APPROVAL"
 
 
+def test_an_edit_is_a_new_plan_version_and_clears_earlier_acknowledgements(make_env):
+    """F10 / A74: a re-plan (new plan_version) clears acknowledgements, an edit included. The approver
+    acknowledged vehicle_fit for plan v1 together with an edit; the edited plan v2 is a different plan whose
+    vehicle_fit item has not been acknowledged yet, so nothing may execute."""
+    env = make_env(world=world_with([veh("veh-1"), veh("veh-2", "articulated"), veh("veh-3", "articulated"),
+                                     veh("veh-4", "articulated")]))
+    rid = start(env)
+    first = spares_of(run_of(env, rid))[0]
+    other = next(v for v in ("veh-2", "veh-3", "veh-4") if v != first)
+    resume_approval(env.graph, env.store, rid, "edit", "alice", acknowledged=["vehicle_fit"],
+                    edits={"assignments": [{"block_id": "B1", "spare_id": other}]})
+    run = run_of(env, rid)
+    assert run["plan_version"] == 2 and run["acknowledged"] == []
+    assert env.world.effects == [] and env.store.get_run(rid)["status"] == "AWAITING_APPROVAL"
+    approve(env, rid, acknowledged=["vehicle_fit"])
+    assert env.world.effects and spares_of(run_of(env, rid)) == [other]
+
+
 def test_interrupt_nodes_still_write_nothing_with_acknowledgement_pending(make_env):
     env = larger_only_env(make_env)
     rid = start(env)
     env.graph.invoke(None, run_config(rid))
     assert env.world.calls == []
+
+
+# ---- F6: the last-spare pre-check uses the exact minimum and the LIVE policy ------------------------------
+def test_last_spare_precheck_uses_the_live_policy_not_a_startup_snapshot(make_env):
+    """F6: Deps.limits is a HardLimits snapshot taken at start-up; the agency policy is read live. Raising
+    min_spares after start-up must be seen by the pre-check (one source for min_spares)."""
+    from transitos.contracts.policy import Limits
+    from transitos.workflow.fakes import default_policy
+    env = make_env(world=world_with([veh("veh-1"), veh("veh-2"), veh("veh-3"), veh("veh-4")]))
+    env.policy = default_policy(limits=Limits(min_spares=3))      # 3 ready - 1 used = 2 < 3
+    rid = start(env)
+    esc = env.store.get_escalation(rid)
+    assert any(v.startswith("last_spare:3_ready_for_1_") for v in esc["violations"]), esc["violations"]
+    assert env.world.effects == []
+
+
+def test_last_spare_precheck_counts_the_exact_minimum_of_distinct_spares(make_env):
+    """F6: B1 can take veh-2 or veh-3, B2 (needs a lift) only veh-3; they do not overlap, so veh-3 serves both:
+    1 distinct spare, 2 ready, min_spares 1 is met. A greedy count says 2 and wrongly escalates."""
+    w = world_with([veh("veh-1"), veh("veh-2"), Vehicle(id="veh-3", agency=AGENCY, seats=40, type="standard",
+                                                        status="ready", depot="north", lift_ok=True)],
+                   blocks=[block("B1", 1, 3), Block(id="B2", vehicle_id="veh-1", operator_id="OP-2",
+                                                    start=T0 + timedelta(hours=5), end=T0 + timedelta(hours=7),
+                                                    start_depot="north",
+                                                    needs=Needs(seats=20, type="standard", lift=True))])
+    for o in w.operators.values():
+        o.lift_trained = True
+    env = make_env(world=w)
+    rid = start(env)
+    assert env.store.get_run(rid)["status"] == "AWAITING_APPROVAL", env.store.get_escalation(rid)
+    assert spares_of(run_of(env, rid)) == ["veh-3", "veh-3"]
+
+
+# ---- F4: one malformed record fails closed for THAT candidate; the run never hangs -------------------------
+def naive_window(o: Operator) -> Operator:
+    """The reviewer's probe: an availability bound without a zone (comparing it raises inside clearance)."""
+    return o.model_copy(update={"available_from": (T0 - timedelta(hours=1)).replace(tzinfo=None)})
+
+
+def test_a_malformed_operator_record_on_every_candidate_escalates_cleanly_with_a_decision_record(make_env):
+    w = world_with([veh("veh-1"), veh("veh-2"), veh("veh-3")])
+    w.operators = {k: naive_window(o) for k, o in w.operators.items()}
+    env = make_env(world=w)
+    rid = start(env)
+    run = env.store.get_run(rid)
+    assert run["status"] == "ESCALATED" and not run["active"]           # released: the vehicle is not blocked
+    esc = env.store.get_escalation(rid)
+    assert "no_feasible_operator:B1" in esc["violations"]
+    assert any(e["rule"] == "clearance_error" and "OP-1" in e["detail"] for e in esc["clearance_errors"])
+    rec = env.store.get_decision(rid, 1)
+    assert rec["outcome"] == "escalated"
+    assert any(c["rule"] == "clearance_error" for c in rec["clearance"])
+    assert env.world.effects == []
+    again = handle_event(fault_event(id_="fault:2"), env.store, env.graph, env.clock)
+    assert again.action == "started" and again.run_id != rid           # a new fault starts a new run
+
+
+def test_a_malformed_record_excludes_only_that_candidate_and_is_shown(make_env):
+    w = world_with([veh("veh-1"), veh("veh-2"), veh("veh-3")])
+    w.blocks["B1"].operator_id = "OP-old"
+    w.operators["OP-old"] = Operator(id="OP-old", qualifications=["standard"], hours_today=9.5,
+                                     medical_valid_to=T0 + timedelta(days=365))
+    w.operators["OP-1"] = naive_window(w.operators["OP-1"])
+    env = make_env(world=w)
+    rid = start(env)
+    run = run_of(env, rid)
+    assert env.store.get_run(rid)["status"] == "AWAITING_APPROVAL"
+    ops = [s["params"]["operator_id"] for s in run["plan"]["steps"] if s["action"] == "assign_operator"]
+    assert ops == ["OP-2"]
+    rec = env.store.get_decision(rid, 1)
+    assert any(c["rule"] == "clearance_error" and "OP-1" in c["detail"] for c in rec["clearance"])

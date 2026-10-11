@@ -70,11 +70,12 @@ def default_world(now: datetime = T0) -> FakeWorld:
     }
     w.blocks = {"B1": Block(id="B1", vehicle_id="veh-1", operator_id="OP-old", start=now + timedelta(hours=1),
                             end=now + timedelta(hours=5), start_depot="north", needs=Needs(seats=20, type="bus"))}
+    med = now + timedelta(days=365)   # F8: medical card is a legal rule; every fake operator holds a valid one
     w.operators = {
-        "OP-old": Operator(id="OP-old", qualifications=["bus"], hours_today=9.5),   # would exceed 10h limit
-        "OP-1": Operator(id="OP-1", qualifications=["bus"], hours_today=2.0),
-        "OP-2": Operator(id="OP-2", qualifications=["bus"], hours_today=4.0),
-        "OP-unq": Operator(id="OP-unq", qualifications=["van"], hours_today=0.0),  # not qualified
+        "OP-old": Operator(id="OP-old", qualifications=["bus"], hours_today=9.5, medical_valid_to=med),  # > 10h
+        "OP-1": Operator(id="OP-1", qualifications=["bus"], hours_today=2.0, medical_valid_to=med),
+        "OP-2": Operator(id="OP-2", qualifications=["bus"], hours_today=4.0, medical_valid_to=med),
+        "OP-unq": Operator(id="OP-unq", qualifications=["van"], hours_today=0.0, medical_valid_to=med),  # not qualified
     }
     return w
 
@@ -113,9 +114,9 @@ class FakeReadTools:
         return Result.success([o.model_copy() for o in self.w.operators.values()])  # code applies hard limits
 
     def capability_profiles(self, agency):
-        """The fake supplies the legacy operator fields only (no licence/endorsement/training columns)."""
-        drop = ("licence_class", "endorsements", "trained_vehicle_types", "training_valid_to",
-                "medical_valid_to", "duty_times")
+        """The fake supplies the legacy operator fields (no licence/endorsement/training columns) plus the
+        medical card date (a legal rule since Step 1b, F8)."""
+        drop = ("licence_class", "endorsements", "trained_vehicle_types", "training_valid_to", "duty_times")
         return Result.success({"scheduling": native_profile("scheduling").to_dict(),
                                "workforce": native_profile("workforce", drop=drop).to_dict()})
 

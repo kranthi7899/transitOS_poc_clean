@@ -62,7 +62,8 @@ STEP1_SCENARIOS: tuple[Scenario, ...] = (
                           block_max_length_ft=45.0), expect_wo_creates=0),
     _s("half_operator_fields_missing", "Half the operator fields are missing from the workforce export: the plan "
        "stays on the list as unverifiable and runs to completion once the approver acknowledges those items",
-       Outcome.PLAN_VALID, (("deliver", 0), ("ack", ["operator_qualification", "operator_hours_week"]),
+       Outcome.PLAN_VALID, (("deliver", 0), ("ack", ["operator_qualification", "operator_hours_week",
+                                                      "operator_medical"]),   # medical is legal since F8
                             ("approve", "plan"), ("advance", 72), ("close_wo",), ("approve", "return_to_service")),
        tweaks=Step1Tweaks(drop_operator_fields=HALF_DROPPED), expect_wo_creates=1),
     _s("vehicle_fit_exact_excludes_larger", "Agency vehicle_fit is 'exact' and only larger-class spares exist "

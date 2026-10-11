@@ -25,6 +25,12 @@ WORKFORCE_FIELDS = ("qualifications", "licence_class", "endorsements", "trained_
                     "training_valid_to", "lift_trained", "hours_today", "hours_week", "availability",
                     "duty_times", "medical_valid_to")
 PRODUCT_FIELDS = {"scheduling": SCHEDULING_FIELDS, "workforce": WORKFORCE_FIELDS}
+# A capability-profile field -> the contract field name(s) on the record that carry it (C-2 `unknown_fields`
+# lists contract field names). Fields not listed here carry the same name on the record.
+RECORD_FIELDS: dict[str, tuple[str, ...]] = {
+    "availability": ("available_from", "available_to"),
+    "duty_times": ("last_duty_end", "duty_start_today"),
+}
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "tools" / "config"
 
 
@@ -122,6 +128,15 @@ class Facts:
         p = self.profiles.get(product)
         return p.basis(name) if p else "unknown"
 
+    def record_basis(self, product: str, name: str, record: Any, fields: Iterable[str] | None = None) -> Basis:
+        """Basis of one field for ONE record (C-2, F3): a contract field the source left blank or absent for this
+        record (listed in `record.unknown_fields`) is unknown, ahead of the product-level capability profile.
+        `fields` narrows a multi-field capability (e.g. only `last_duty_end` of `duty_times`)."""
+        listed = set(getattr(record, "unknown_fields", None) or ())
+        if listed & set(fields if fields is not None else RECORD_FIELDS.get(name, (name,))):
+            return "unknown"
+        return self.basis(product, name)
+
     # ---- JSON round trip (the planner carries facts inside the model-facing dict and the checkpoint) ----
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,6 +164,6 @@ class Facts:
             trigger_vehicle_id=d.get("trigger_vehicle_id", ""))
 
 
-__all__ = ["BASIS_ORDER", "PRODUCT_FIELDS", "SCHEDULING_FIELDS", "WORKFORCE_FIELDS", "Basis", "CapabilityProfile",
+__all__ = ["BASIS_ORDER", "PRODUCT_FIELDS", "RECORD_FIELDS", "SCHEDULING_FIELDS", "WORKFORCE_FIELDS", "Basis", "CapabilityProfile",
            "Datum", "Facts", "Needs", "Tables", "commitments_from_blocks", "load_tables", "native_profile",
            "weakest"]

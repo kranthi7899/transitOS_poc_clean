@@ -28,9 +28,43 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
             st.put(a, "vehicles", v["sched"], {"id": v["sched"], **d, "updated_at": now})
         for b in fleet.blocks:
             blk = {k: b[k] for k in ("id", "vehicle", "operator", "start", "end", "start_depot", "needs")}
+            # every block declares all its needs; a null length limit means "no limit declared" (Phase 10, F3)
+            blk["needs"] = {"max_vehicle_length_ft": None, **blk["needs"]}
             st.put(a, "blocks", blk["id"], blk)
 
     app = make_app(ctx, "scheduling", seeder)
+
+    def field_cfg(a: str) -> dict:
+        return st.get(a, "config", "fields") or {}
+
+    def shaped(a: str, d: dict, kind: str, rid: str) -> dict:
+        """Render-time scenario switch (POST /sim/fields): drop keys or blank values ("" = a blank cell) of the
+        vehicle records or of the blocks' `needs`, for every record or only the ids listed. Stored data is never
+        changed, so the product's own write checks are unaffected."""
+        cfg = field_cfg(a)
+        part = cfg.get(kind) or {}
+        if not part or (cfg.get("ids") is not None and rid not in cfg["ids"]):
+            return d
+        out = {k: v for k, v in d.items() if k not in set(part.get("drop", []))}
+        out.update({k: "" for k in part.get("blank", []) if k in d})
+        return out
+
+    def render_vehicle(a: str, v: dict) -> dict:
+        return shaped(a, {k: v.get(k) for k in KEYS}, "vehicles", v["id"])
+
+    def render_block(a: str, b: dict) -> dict:
+        return {**b, "needs": shaped(a, dict(b["needs"]), "needs", b["id"])}
+
+    @app.post("/sim/fields")
+    def sim_fields(body: dict = Body(default={}), x_agency: str = Header()):
+        """{"vehicles": {"drop": [...], "blank": [...]}, "needs": {"drop": [...], "blank": [...]}, "ids": [...]}
+        (`id` and `status` are never dropped or blanked). An empty body restores the full payloads."""
+        keep = {"id", "status"}
+        cfg = {kind: {op: [k for k in (body.get(kind) or {}).get(op, []) if k not in keep]
+                      for op in ("drop", "blank")} for kind in ("vehicles", "needs")}
+        cfg["ids"] = body.get("ids")
+        st.put(x_agency, "config", "fields", cfg)
+        return cfg
 
     def vehicle(a: str, vid: str) -> dict:
         v = st.get(a, "vehicles", vid)
@@ -44,7 +78,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         st.put(a, "vehicles", v["id"], v)
         n = st.next_seq(a, "change")
         st.put(a, "changes", f"{n:08d}", {"vehicle": v["id"], "status": status, "changed_at": now, "changed_by": by})
-        return {k: v.get(k) for k in KEYS}
+        return render_vehicle(a, v)
 
     def since_ok(ts: str, since: str | None) -> bool:
         return not since or parse_ts(ts) >= parse_ts(since)
@@ -52,14 +86,13 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     @app.get("/vehicles")
     def vehicles(status: str | None = None, updated_since: str | None = None, a: str = tenant):
         return [
-            {k: v.get(k) for k in KEYS} for v in st.all(a, "vehicles")
+            render_vehicle(a, v) for v in st.all(a, "vehicles")
             if (not status or v["status"] == status) and since_ok(v["updated_at"], updated_since)
         ]
 
     @app.get("/vehicles/{vid}")
     def one_vehicle(vid: str, a: str = tenant):
-        v = vehicle(a, vid)
-        return {k: v.get(k) for k in KEYS}
+        return render_vehicle(a, vehicle(a, vid))
 
     @app.get("/blocks")
     def blocks(vehicle: str | None = None, from_: str | None = Query(default=None, alias="from"),
@@ -72,7 +105,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
                 continue
             if to and parse_ts(b["start"]) >= parse_ts(to):
                 continue
-            out.append(b)
+            out.append(render_block(a, b))
         return out
 
     @app.get("/status-changes")

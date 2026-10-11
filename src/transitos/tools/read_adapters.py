@@ -12,11 +12,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from transitos.clearance.evaluate import operator_items, vehicle_items
-from transitos.clearance.facts import (
-    CapabilityProfile,
-    Facts,
-    native_profile,
-)
+from transitos.clearance.facts import CapabilityProfile, Facts
+from transitos.clearance.rules import guarded as guarded_items
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrder
 from transitos.contracts.results import Result
 
@@ -59,6 +56,16 @@ def _bool(s: str | None) -> bool:
 
 # ---- mapping helpers (shared with write adapters) -----------------------------------------------
 
+def _blank(v: Any) -> bool:
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+# Vehicle fields the clearance rules read, with the placeholder a canonical Vehicle needs when the source left
+# them blank or absent. The placeholder is never read: the field is listed in `unknown_fields` (C-2, F3).
+_VEHICLE_FIELDS: dict[str, Any] = {"seats": 0, "wheelchair_positions": 0, "lift_ok": False, "type": "bus",
+                                   "length_ft": None}
+
+
 def map_vehicle(deps: Deps, agency: str, raw: dict) -> Vehicle:
     canonical = deps.crosswalk.lookup(agency, "scheduling", raw["id"])
     if canonical is None:
@@ -66,10 +73,30 @@ def map_vehicle(deps: Deps, agency: str, raw: dict) -> Vehicle:
     status = _VEHICLE_STATUS.get(raw["status"])
     if status is None:
         raise ProductUnavailable("scheduling", f"unknown vehicle status {raw['status']!r}")
-    return Vehicle(id=canonical, agency=agency, seats=raw["seats"],
-                   wheelchair_positions=raw.get("wheelchair_positions", 0), lift_ok=raw.get("lift_ok", False),
-                   type=raw.get("type", "bus"), status=status, depot=raw.get("depot", ""),  # type: ignore[arg-type]
-                   length_ft=raw.get("length_ft"))
+    unknown = [k for k in _VEHICLE_FIELDS if _blank(raw.get(k))]
+    vals = {k: (d if k in unknown else raw[k]) for k, d in _VEHICLE_FIELDS.items()}
+    return Vehicle(id=canonical, agency=agency, status=status, depot=raw.get("depot") or "",  # type: ignore[arg-type]
+                   unknown_fields=unknown, **vals)
+
+
+def scheduling_profile(vehicles: list[dict]) -> CapabilityProfile:
+    """What the scheduling product supplies, from the payload itself (F3): a vehicle field is native when every
+    vehicle record carries the key (a null or blank value is then per-record unknown), else unknown (A131)."""
+    keys = set.intersection(*(set(v) for v in vehicles)) if vehicles else set()
+    return CapabilityProfile("scheduling", {f: ("native" if f in keys else "unknown") for f in _VEHICLE_FIELDS})
+
+
+def _needs(raw: dict | None) -> Needs:
+    """Block needs. A key the block does not carry (or a blank value) is NOT declared: listed in
+    `Needs.unknown_fields`, never read as "no requirement" (F3). For the two optional restrictions (`type`,
+    `max_vehicle_length_ft`) an explicit null declares that there is none (A130)."""
+    n = raw if isinstance(raw, dict) else {}
+    unknown = [k for k in ("seats", "wheelchair_positions", "lift") if _blank(n.get(k))]
+    unknown += [k for k in ("type", "max_vehicle_length_ft") if k not in n or (n[k] is not None and _blank(n[k]))]
+    get = lambda k, d: d if k in unknown else (n.get(k) if n.get(k) is not None else d)
+    return Needs(seats=get("seats", 0), wheelchair_positions=get("wheelchair_positions", 0), lift=get("lift", False),
+                 type=get("type", None), max_vehicle_length_ft=get("max_vehicle_length_ft", None),
+                 unknown_fields=unknown)
 
 
 def map_block(deps: Deps, agency: str, raw: dict) -> Block:
@@ -81,12 +108,8 @@ def map_block(deps: Deps, agency: str, raw: dict) -> Block:
         op = deps.crosswalk.lookup(agency, "workforce", raw["operator"])
         if op is None:
             raise ProductUnavailable("crosswalk", f"unmapped workforce operator {raw['operator']}")
-    n = raw.get("needs") or {}
     return Block(id=raw["id"], vehicle_id=vid, operator_id=op, start=_parse_dt(raw["start"]),
-                 end=_parse_dt(raw["end"]), start_depot=raw.get("start_depot", ""),
-                 needs=Needs(seats=n.get("seats", 0), wheelchair_positions=n.get("wheelchair_positions", 0),
-                             lift=n.get("lift", False), type=n.get("type"),
-                             max_vehicle_length_ft=n.get("max_vehicle_length_ft")))
+                 end=_parse_dt(raw["end"]), start_depot=raw.get("start_depot", ""), needs=_needs(raw.get("needs")))
 
 
 def map_work_order(deps: Deps, agency: str, raw: dict) -> WorkOrder:
@@ -179,8 +202,8 @@ class SchedulingReader:
         return Result.unavailable("scheduling", f"block {block_id} not found")
 
     def capability_profile(self, agency: str) -> CapabilityProfile:
-        """What the scheduling product supplies (the simulated product supplies every scheduling field)."""
-        return native_profile("scheduling")
+        """What the scheduling product supplies, computed from its vehicle payload (never assumed; F3)."""
+        return scheduling_profile(self.http.json(agency, "GET", "/vehicles"))
 
     @guarded("scheduling")
     def list_blocks(self, agency: str, start: datetime, end: datetime) -> Result[list[Block]]:
@@ -197,10 +220,11 @@ class SchedulingReader:
         policy = self.deps.policy_for(agency)
         probe = Block(id="-", vehicle_id="-", start=start, end=end, needs=needs)
         facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
-                      profiles={"scheduling": self.capability_profile(agency)})
-        cands = [v for v in (map_vehicle(self.deps, agency, r) for r in raw)
+                      profiles={"scheduling": scheduling_profile(raw)})
+        cands = [v for v in (map_vehicle(self.deps, agency, r) for r in raw)   # one bad record excludes only it (F4)
                  if v.status == "ready"
-                 and not any(i.status == "violation" for i in vehicle_items(probe, v, facts, policy))]
+                 and not any(i.status == "violation"
+                             for i in guarded_items(f"vehicle {v.id}", vehicle_items, probe, v, facts, policy))]
         try:
             blocks = self.http.json(agency, "GET", "/blocks", params={"from": _iso(start), "to": _iso(end)})
         except ProductUnavailable as e:
@@ -222,7 +246,16 @@ FIELD_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 
+# The export columns that carry a contract field of the same name (all but `operator` and `on_extra_board`).
+OPERATOR_COLUMNS = tuple(c for cols in FIELD_COLUMNS.values() for c in cols)
+
+
+NONE_TOKEN = "none"   # the export's explicit "holds none" for a list column (A129); a BLANK cell is unknown
+
+
 def _split(s: str | None) -> list[str]:
+    if (s or "").strip().lower() == NONE_TOKEN:
+        return []
     return [x for x in (s or "").split(";") if x]
 
 
@@ -256,6 +289,9 @@ class WorkforceReader:
             cid = self.deps.crosswalk.lookup(agency, "workforce", row["operator"])
             if cid is None:
                 continue  # unmapped operators are never offered
+            # a column absent from the export or a blank cell is unknown for THIS operator (C-2, F3): the value
+            # below is only a placeholder the rules never read
+            unknown = [c for c in OPERATOR_COLUMNS if _blank(row.get(c))]
             out.append(Operator(
                 id=cid, qualifications=_split(row.get("qualifications")),
                 lift_trained=_bool(row.get("lift_trained")), hours_today=float(row.get("hours_today") or 0),
@@ -267,7 +303,7 @@ class WorkforceReader:
                 training_valid_to=_dated(row.get("training_valid_to")),
                 medical_valid_to=_parse_dt(row.get("medical_valid_to")),
                 last_duty_end=_parse_dt(row.get("last_duty_end")),
-                duty_start_today=_parse_dt(row.get("duty_start_today"))))
+                duty_start_today=_parse_dt(row.get("duty_start_today")), unknown_fields=unknown))
         return out, profile
 
     def operators(self, agency: str) -> list[Operator]:
@@ -285,9 +321,10 @@ class WorkforceReader:
         ops, profile = self._export(agency)
         facts = Facts(blocks={block.id: block}, vehicles={}, operators={}, ready_count=None, commitments=None,
                       profiles={"workforce": profile})
-        elig = [op for op in ops  # the block's current operator is listed too when eligible
-                if not any(i.status == "violation"
-                           for i in operator_items(block, op, block.needs.type, facts, policy))]
+        elig = [op for op in ops  # the block's current operator is listed too when eligible; a record that breaks
+                if not any(i.status == "violation"   # a rule (F4) excludes only that operator
+                           for i in guarded_items(f"operator {op.id}", operator_items, block, op, block.needs.type,
+                                                  facts, policy))]
         return Result.success(elig, note="from daily export; hours may be stale")
 
 

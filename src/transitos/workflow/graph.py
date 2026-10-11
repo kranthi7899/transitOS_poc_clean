@@ -34,7 +34,13 @@ from transitos.clearance.evaluate import (
 )
 from transitos.clearance.facts import CapabilityProfile, Facts, commitments_from_blocks
 from transitos.clearance.rank import rank_plans
-from transitos.clearance.rules import min_distinct_spares
+from transitos.clearance.rules import (
+    clearance_error,
+    count_distinct_spares,
+    guarded,
+    last_spare_item,
+)
+from transitos.contracts.clearance import ClearanceItem
 from transitos.contracts.ids import compensation_key, step_key
 from transitos.contracts.objects import (
     Block,
@@ -186,7 +192,7 @@ def build_graph(deps: Deps, checkpointer):
         """Per-block candidate lists through the clearance module: a candidate is dropped only for a KNOWN
         violation (unverifiable data keeps it listed; the plan ranks and flags it). The clearance snapshot
         the reasoner/validator/ranker need travels inside the model-facing dict."""
-        lim, pol = deps.limits, deps.policy()
+        pol = deps.policy()   # live policy: one source for min_spares (F6), never the start-up HardLimits snapshot
         profiles = {k: CapabilityProfile.from_dict(v) for k, v in (facts.get("profiles") or {}).items()}
         sched = facts.get("schedule")
         commitments = None if sched is None else commitments_from_blocks(Block.model_validate(x) for x in sched)
@@ -194,15 +200,22 @@ def build_graph(deps: Deps, checkpointer):
         probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=ready_count, commitments=commitments,
                       profiles=profiles, trigger_vehicle_id=run.vehicle_id)
         violations: list[str] = []
+        errors: list[dict] = []   # clearance_error items: a candidate whose record broke a rule is excluded (F4)
+
+        def eligible(kind: str, b: Block, cand_id: str, fn, *args) -> bool:
+            items = guarded(f"{kind} {cand_id} for block {b.id}", fn, *args)
+            errors.extend(i.model_dump() for i in items if i.rule == "clearance_error")
+            return not any(i.status == "violation" for i in items)
+
         blocks, block_objs, spare_ids = [], {}, {}
         vehicles: dict[str, Vehicle] = {}
         operators: dict[str, Operator] = {}
         for it in facts["blocks"]:
             b = Block.model_validate(it["block"])
             spares = [v for v in (Vehicle.model_validate(x) for x in it["spares"]) if v.id != run.vehicle_id
-                      and not any(i.status == "violation" for i in vehicle_items(b, v, probe, pol))]
+                      and eligible("spare", b, v.id, vehicle_items, b, v, probe, pol)]
             ops = [o for o in (Operator.model_validate(x) for x in it["operators"])
-                   if not any(i.status == "violation" for i in operator_items(b, o, b.needs.type, probe, pol))]
+                   if eligible("operator", b, o.id, operator_items, b, o, b.needs.type, probe, pol)]
             needs_op = b.operator_id is None or b.operator_id not in {o.id for o in ops}
             if not spares:
                 violations.append(f"no_feasible_spare:{b.id}")
@@ -217,14 +230,16 @@ def build_graph(deps: Deps, checkpointer):
                            "spares": [v.model_dump(mode="json") for v in spares],
                            "operators": [o.model_dump(mode="json") for o in ops]})
         if blocks:   # a spare may serve several non-overlapping blocks: count the distinct spares needed
-            need = min_distinct_spares(list(block_objs.values()), spare_ids)
-            if need is not None and not lim.spares_left_ok(ready_count, need):
-                violations.append(f"last_spare:{ready_count}_ready_for_{need}_distinct_spares")
+            need = count_distinct_spares(list(block_objs.values()), spare_ids)
+            if need.n is not None and last_spare_item(ready_count, need.n, pol.limits.min_spares).status == "violation":
+                # past the search cap the count is the greedy UPPER bound: fail closed (escalate), flagged (A127)
+                violations.append(f"last_spare:{ready_count}_ready_for_{need.n}_distinct_spares"
+                                  + ("" if need.exact else "_upper_bound_unverified"))
         snapshot = Facts(blocks=block_objs, vehicles=vehicles, operators=operators, ready_count=ready_count,
                          commitments=commitments, profiles=profiles, trigger_vehicle_id=run.vehicle_id)
         mf = {"run_id": run.run_id, "trigger_type": run.trigger_event.get("type"), "now": facts["now"],
-              "window_end": facts["window_end"], "vehicle": facts["vehicle"], "min_spares": lim.min_spares,
-              "ready_count": ready_count, "blocks": blocks, "previous_errors": [],
+              "window_end": facts["window_end"], "vehicle": facts["vehicle"], "min_spares": pol.limits.min_spares,
+              "ready_count": ready_count, "blocks": blocks, "previous_errors": [], "clearance_errors": errors,
               "clearance": snapshot.to_dict(), "clearance_policy": pol.model_dump(mode="json")}
         return mf, violations
 
@@ -366,9 +381,19 @@ def build_graph(deps: Deps, checkpointer):
 
     def check(state: WState):
         run, ctx = _load(state)
-        mf, viol = do_check(run, ctx["facts"])
+        try:
+            mf, viol = do_check(run, ctx["facts"])
+        except Exception as e:  # noqa: BLE001  fail closed (amendment A Q2): never leave the run hanging
+            err = clearance_error("check", e)
+            ctx["mf"] = {"clearance_errors": [err.model_dump()]}
+            run.violations = [f"clearance_error:{err.detail}"]
+            record(run, ctx, clearance=[err.model_dump()])
+            ctx["reason"] = "clearance_error"
+            return _out(run, ctx, "escalate")
         ctx["mf"] = mf
         run.violations = viol
+        if mf["clearance_errors"]:   # shown in the decision record even when the run escalates here (F4)
+            record(run, ctx, clearance=list(mf["clearance_errors"]))
         run.facts = {"vehicle_status": ctx["facts"]["vehicle"]["status"], "blocks": [b["block_id"] for b in mf["blocks"]],
                      "ready_spares": ctx["facts"]["ready_ids"], "existing_wo": (ctx["facts"]["existing_wo"] or {}).get("id")}
         if viol:
@@ -438,7 +463,8 @@ def build_graph(deps: Deps, checkpointer):
                                "steps": [s.action for s in run.plan.steps],
                                "fallback_used": run.plan.fallback_used, "reasoning": run.plan.reasoning},
                model=ctx.get("model", "stub"), prompt_version=ctx.get("prompt_version", "v0"),
-               clearance=[i.model_dump() for i in run.plan.clearance if noteworthy(i)],
+               clearance=[i.model_dump() for i in run.plan.clearance if noteworthy(i)]
+               + list((ctx.get("mf") or {}).get("clearance_errors") or []),
                vehicle_fit=deps.policy().vehicle_fit)
         if run.plan.decision == "monitor":
             ctx["reason"] = "monitor"
@@ -527,6 +553,7 @@ def build_graph(deps: Deps, checkpointer):
                 run.decision = None
                 return _out(run, ctx, "gate")
             run.plan_version += 1
+            run.acknowledged = []   # A74 / F10: a new plan version clears acknowledgements (edits included)
             plan = finish_plan(run, ctx, cand.model_copy(update={"reasoning": run.plan.reasoning + " (edited by human)"}),
                                rank=False)
             plan.fallback_used = run.plan.fallback_used
@@ -534,7 +561,7 @@ def build_graph(deps: Deps, checkpointer):
             deps.store.save_plan(run.run_id, run.plan_version, plan.model_dump(mode="json"))
             record(run, ctx, recommendation={"decision": plan.decision, "edited": True,
                                              "steps": [s.action for s in plan.steps]},
-                   clearance=[i.model_dump() for i in plan.clearance if noteworthy(i)])
+                   clearance=[i.model_dump() for i in plan.clearance if noteworthy(i)], acknowledged=[])
         return _out(run, ctx, "revalidate")
 
     def revalidate(state: WState):
@@ -568,8 +595,43 @@ def build_graph(deps: Deps, checkpointer):
             run.plan_version += 1  # fresh idempotency keys, fresh approval; no write happened
             run.acknowledged = []
             return _out(run, ctx, "reason")
+        # F1: re-judge the APPROVED plan's own option against the fresh facts and replace its clearance (A132).
+        fresh = rejudge(run, mf, wrote)
+        old = {(i.rule, i.status, i.basis) for i in run.plan.clearance}
+        appeared = [i for i in fresh if i.status in ("warn", "unverifiable", "violation")
+                    and (i.rule, i.status, i.basis) not in old]
+        missing = unacknowledged(fresh, run.acknowledged)
+        run.plan.clearance = fresh
+        if wrote and missing:
+            # an acknowledgement cannot be asked mid-saga: undo what was applied, escalate with the exact state
+            ctx["reason"] = "stale_after_writes"
+            ctx["stale_reasons"] = ["unacknowledged:" + ",".join(missing)] + [
+                f"{i.rule}:{i.status}:{i.detail}"[:240] for i in fresh if i.rule in missing]
+            record(run, ctx, clearance=[i.model_dump() for i in fresh if noteworthy(i)])
+            return _out(run, ctx, "compensate")
+        if not wrote and (missing or appeared):
+            # back to approval with the new items in front of the approver; earlier acknowledgements are void
+            run.acknowledged = []
+            run.decision, run.decided_by, run.decided_at = None, None, None
+            ctx["approved_version"] = None
+            ctx["notice"] = "clearance changed since approval; acknowledgement required for: " + ", ".join(
+                unacknowledged(fresh, [])) if unacknowledged(fresh, []) else "clearance changed since approval"
+            deps.store.save_plan(run.run_id, run.plan_version, run.plan.model_dump(mode="json"))
+            record(run, ctx, clearance=[i.model_dump() for i in fresh if noteworthy(i)], acknowledged=[])
+            return _out(run, ctx, "gate")
         ctx["approved_version"] = run.plan_version
         return _out(run, ctx, "gate")
+
+    def rejudge(run: RunState, mf: dict, wrote: bool) -> list[ClearanceItem]:
+        """The approved plan's option, judged by clearance on the facts just gathered (summarised as on the plan).
+        After writes have started, blocks already moved off the trigger vehicle are no longer in the fresh facts;
+        only the assignments still ahead are judged (only their acknowledgement state matters then)."""
+        assert run.plan is not None
+        cf = Facts.from_dict(mf["clearance"])
+        opt = option_of(plan_as_output(run.plan), mf)
+        if wrote:
+            opt = Option(tuple(a for a in opt.assignments if a.block_id in cf.blocks and a.spare_id in cf.vehicles))
+        return summarise(safe_evaluate(opt, cf, deps.policy(), _parse(mf["now"])).items)
 
     def execute_step(state: WState):
         run, ctx = _load(state)
@@ -577,8 +639,11 @@ def build_graph(deps: Deps, checkpointer):
         if deps.policy().kill_switch:
             ctx["reason"] = "kill_switch"
             return _out(run, ctx, "escalate")
-        if not run.steps_done and (missing := unacknowledged(run.plan.clearance, run.acknowledged)):
+        if missing := unacknowledged(run.plan.clearance, run.acknowledged):   # refuse, whatever routed us here
             ctx["reason"] = "unacknowledged:" + ",".join(missing)
+            if run.steps_done:
+                status(run, "COMPENSATING")
+                return _out(run, ctx, "compensate")
             return _out(run, ctx, "escalate")
         step = next(s for s in run.plan.steps if s.status == "pending")
         name = step_name(step.action, step.params)
@@ -651,6 +716,7 @@ def build_graph(deps: Deps, checkpointer):
             "reason": ctx.get("reason"), "original_reason": ctx.get("original_reason"),
             "violations": run.violations, "stale_reasons": ctx.get("stale_reasons"),
             "comp_failed": ctx.get("comp_failed"), "plan_version": run.plan_version, "wo_id": run.wo_id,
+            "clearance_errors": list((ctx.get("mf") or {}).get("clearance_errors") or []),
             "steps_done": [s.model_dump(mode="json") for s in run.steps_done],
             "compensations_done": [s.model_dump(mode="json") for s in run.compensations_done],
             "still_applied": [step_name(s.action, s.params) for s in run.steps_done if s.status == "done"],

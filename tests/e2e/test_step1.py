@@ -65,7 +65,7 @@ def test_half_operator_fields_missing_lists_every_unverifiable_item_and_still_co
     assert res.passed
     run = res.observation.runs[0]
     unv = {i.rule for i in run.plan.clearance if i.status == "unverifiable"}
-    assert unv == {"operator_qualification", "operator_hours_week"}
+    assert unv == {"operator_qualification", "operator_hours_week", "operator_medical"}   # medical: F8
     assert all(i.requires_ack for i in run.plan.clearance if i.status == "unverifiable")
     assert not [i for i in run.plan.clearance if i.status == "violation"]
     assert set(run.acknowledged) == unv and run.status == "DONE"
