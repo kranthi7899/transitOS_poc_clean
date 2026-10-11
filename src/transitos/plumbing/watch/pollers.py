@@ -22,6 +22,7 @@ class MaintenancePoller(Poller):
         out: list[Emitted] = []
         pm_cursor = seen.get("pm_cursor")
         wo_cursor = seen.get("wo_cursor")
+        ident: dict = {}   # Phase 10 Step 2: the asset's VIN, plate and name, read once per poll
 
         for pm in self.get("/pm-schedules", updated_since=pm_cursor):
             k = f"{pm['asset']}:{pm['service_code']}:{pm['due_mi']}"
@@ -31,7 +32,8 @@ class MaintenancePoller(Poller):
                     self.agency, self.product, ids.pm_id(self.agency, pm["asset"], pm["service_code"], pm["due_mi"]),
                     "PMOverdue", pm["updated_at"],
                     {"native_asset_id": pm["asset"], "service_code": pm["service_code"],
-                     "due_mi": pm["due_mi"], "meter_mi": pm["meter_mi"]}),
+                     "due_mi": pm["due_mi"], "meter_mi": pm["meter_mi"],
+                     **self.evidence(ident, f"/assets/{pm['asset']}")}),
                     raw_key(self.product, pm["asset"])))
             pm_seen[k] = overdue
             pm_cursor = _max(pm_cursor, pm.get("updated_at"))
@@ -44,14 +46,15 @@ class MaintenancePoller(Poller):
                 out.append((make_event(
                     self.agency, self.product, ids.wo_open_id(self.agency, wo_no), "WorkOrderOpened",
                     wo.get("opened_at") or wo["updated_at"],
-                    {"native_asset_id": asset, "wo_no": wo_no, "opened_by": wo.get("opened_by", "human")}), key))
+                    {"native_asset_id": asset, "wo_no": wo_no, "opened_by": wo.get("opened_by", "human"),
+                     **self.evidence(ident, f"/assets/{asset}")}), key))
             # A cancelled WO (our own saga compensation; mock: status=closed + cancelled=true, A's A12)
             # is not a repair: no WorkOrderClosed, so no run is resumed for return-to-service.
             if wo["status"] == "closed" and prev != "closed" and not wo.get("cancelled"):
                 out.append((make_event(
                     self.agency, self.product, ids.wo_close_id(self.agency, wo_no), "WorkOrderClosed",
                     wo.get("closed_at") or wo["updated_at"],
-                    {"native_asset_id": asset, "wo_no": wo_no}), key))
+                    {"native_asset_id": asset, "wo_no": wo_no, **self.evidence(ident, f"/assets/{asset}")}), key))
             wo_seen[wo["id"]] = wo["status"]
             wo_cursor = _max(wo_cursor, wo.get("updated_at"))
 
@@ -66,11 +69,13 @@ class SchedulingPoller(Poller):
     def build(self, cursor, last_seen):
         out: list[Emitted] = []
         new_cursor = cursor
+        ident: dict = {}   # Phase 10 Step 2: the vehicle's VIN, plate and name, read once per poll
         for ch in self.get("/status-changes", since=cursor):
             out.append((make_event(
                 self.agency, self.product, ids.vstatus_id(self.agency, ch["vehicle"], ch["status"], ch["changed_at"]),
                 "VehicleStatusChanged", ch["changed_at"],
-                {"native_vehicle_id": ch["vehicle"], "status": ch["status"], "changed_by": ch.get("changed_by", "")}),
+                {"native_vehicle_id": ch["vehicle"], "status": ch["status"], "changed_by": ch.get("changed_by", ""),
+                 **self.evidence(ident, f"/vehicles/{ch['vehicle']}")}),
                 raw_key(self.product, ch["vehicle"])))
             new_cursor = _max(new_cursor, ch["changed_at"])
         return out, new_cursor, last_seen
