@@ -589,6 +589,57 @@
   option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2, op-2]], commitments: {"operator:op-2": [[0, 1.5, other]]}}
   rule: double_booking
   expect: {status: violation, basis: native}
+- id: option_naming_an_operator_outside_the_eligible_list_is_excluded
+  source: "A Q1 / CLAUDE.md rule 3: hard limits are code; a model-named operator not on the code-built list is refused"
+  option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2, op-9]], absent_operators: [op-9]}
+  rule: operator_eligible
+  expect: {status: violation, basis: native}
+- id: an_exception_inside_clearance_excludes_the_option
+  source: "A Q2: fail closed on bugs or exceptions inside clearance (a zone-less time cannot be compared)"
+  option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2]], operators: {op-1: {available_from: "2026-10-10T05:00:00"}}}
+  rule: clearance_error
+  expect: {status: violation, basis: unknown}
+
+# ---- clean passes (the converse rows the coverage matrix needs) ---------------------------------------------
+- id: ready_vehicle_passes
+  source: "A Q1: vehicle ready (converse)"
+  rule: vehicle_ready
+  expect: {status: pass, basis: native}
+- id: enough_seats_passes
+  source: "A Q1: capacity (converse)"
+  rule: vehicle_seats
+  expect: {status: pass, basis: native}
+- id: enough_wheelchair_positions_passes
+  source: "A Q1: capacity (converse)"
+  rule: vehicle_wheelchair
+  expect: {status: pass, basis: native}
+- id: working_lift_passes
+  source: "A Q1: lift (converse)"
+  rule: vehicle_lift
+  expect: {status: pass, basis: native}
+- id: licence_class_high_enough_passes
+  source: "P 1.2 licence class (converse; class A covers a class B vehicle, A65)"
+  given: {operator: {licence_class: A}}
+  rule: operator_licence_class
+  expect: {status: pass, basis: native}
+- id: trained_on_the_type_passes
+  source: "P 1.2 trained vehicle type (converse)"
+  rule: operator_vehicle_training
+  expect: {status: pass, basis: native}
+- id: lift_trained_passes
+  source: "A Q1 lift training (converse)"
+  rule: operator_lift_training
+  expect: {status: pass, basis: native}
+- id: weekly_cap_met_exactly_basis_native
+  source: "P D-1: 66 + 4 = 70, not above the cap (native weekly hours)"
+  given: {operator: {hours_week: 66.0}, block: {hours: 4}}
+  rule: operator_hours_week
+  expect: {status: pass, basis: native}
+- id: length_assumed_default_breach_is_assumed_violation
+  source: "D A70 / F9 (kept): a breach on an ASSUMED default excludes and says so"
+  given: {block: {max_vehicle_length_ft: 30}, vehicle: {type: standard}}
+  rule: vehicle_length
+  expect: {status: violation, basis: assumed}
 - id: operator_commitment_touching_the_block_is_not_double_booking
   source: "A Q1 + D A125 (end-to-start is not overlap)"
   option: {blocks: [[b1, 1, 2, op-1]], spares: [veh-2], ready: 3, assign: [[b1, veh-2]], commitments: {"operator:op-1": [[3, 5, other]]}}

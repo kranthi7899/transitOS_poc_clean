@@ -298,16 +298,8 @@ def test_rest_and_spread_not_evaluated_without_data_and_warn_on_known_breach():
     assert one(operator_items(blk(), ok, "standard", facts(), POL), "operator_rest").status == "pass"
 
 
-def test_missing_data_is_never_a_violation_and_never_a_pass():
-    """Property: for every workforce field, when the product does not supply it, no rule that depends on
-    it may report violation or pass (derived lower bounds excepted: they need a basis other than unknown)."""
-    for fld in WORKFORCE_FIELDS:
-        f = facts(drop_workforce=(fld,))
-        o = opr(licence_class=None, endorsements=[], trained_vehicle_types=[], training_valid_to={},
-                lift_trained=False, hours_today=0.0, hours_week=0.0)
-        for it in operator_items(blk(), o, "standard", f, POL):
-            if it.basis == "unknown":
-                assert it.status in ("unverifiable", "not_evaluated"), (fld, it.model_dump())
+# (The Step 1 "missing data is never a violation" property test is replaced by the real sweep in
+# tests/clearance/test_missing_data_sweep.py and tests/integration/test_missing_data_sweep.py; F7.)
 
 
 # ---- option-level ---------------------------------------------------------------------------------

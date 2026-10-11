@@ -1,0 +1,213 @@
+"""F7 sweep (replaces the Step 1 'property' test, which only re-checked items that already said basis unknown).
+
+For EVERY rule and EVERY input field it reads, starting from a record on which that rule passes cleanly on native
+data, the field is made missing three ways and the rule must answer `unverifiable` (safety/legal) or
+`not_evaluated` (optional), never `pass` and never `violation`:
+  * dropped  - the product does not supply the field at all (capability profile: unknown)
+  * default  - the record holds the contract's default value for the field and lists it in `unknown_fields`
+               (what a read adapter produces for a blank cell or an absent key; C-2)
+  * value=x  - the record holds an arbitrary value x (one that would pass, one that would violate) and lists
+               the field as unknown: the rule must not read it
+Blank cells through the REAL mock products are swept in tests/integration/test_missing_data_sweep.py.
+
+Documented exceptions (each from the policy text): a missing vehicle length falls back to the class default
+tagged `assumed` (amendment A Q3 resolution order, A66; F9 keeps a breach on it excluding); double-booking
+without a schedule feed fails closed (plan table); vehicle_ready and kill_switch have no missing mode."""
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from transitos.clearance.evaluate import (
+    Assign,
+    Option,
+    operator_items,
+    safe_evaluate,
+    vehicle_items,
+)
+from transitos.clearance.facts import RECORD_FIELDS, Facts, native_profile
+from transitos.contracts.objects import Block, Needs, Operator, Vehicle
+from transitos.contracts.policy import AgencyPolicy
+
+T0 = datetime(2026, 10, 10, 6, 0, tzinfo=UTC)
+FAR = datetime(2030, 1, 1, tzinfo=UTC)
+PAST = datetime(2026, 1, 1, tzinfo=UTC)
+POL = AgencyPolicy(agency="a")
+OPTIONAL = {"operator_rest", "operator_spread"}
+LEGACY_DROP = ("licence_class", "endorsements", "trained_vehicle_types", "training_valid_to")
+
+
+def base_block(unknown=(), **needs) -> Block:
+    n = {"seats": 30, "wheelchair_positions": 1, "lift": True, "type": "standard", "max_vehicle_length_ft": 45.0,
+         **needs, "unknown_fields": list(unknown)}
+    return Block(id="b1", vehicle_id="veh-1", operator_id="op-1", start=T0 + timedelta(hours=1),
+                 end=T0 + timedelta(hours=5), start_depot="North", needs=Needs(**n))
+
+
+def base_vehicle(**kw) -> Vehicle:
+    return Vehicle(**{"id": "veh-2", "agency": "a", "seats": 40, "wheelchair_positions": 2, "lift_ok": True,
+                      "type": "standard", "status": "ready", "depot": "North", "length_ft": 40.0, **kw})
+
+
+def base_operator(**kw) -> Operator:
+    return Operator(**{"id": "op-1", "licence_class": "B", "endorsements": ["P"], "trained_vehicle_types": ["standard"],
+                       "training_valid_to": {"P": FAR, "standard": FAR, "lift": FAR}, "lift_trained": True,
+                       "hours_today": 4.0, "hours_week": 20.0, "available_from": T0 - timedelta(hours=1),
+                       "available_to": T0 + timedelta(hours=15), "medical_valid_to": FAR,
+                       "last_duty_end": T0 - timedelta(hours=12), "duty_start_today": T0 - timedelta(hours=2), **kw})
+
+
+# (rule, record, contract field, capability-profile field or None, values that would otherwise pass / violate)
+CASES = [
+    ("operator_hours_day", "operator", "hours_today", "hours_today", [0.0, 9.5]),
+    ("operator_hours_week", "operator", "hours_week", "hours_week", [0.0, 69.0]),
+    ("operator_licence_class", "operator", "licence_class", "licence_class", [None, "C", "A"]),
+    ("operator_endorsement", "operator", "endorsements", "endorsements", [[], ["P"]]),
+    ("operator_vehicle_training", "operator", "trained_vehicle_types", "trained_vehicle_types", [[], ["standard"]]),
+    ("operator_training_expiry", "operator", "training_valid_to", "training_valid_to",
+     [{}, {"P": PAST, "standard": PAST, "lift": PAST}, {"P": FAR, "standard": FAR, "lift": FAR}]),
+    ("operator_training_expiry", "operator", "endorsements", "endorsements", [[], ["P"]]),
+    ("operator_training_expiry", "operator", "trained_vehicle_types", "trained_vehicle_types", [[], ["standard"]]),
+    ("operator_training_expiry", "operator", "lift_trained", "lift_trained", [False, True]),
+    ("operator_lift_training", "operator", "lift_trained", "lift_trained", [False, True]),
+    ("operator_availability", "operator", "available_from", "availability", [None, T0 + timedelta(hours=3)]),
+    ("operator_availability", "operator", "available_to", "availability", [None, T0 + timedelta(hours=2)]),
+    ("operator_medical", "operator", "medical_valid_to", "medical_valid_to", [None, PAST, FAR]),
+    ("operator_rest", "operator", "last_duty_end", "duty_times", [None, T0 - timedelta(hours=1)]),
+    ("operator_spread", "operator", "duty_start_today", "duty_times", [None, T0 - timedelta(hours=14)]),
+    ("vehicle_seats", "vehicle", "seats", "seats", [0, 100]),
+    ("vehicle_wheelchair", "vehicle", "wheelchair_positions", "wheelchair_positions", [0, 9]),
+    ("vehicle_lift", "vehicle", "lift_ok", "lift_ok", [False, True]),
+    ("vehicle_fit", "vehicle", "type", "type", ["bus", "standard", "cutaway", "articulated"]),
+    ("vehicle_length", "vehicle", "length_ft", "length_ft", [None, 10.0, 99.0]),          # -> assumed (Q3, A66)
+    ("vehicle_seats", "needs", "seats", None, [0, 100]),
+    ("vehicle_wheelchair", "needs", "wheelchair_positions", None, [0, 9]),
+    ("vehicle_lift", "needs", "lift", None, [False, True]),
+    ("operator_lift_training", "needs", "lift", None, [False, True]),
+    ("operator_training_expiry", "needs", "lift", None, [False, True]),
+    ("vehicle_fit", "needs", "type", None, [None, "standard", "articulated"]),
+    ("vehicle_length", "needs", "max_vehicle_length_ft", None, [None, 10.0, 99.0]),
+]
+DEFAULTS = {"operator": Operator, "vehicle": Vehicle, "needs": Needs}
+
+
+def contract_default(record: str, field: str):
+    f = DEFAULTS[record].model_fields[field]
+    if f.default_factory is not None:
+        return f.default_factory()
+    return 0 if f.is_required() else f.default      # Vehicle.seats has no default: the adapters' placeholder is 0
+
+
+def facts_for(drop_profile: str | None, legacy: bool = False) -> Facts:
+    wf_drop = (LEGACY_DROP if legacy else ()) + ((drop_profile,) if drop_profile else ())
+    return Facts(blocks={}, vehicles={}, operators={}, ready_count=3, commitments={},
+                 profiles={"scheduling": native_profile("scheduling", drop=(drop_profile,) if drop_profile else ()),
+                           "workforce": native_profile("workforce", drop=wf_drop)})
+
+
+def judge(rule, block, vehicle, op, facts):
+    items = vehicle_items(block, vehicle, facts, POL) + operator_items(block, op, vehicle.type, facts, POL)
+    return [i for i in items if i.rule == rule]
+
+
+def variants(case):
+    _, record, field, cap, values = case
+    out = [("default", contract_default(record, field))] + [(f"value={v!r}", v) for v in values]
+    if cap is not None:
+        out.insert(0, ("dropped", None))
+    return [(case, name, v) for name, v in out]
+
+
+ALL = [v for c in CASES for v in variants(c)]
+
+
+def test_every_case_starts_from_a_clean_native_pass():
+    """The sweep is only meaningful if, with full data, each rule passes natively on the base records."""
+    for rule, *_ in CASES:
+        got = judge(rule, base_block(), base_vehicle(), base_operator(), facts_for(None))
+        assert got and all((i.status, i.basis) == ("pass", "native") for i in got), (rule, got)
+
+
+@pytest.mark.parametrize("case,variant,value", ALL,
+                         ids=[f"{c[0]}<-{c[1]}.{c[2]}:{n}" for c, n, _ in ALL])
+def test_missing_input_is_never_a_pass_and_never_a_violation(case, variant, value):
+    rule, record, field, cap, _ = case
+    block, vehicle, op = base_block(), base_vehicle(), base_operator()
+    if variant == "dropped":
+        facts = facts_for(cap)
+    else:
+        facts = facts_for(None)
+        if record == "operator":
+            op = base_operator(**{field: value, "unknown_fields": [field]})
+        elif record == "vehicle":
+            vehicle = base_vehicle(**{field: value, "unknown_fields": [field]})
+        else:
+            block = base_block(unknown=[field], **{field: value})
+    got = judge(rule, block, vehicle, op, facts)
+    assert got, f"{rule} reported nothing when {record}.{field} was missing ({variant})"
+    if (rule, field) == ("vehicle_length", "length_ft"):      # documented exception: class default, ASSUMED
+        assert all(i.basis == "assumed" for i in got), [i.model_dump() for i in got]
+        return
+    want = "not_evaluated" if rule in OPTIONAL else "unverifiable"
+    assert all(i.status == want and i.basis == "unknown" for i in got), [i.model_dump() for i in got]
+    assert all(i.requires_ack == (want == "unverifiable") for i in got)
+
+
+@pytest.mark.parametrize("variant,value", [("dropped", None), ("default", []), ("value=['van']", ["van"]),
+                                           ("value=['standard']", ["standard"])])
+def test_legacy_qualification_list_missing_is_unverifiable(variant, value):
+    """A legacy-only product (none of the new qualification fields): the legacy list is the input."""
+    op = base_operator(**({} if variant == "dropped" else {"qualifications": value, "unknown_fields": ["qualifications"]}))
+    facts = facts_for("qualifications" if variant == "dropped" else None, legacy=True)
+    assert judge("operator_qualification", base_block(), base_vehicle(),
+                 base_operator(qualifications=["standard"]), facts_for(None, legacy=True))[0].status == "pass"
+    got = judge("operator_qualification", base_block(), base_vehicle(), op, facts)
+    assert got and all((i.status, i.basis) == ("unverifiable", "unknown") for i in got)
+
+
+def test_every_record_field_the_rules_read_is_swept():
+    """No input left out: every workforce/scheduling capability field and every need is in CASES."""
+    swept = {(r, f) for _, r, f, _, _ in CASES}
+    op_fields = {f for cap in ("hours_today", "hours_week", "licence_class", "endorsements", "trained_vehicle_types",
+                               "training_valid_to", "lift_trained", "availability", "medical_valid_to", "duty_times")
+                 for f in RECORD_FIELDS.get(cap, (cap,))}
+    assert {("operator", f) for f in op_fields} <= swept
+    assert {("vehicle", f) for f in ("seats", "wheelchair_positions", "lift_ok", "type", "length_ft")} <= swept
+    assert {("needs", f) for f in ("seats", "wheelchair_positions", "lift", "type", "max_vehicle_length_ft")} <= swept
+
+
+# ---- option-level inputs ---------------------------------------------------------------------------------
+def _option_facts(**kw) -> tuple[Facts, Option]:
+    b1 = base_block()
+    b2 = Block(id="b2", vehicle_id="veh-1", operator_id="op-2", start=T0 + timedelta(hours=6),
+               end=T0 + timedelta(hours=10), start_depot="North", needs=b1.needs)
+    f = Facts(blocks={"b1": b1, "b2": b2}, vehicles={"veh-2": base_vehicle()},
+              operators={"op-1": kw.pop("op1", base_operator()), "op-2": base_operator(id="op-2")},
+              ready_count=kw.pop("ready", 3), commitments=kw.pop("commitments", {}),
+              profiles={"scheduling": native_profile("scheduling"), "workforce": native_profile("workforce")})
+    return f, Option((Assign("b1", "veh-2"), Assign("b2", "veh-2", "op-1")))
+
+
+def test_ready_count_missing_is_unverifiable():
+    f, opt = _option_facts(ready=None)
+    got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == "last_spare"]
+    assert got and all((i.status, i.basis) == ("unverifiable", "unknown") for i in got)
+
+
+def test_schedule_feed_missing_fails_closed_the_documented_exception():
+    f, opt = _option_facts(commitments=None)
+    got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == "double_booking"]
+    assert got and all((i.status, i.basis) == ("violation", "unknown") for i in got)
+
+
+@pytest.mark.parametrize("field,value", [("hours_today", 0.0), ("hours_today", 9.9), ("hours_week", 0.0),
+                                         ("hours_week", 69.9)])
+def test_accumulated_hours_with_a_missing_input_are_never_a_pass_or_violation(field, value):
+    """Option level (F5): an operator kept on b1 and given b2 whose hours are unknown is unverifiable, never judged
+    on a placeholder."""
+    f, opt = _option_facts(op1=base_operator(**{field: value, "unknown_fields": [field]}))
+    rule = "operator_hours_day" if field == "hours_today" else "operator_hours_week"
+    got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == rule
+           and ("op-1" in i.detail or i.status == "unverifiable")]
+    assert got and all((i.status, i.basis) == ("unverifiable", "unknown") for i in got), [i.model_dump() for i in got]
