@@ -40,6 +40,7 @@ from transitos.clearance.rules import (
     guarded,
     last_spare_item,
 )
+from transitos.contracts.clearance import ClearanceItem
 from transitos.contracts.ids import compensation_key, step_key
 from transitos.contracts.objects import (
     Block,
@@ -594,8 +595,43 @@ def build_graph(deps: Deps, checkpointer):
             run.plan_version += 1  # fresh idempotency keys, fresh approval; no write happened
             run.acknowledged = []
             return _out(run, ctx, "reason")
+        # F1: re-judge the APPROVED plan's own option against the fresh facts and replace its clearance.
+        fresh = rejudge(run, mf, wrote)
+        old = {(i.rule, i.status, i.basis) for i in run.plan.clearance}
+        appeared = [i for i in fresh if i.status in ("warn", "unverifiable", "violation")
+                    and (i.rule, i.status, i.basis) not in old]
+        missing = unacknowledged(fresh, run.acknowledged)
+        run.plan.clearance = fresh
+        if wrote and missing:
+            # an acknowledgement cannot be asked mid-saga: undo what was applied, escalate with the exact state
+            ctx["reason"] = "stale_after_writes"
+            ctx["stale_reasons"] = ["unacknowledged:" + ",".join(missing)] + [
+                f"{i.rule}:{i.status}:{i.detail}"[:240] for i in fresh if i.rule in missing]
+            record(run, ctx, clearance=[i.model_dump() for i in fresh if noteworthy(i)])
+            return _out(run, ctx, "compensate")
+        if not wrote and (missing or appeared):
+            # back to approval with the new items in front of the approver; earlier acknowledgements are void
+            run.acknowledged = []
+            run.decision, run.decided_by, run.decided_at = None, None, None
+            ctx["approved_version"] = None
+            ctx["notice"] = "clearance changed since approval; acknowledgement required for: " + ", ".join(
+                unacknowledged(fresh, [])) if unacknowledged(fresh, []) else "clearance changed since approval"
+            deps.store.save_plan(run.run_id, run.plan_version, run.plan.model_dump(mode="json"))
+            record(run, ctx, clearance=[i.model_dump() for i in fresh if noteworthy(i)], acknowledged=[])
+            return _out(run, ctx, "gate")
         ctx["approved_version"] = run.plan_version
         return _out(run, ctx, "gate")
+
+    def rejudge(run: RunState, mf: dict, wrote: bool) -> list[ClearanceItem]:
+        """The approved plan's option, judged by clearance on the facts just gathered (summarised as on the plan).
+        After writes have started, blocks already moved off the trigger vehicle are no longer in the fresh facts;
+        only the assignments still ahead are judged (only their acknowledgement state matters then)."""
+        assert run.plan is not None
+        cf = Facts.from_dict(mf["clearance"])
+        opt = option_of(plan_as_output(run.plan), mf)
+        if wrote:
+            opt = Option(tuple(a for a in opt.assignments if a.block_id in cf.blocks and a.spare_id in cf.vehicles))
+        return summarise(safe_evaluate(opt, cf, deps.policy(), _parse(mf["now"])).items)
 
     def execute_step(state: WState):
         run, ctx = _load(state)
@@ -603,8 +639,11 @@ def build_graph(deps: Deps, checkpointer):
         if deps.policy().kill_switch:
             ctx["reason"] = "kill_switch"
             return _out(run, ctx, "escalate")
-        if not run.steps_done and (missing := unacknowledged(run.plan.clearance, run.acknowledged)):
+        if missing := unacknowledged(run.plan.clearance, run.acknowledged):   # refuse, whatever routed us here
             ctx["reason"] = "unacknowledged:" + ",".join(missing)
+            if run.steps_done:
+                status(run, "COMPENSATING")
+                return _out(run, ctx, "compensate")
             return _out(run, ctx, "escalate")
         step = next(s for s in run.plan.steps if s.status == "pending")
         name = step_name(step.action, step.params)
