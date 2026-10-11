@@ -139,18 +139,55 @@ def test_scripts_roundtrip_and_beats_are_sorted():
     assert ats == sorted(ats)
 
 
-def test_world_package_has_no_wall_clock_unseeded_randomness_or_network():
-    root = pathlib.Path(__file__).resolve().parents[2] / "src" / "transitos" / "world"
-    banned_attr = {("time", "time"), ("datetime", "now"), ("datetime", "utcnow"), ("uuid", "uuid4"), ("os", "urandom"),
-                   ("random", "random"), ("random", "randint"), ("random", "choice"), ("random", "shuffle"),
-                   ("random", "uniform"), ("random", "seed")}
-    banned_import = {"requests", "httpx", "socket", "urllib", "secrets", "time"}
-    for f in root.glob("*.py"):
-        tree = ast.parse(f.read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                assert (node.value.id, node.attr) not in banned_attr, f"{f.name}: {node.value.id}.{node.attr}"
-            if isinstance(node, ast.Import):
-                assert not {a.name.split(".")[0] for a in node.names} & banned_import, f.name
-            if isinstance(node, ast.ImportFrom):
-                assert (node.module or "").split(".")[0] not in banned_import, f.name
+BANNED_ATTR = {("time", "time"), ("datetime", "now"), ("datetime", "utcnow"), ("datetime", "today"), ("uuid", "uuid4"),
+               ("os", "urandom"), ("random", "random"), ("random", "randint"), ("random", "choice"),
+               ("random", "choices"), ("random", "shuffle"), ("random", "uniform"), ("random", "seed"),
+               ("random", "sample"), ("random", "expovariate")}
+BANNED_IMPORT = {"requests", "httpx", "socket", "urllib", "secrets", "time"}
+
+
+def determinism_violations(source: str) -> list[str]:
+    """Wall clock, unseeded randomness and network use, found in the syntax tree (not by grep)."""
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute):
+            owner = node.value.attr if isinstance(node.value, ast.Attribute) else getattr(node.value, "id", None)
+            if (owner, node.attr) in BANNED_ATTR:
+                out.append(f"{owner}.{node.attr}")
+        if isinstance(node, ast.Call):
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name in ("Random", "SystemRandom") and not node.args and not node.keywords:
+                out.append("unseeded Random()")
+            if name == "SystemRandom":
+                out.append("SystemRandom")
+        if isinstance(node, ast.Import):
+            out += [a.name for a in node.names if a.name.split(".")[0] in BANNED_IMPORT]
+        if isinstance(node, ast.ImportFrom):
+            mod = (node.module or "").split(".")[0]
+            if mod in BANNED_IMPORT:
+                out.append(f"from {node.module}")
+            if mod == "random":
+                out += [f"from random import {a.name}" for a in node.names if a.name != "Random"]
+            if mod == "datetime":
+                out += [f"from datetime import {a.name}" for a in node.names if a.name in ("now", "utcnow")]
+    return out
+
+
+def test_the_determinism_guard_catches_what_it_claims_to():
+    for bad in ("import datetime\ndatetime.datetime.now()", "from datetime import datetime\ndatetime.now()",
+                "from random import random", "import random\nrandom.Random()", "import random\nrandom.random()",
+                "import time", "from time import sleep", "import uuid\nuuid.uuid4()", "import httpx",
+                "import random\nrandom.SystemRandom()"):
+        assert determinism_violations(bad), bad
+    for good in ("import random\nrandom.Random(3)", "from random import Random\nRandom('a|b')",
+                 "from datetime import datetime\ndatetime.fromisoformat('2026-01-01T00:00:00+00:00')"):
+        assert not determinism_violations(good), good
+
+
+def test_world_package_and_its_hooks_have_no_wall_clock_unseeded_randomness_or_network():
+    src = pathlib.Path(__file__).resolve().parents[2] / "src" / "transitos"
+    files = [*sorted((src / "world").glob("*.py")), src / "verification" / "latency.py", src / "integration" / "world.py"]
+    assert len(files) >= 10
+    for f in files:
+        assert not determinism_violations(f.read_text()), f.name
