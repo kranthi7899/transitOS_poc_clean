@@ -12,9 +12,10 @@ import json
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
@@ -22,7 +23,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 MAX_BYTES = 150 * 1024 * 1024
-LINK_RE = re.compile(r"""href\s*=\s*["']([^"']+\.(?:xlsx|xls|csv|zip))(?:\?[^"']*)?["']""", re.I)
+LINK_RE = re.compile(r"""href\s*=\s*["']([^"']+\.(?:xlsx|xls|csv|zip))(?:\?[^"']*)?["']""", re.IGNORECASE)
 
 
 class Dataset(BaseModel):
@@ -78,7 +79,7 @@ def load_manifest(path: Path, extra: Path | None = None) -> Manifest:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class Fetcher:
@@ -197,7 +198,7 @@ class Fetcher:
             else:
                 try:
                     entry = self._auto(ds) if ds.fetch == "auto" else self._manual(ds)
-                except Exception as e:  # recorded, never raised
+                except Exception as e:  # noqa: BLE001  recorded, never raised
                     entry = {"status": "failed", "verified": False, "url": ds.url,
                              "error": f"{type(e).__name__}: {e}"}
             self.lock["datasets"][ds.id] = entry
