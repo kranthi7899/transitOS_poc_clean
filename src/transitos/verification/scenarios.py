@@ -178,4 +178,7 @@ SCENARIOS: tuple[Scenario, ...] = (
 from .scenarios_step1 import STEP1_SCENARIOS  # Phase 10 Step 1
 
 SCENARIOS = SCENARIOS + STEP1_SCENARIOS
+from .scenarios_step3 import STEP3_SCENARIOS  # Phase 10 Step 3 (world engine)
+
+SCENARIOS = SCENARIOS + STEP3_SCENARIOS
 BY_ID = {s.id: s for s in SCENARIOS}

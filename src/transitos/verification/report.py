@@ -13,6 +13,7 @@ import json
 import sys
 from collections.abc import Callable
 
+from .latency import KEYS
 from .runner import ScenarioResult, run_scenario
 from .scenarios import SCENARIOS, Scenario
 from .world import World
@@ -57,6 +58,20 @@ def format_table(results: list[ScenarioResult]) -> str:
     return "\n".join(lines)
 
 
+def format_latency(results: list[ScenarioResult]) -> str:
+    """Detection latency per scenario that has a world engine (simulated seconds; '-' = not measurable)."""
+    rows = [("scenario", "truth_to_telematics_s", "truth_to_first_proposal_s", "truth_to_pull_s")]
+    for r in results:
+        if r.latency is not None:
+            rows.append((r.scenario_id, *("-" if r.latency.get(k) is None else f"{r.latency[k]:.1f}" for k in KEYS)))
+    if len(rows) == 1:
+        return ""
+    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    lines = ["  ".join(c.ljust(w) for c, w in zip(row, widths)) for row in rows]
+    lines.insert(1, "  ".join("-" * w for w in widths))
+    return "detection latency (simulated seconds from the physical fault)\n" + "\n".join(lines)
+
+
 def to_json(results: list[ScenarioResult]) -> dict:
     return {
         "passed": sum(r.passed for r in results), "total": len(results),
@@ -65,6 +80,7 @@ def to_json(results: list[ScenarioResult]) -> dict:
             "mismatches": r.mismatches, "passed": r.passed,
             "invariants": {k: [v.model_dump() for v in vs] for k, vs in r.invariants.items()},
             "not_checked": list(r.not_checked),
+            "latency": r.latency,    # sim seconds; null for scenarios without a world engine
         } for r in results]}
 
 
@@ -75,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     results = run_all(load_world_factory(args.world))
     print(format_table(results))
+    if lat := format_latency(results):
+        print("\n" + lat)
     with open(args.out, "w") as f:
         json.dump(to_json(results), f, indent=2)
     print(f"\nwrote {args.out}")

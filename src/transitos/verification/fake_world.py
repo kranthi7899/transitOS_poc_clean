@@ -38,6 +38,9 @@ from transitos.contracts.objects import (
 )
 from transitos.contracts.policy import AgencyPolicy
 from transitos.contracts.tools import COMPENSATION, SAGA_ORDER
+from transitos.mocks.clock import SimClock
+from transitos.world.script import hhmm_on
+from transitos.world.truth import GroundTruth
 
 from .model import RETURN_ACTION, AuditEvent, Observation, WriteRecord
 from .scenarios import AGENCY, NATIVE_ASSET, NATIVE_TELEMATICS, T0, Scenario
@@ -61,6 +64,9 @@ class FakeWorld:
     def apply(self, scenario: Scenario) -> None:
         t, self.chaos = scenario.tweaks, dict(scenario.chaos)
         self.tweaks = t
+        day = getattr(t, "world_script", None)    # Phase 10 Step 3: the truth is replayed, with no products or lag
+        self.truth = GroundTruth(SimClock(T0), day, seed=0) if day is not None else None
+        self.world_events = list(scenario.events)
         self.seq = 0
         self.now = T0
         self.writes: list[WriteRecord] = []
@@ -275,6 +281,24 @@ class FakeWorld:
             if wo:
                 wo.status, wo.closed_at = "closed", self.now
             run.status = "RETURNING"
+
+    def advance_world_to(self, hhmm: str) -> None:
+        """Script op ("world_until", "HH:MM"). FakeWorld has no products, so no lag: each fault_on beat hands the
+        pipeline the scenario's next event, a callout removes the operator, a return_to_service waits for close_wo."""
+        if self.truth is None:
+            raise ValueError("scenario has no world_script")
+        t = hhmm_on(T0, hhmm)
+        for beat in self.truth.advance_to(t):
+            self.now = max(self.now, beat.at)
+            if beat.kind == "fault_on":
+                self.deliver(self.world_events.pop(0))
+            elif beat.kind == "callout":
+                self.operators.pop(beat.vehicle.upper(), None)
+            elif beat.kind == "return_to_service":
+                for r in self.runs.values():
+                    if r.status == "WAITING_FOR_REPAIR":
+                        self.close_work_order(r.run_id)
+        self.now = max(self.now, t)
 
     def acknowledge(self, run_id: str, rules: list[str]) -> None:
         self.acks.setdefault(run_id, []).extend(rules)

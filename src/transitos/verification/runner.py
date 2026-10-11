@@ -50,6 +50,7 @@ class ScenarioResult(BaseModel):
     mismatches: list[str] = Field(default_factory=list)
     invariants: dict[str, list[Violation]] = Field(default_factory=dict)
     not_checked: list[str] = Field(default_factory=list)   # R3-2: tripwire notes; never affect `passed`
+    latency: dict[str, float | None] | None = None   # Phase 10 Step 3.4: only worlds with a world engine; never affects `passed`
     observation: Observation | None = None
 
     @property
@@ -73,6 +74,8 @@ def drive(world: World, scenario: Scenario) -> Observation:
         rid = runs[0].run_id if runs else None
         if name == "deliver":
             world.deliver(scenario.events[arg])
+        elif name == "world_until":      # Phase 10 Step 3: run the world engine to HH:MM on the scenario day
+            world.advance_world_to(arg)
         elif rid is None:
             continue
         elif name == "approve":
@@ -112,4 +115,5 @@ def run_scenario(world: World, scenario: Scenario, keep_observation: bool = Fals
     return ScenarioResult(scenario_id=scenario.id, title=scenario.title, expected=scenario.expected.value,
                           outcome=outcome, mismatches=mism, invariants=check_by_invariant(obs),
                           not_checked=hard_limits_not_checked(obs),
+                          latency=world.latency() if hasattr(world, "latency") else None,
                           observation=obs if keep_observation else None)

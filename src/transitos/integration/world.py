@@ -23,6 +23,7 @@ unaffected by chaos).
 """
 from __future__ import annotations
 
+import json
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator
@@ -31,11 +32,17 @@ from types import SimpleNamespace
 
 from transitos.contracts.envelope import TOPIC_FAILED, CloudEvent
 from transitos.contracts.objects import Block, Operator, RunState, Vehicle, WorkOrder
-from transitos.mocks.clock import SimClock
-from transitos.mocks.seed import register_fleet
+from transitos.mocks.clock import SimClock, iso
+from transitos.mocks.seed import build_fleet, register_fleet
 from transitos.tools.read_adapters import map_block, map_vehicle, map_work_order
+from transitos.verification.latency import detection_latency
 from transitos.verification.model import AuditEvent, Observation, WriteRecord
 from transitos.verification.scenarios import AGENCY, NATIVE_ASSET, T0, Scenario
+from transitos.world.engine import WorldEngine
+from transitos.world.lag import ProductLag
+from transitos.world.ports import MockPorts
+from transitos.world.script import hhmm_on
+from transitos.world.truth import GroundTruth
 
 from .fleets import scenario_fleet
 from .system import Mocks, System
@@ -49,6 +56,8 @@ class IntegrationWorld:
     def __init__(self) -> None:
         self.system: System | None = None
         self._acks: dict[str, list[str]] = {}
+        self.engine: WorldEngine | None = None          # Phase 10 Step 3: set when the scenario has a world_script
+        self.latency_audit: list[AuditEvent] = []
 
     # ------------------------------------------------------------------ setup
     def apply(self, scenario: Scenario) -> None:
@@ -72,6 +81,63 @@ class IntegrationWorld:
             r.raise_for_status()
         s.run_until_idle()  # baseline consumed before the scenario's first event
         self._install_chaos()
+        self.engine, self.latency_audit = None, []
+        if (day := getattr(t, "world_script", None)) is not None:
+            self._start_world(day, getattr(t, "world_lag", None))
+
+    # ------------------------------------------------------------------ world engine (Phase 10 Step 3)
+    def _start_world(self, day, lag: ProductLag | None) -> None:
+        """Ground truth + per-product lag drive the real mocks; the system runs to idle after every step and each
+        step stamps what it saw with the sim time (proposals, writes) for the latency measurement (A99)."""
+        s = self.system
+        run_idle, seen_plans, n_writes = s.run_until_idle, set(), [0]
+
+        def stamped_idle(*a, **k):
+            n = run_idle(*a, **k)
+            at = iso(s.clock.now())
+            for r in s.runs():
+                run = RunState.model_validate(r)
+                if run.plan is not None and (run.run_id, run.plan_version) not in seen_plans:
+                    seen_plans.add((run.run_id, run.plan_version))
+                    self.latency_audit.append(AuditEvent(seq=len(self.latency_audit), kind="proposal",
+                                                         run_id=run.run_id, plan_version=run.plan_version,
+                                                         data={"at": at}))
+            for rec in s.writes.records[n_writes[0]:]:
+                self.latency_audit.append(AuditEvent(seq=len(self.latency_audit), kind="write", run_id=rec.run_id,
+                                                     key=rec.key, data={"action": rec.action, "at": at, "ok": rec.ok,
+                                                                        "compensation": rec.compensation}))
+            n_writes[0] = len(s.writes.records)
+            return n
+        s.run_until_idle = stamped_idle  # type: ignore[method-assign]
+        clock = s.clock
+        self.engine = WorldEngine(GroundTruth(clock, day, seed=0), lag or ProductLag(),
+                                  MockPorts(self.mocks, AGENCY, build_fleet(AGENCY, clock.now())), clock,
+                                  settle=s.run_until_idle)
+
+    def advance_world_to(self, hhmm: str) -> None:
+        """Script op ("world_until", "HH:MM"): run the world engine to that time of day on the scenario day."""
+        if self.engine is None:
+            raise ValueError("scenario has no world_script")
+        self.engine.run_until(hhmm_on(T0, hhmm))
+
+    def latency(self) -> dict | None:
+        return None if self.engine is None else detection_latency(self.engine.observations_log, self.latency_audit)
+
+    def timeline_json(self) -> str:
+        """Everything the world did and every product ended up holding, canonical JSON (byte-compare across runs)."""
+        eng = self.engine
+        doc = {
+            "observations": eng.timeline() if eng else [],
+            "skipped": [k.to_dict() for k in eng.skipped] if eng else [],
+            "latency_audit": [a.model_dump(mode="json") for a in self.latency_audit],
+            "latency": self.latency(),
+            "writes": [w.model_dump(mode="json") for w in self.system.writes.records],
+            "products": {"telematics": self._docs("telematics", "events"),
+                         "scheduling": self._docs("scheduling", "changes"),
+                         "maintenance": self._docs("maintenance", "wo"),
+                         "workforce": self._docs("workforce", "changes")},
+        }
+        return json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str)
 
     @property
     def _h(self) -> dict:
