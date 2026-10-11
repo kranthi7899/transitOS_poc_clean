@@ -527,6 +527,7 @@ def build_graph(deps: Deps, checkpointer):
                 run.decision = None
                 return _out(run, ctx, "gate")
             run.plan_version += 1
+            run.acknowledged = []   # A74 / F10: a new plan version clears acknowledgements (edits included)
             plan = finish_plan(run, ctx, cand.model_copy(update={"reasoning": run.plan.reasoning + " (edited by human)"}),
                                rank=False)
             plan.fallback_used = run.plan.fallback_used
@@ -534,7 +535,7 @@ def build_graph(deps: Deps, checkpointer):
             deps.store.save_plan(run.run_id, run.plan_version, plan.model_dump(mode="json"))
             record(run, ctx, recommendation={"decision": plan.decision, "edited": True,
                                              "steps": [s.action for s in plan.steps]},
-                   clearance=[i.model_dump() for i in plan.clearance if noteworthy(i)])
+                   clearance=[i.model_dump() for i in plan.clearance if noteworthy(i)], acknowledged=[])
         return _out(run, ctx, "revalidate")
 
     def revalidate(state: WState):

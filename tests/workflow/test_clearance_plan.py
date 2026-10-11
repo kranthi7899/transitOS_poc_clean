@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from conftest import Env  # noqa: F401  (fixtures: env, make_env)
-
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle
 from transitos.workflow.fakes import T0, FakeWorld, default_world, fault_event
 from transitos.workflow.graph import run_config
@@ -174,6 +172,24 @@ def test_human_edit_to_a_larger_spare_is_cleared_and_flagged(make_env):
     run = run_of(env, rid)
     assert run["plan_version"] == 2 and run["plan"]["vehicle_fit"] == "larger"
     assert env.world.effects == [] and env.store.get_run(rid)["status"] == "AWAITING_APPROVAL"
+
+
+def test_an_edit_is_a_new_plan_version_and_clears_earlier_acknowledgements(make_env):
+    """F10 / A74: a re-plan (new plan_version) clears acknowledgements, an edit included. The approver
+    acknowledged vehicle_fit for plan v1 together with an edit; the edited plan v2 is a different plan whose
+    vehicle_fit item has not been acknowledged yet, so nothing may execute."""
+    env = make_env(world=world_with([veh("veh-1"), veh("veh-2", "articulated"), veh("veh-3", "articulated"),
+                                     veh("veh-4", "articulated")]))
+    rid = start(env)
+    first = spares_of(run_of(env, rid))[0]
+    other = next(v for v in ("veh-2", "veh-3", "veh-4") if v != first)
+    resume_approval(env.graph, env.store, rid, "edit", "alice", acknowledged=["vehicle_fit"],
+                    edits={"assignments": [{"block_id": "B1", "spare_id": other}]})
+    run = run_of(env, rid)
+    assert run["plan_version"] == 2 and run["acknowledged"] == []
+    assert env.world.effects == [] and env.store.get_run(rid)["status"] == "AWAITING_APPROVAL"
+    approve(env, rid, acknowledged=["vehicle_fit"])
+    assert env.world.effects and spares_of(run_of(env, rid)) == [other]
 
 
 def test_interrupt_nodes_still_write_nothing_with_acknowledgement_pending(make_env):
