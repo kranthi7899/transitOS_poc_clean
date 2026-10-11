@@ -25,7 +25,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from transitos.data.loaders import QKEYS, load_fault_mix, load_fault_rates, load_j1939, load_shop_behaviour
+from transitos.data.loaders import (
+    QKEYS,
+    load_fault_mix,
+    load_fault_rates,
+    load_j1939,
+    load_shop_behaviour,
+)
 
 from .script import Beat, DayScript, midnight
 

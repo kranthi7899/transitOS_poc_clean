@@ -9,7 +9,12 @@ import pytest
 
 from transitos.data.loaders import load_fault_mix, load_j1939
 from transitos.world.script import DayScript
-from transitos.world.stochastic import CALLOUT_P, CALLOUT_P_SENSITIVITY, StochasticConfig, generate_world
+from transitos.world.stochastic import (
+    CALLOUT_P,
+    CALLOUT_P_SENSITIVITY,
+    StochasticConfig,
+    generate_world,
+)
 
 START = datetime(2026, 10, 10, tzinfo=UTC)
 VEHICLES = tuple(f"veh-{n}" for n in range(1, 13))
@@ -17,8 +22,8 @@ OPERATORS = tuple(f"op-{n}" for n in range(1, 11))
 
 
 def cfg(**kw):
-    base = dict(seed=11, agency="agency-042", vehicles=VEHICLES, operators=OPERATORS, start=START, days=60,
-                revenue_miles_per_day=150.0)
+    base = {"seed": 11, "agency": "agency-042", "vehicles": VEHICLES, "operators": OPERATORS, "start": START,
+            "days": 60, "revenue_miles_per_day": 150.0}
     base.update(kw)
     return StochasticConfig(**base)
 

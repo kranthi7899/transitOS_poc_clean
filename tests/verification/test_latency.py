@@ -3,6 +3,7 @@ truth_to_pull_s, in simulated seconds; a measurement that cannot be made is None
 from datetime import UTC, datetime, timedelta
 
 from transitos.verification.latency import detection_latency
+
 from transitos.verification.model import AuditEvent
 from transitos.world.engine import Observation
 

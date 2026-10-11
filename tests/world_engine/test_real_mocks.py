@@ -37,7 +37,7 @@ def rig():
 
 
 def test_example_day_lands_in_each_product_at_truth_plus_its_own_lag(rig):
-    mocks, clock, build = rig
+    mocks, _, build = rig
     eng = build(DayScript.example_coolant_fault(DAY))
     eng.run_until(at(12))
     # veh-3 in agency-042: telematics T-79, scheduling BUS-46, maintenance asset 1108
@@ -54,7 +54,7 @@ def test_example_day_lands_in_each_product_at_truth_plus_its_own_lag(rig):
 
 
 def test_no_product_holds_the_fault_before_its_lag_has_passed(rig):
-    mocks, clock, build = rig
+    mocks, _, build = rig
     eng = build(DayScript.example_coolant_fault(DAY))
     eng.run_until(at(9, 41))                                                               # 09:41: only telematics (5 s)
     assert mocks.clients["telematics"].get("/faults/current", headers=H).json()
@@ -68,7 +68,7 @@ def test_no_product_holds_the_fault_before_its_lag_has_passed(rig):
 
 
 def test_callout_lands_in_workforce_after_dispatcher_lag(rig):
-    mocks, clock, build = rig
+    mocks, _, build = rig
     eng = build(DayScript(AG, (Beat(at(6, 10), "op-1", "callout", {"operator": "op-1"}),)))
     eng.run_until(at(7))
     ch = mocks.clients["workforce"].get("/availability-changes", headers=H).json()
@@ -76,7 +76,7 @@ def test_callout_lands_in_workforce_after_dispatcher_lag(rig):
 
 
 def test_dvir_beat_reaches_telematics_after_its_lag(rig):
-    mocks, clock, build = rig
+    mocks, _, build = rig
     eng = build(DayScript(AG, (Beat(at(7), "veh-2", "dvir", {"defect_text": "door closes slowly"}),)))
     eng.run_until(at(8))
     feed = mocks.clients["telematics"].get("/faults/feed", headers=H).json()["items"]
@@ -84,7 +84,7 @@ def test_dvir_beat_reaches_telematics_after_its_lag(rig):
 
 
 def test_a_stochastic_week_runs_through_the_real_products_and_never_early(rig):
-    mocks, clock, build = rig
+    mocks, _, build = rig
     w = generate_world(StochasticConfig(seed=3, agency=AG, vehicles=tuple(f"veh-{n}" for n in range(1, 13)),
                                         operators=tuple(f"op-{n}" for n in range(1, 11)), start=DAY, days=400,
                                         revenue_miles_per_day=150.0, quantile="p10", fleet_cut="all"))

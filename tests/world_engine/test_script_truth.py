@@ -1,5 +1,6 @@
 """Step 3.1 ground truth + day script. Expected rows are written from the Step 3 spec text:
 bus 3 coolant fault (SPN 110) 09:40, clears 10:15, returns to service 11:30; each beat exactly once, in order."""
+import dataclasses
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -25,7 +26,7 @@ def test_example_coolant_fault_rows_from_the_spec():
 
 def test_beat_is_frozen_and_validated():
     b = Beat(at(1), "veh-1", "dvir", {"defect_text": "x"})
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         b.kind = "fault_on"                           # frozen dataclass
     with pytest.raises(ValueError):
         Beat(at(1), "veh-1", "explode", {})

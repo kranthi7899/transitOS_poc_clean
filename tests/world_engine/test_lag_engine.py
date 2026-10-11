@@ -19,8 +19,8 @@ def at(h, m=0, s=0):
     return DAY + timedelta(hours=h, minutes=m, seconds=s)
 
 
-def engine(script=None, lag=None, ports=None, start=at(6)):
-    clock = SimClock(start)
+def engine(script=None, lag=None, ports=None, start=None):
+    clock = SimClock(start or at(6))
     truth = GroundTruth(clock, script or DayScript.example_coolant_fault(DAY), seed=1)
     ports = ports or RecordingPorts(clock)
     return WorldEngine(truth, lag or ProductLag(), ports, clock), ports, clock
@@ -76,7 +76,7 @@ def test_engine_never_emits_before_truth_plus_lag_even_with_coarse_ticks():
 
 
 def test_each_beat_is_observed_once_however_often_the_engine_ticks():
-    eng, ports, clock = engine()
+    eng, ports, _ = engine()
     eng.run_until(at(12))
     n = len(eng.observations_log)
     for _ in range(5):
@@ -88,7 +88,7 @@ def test_each_beat_is_observed_once_however_often_the_engine_ticks():
 
 
 def test_dispatcher_does_not_flip_a_vehicle_that_is_already_out_of_service():
-    eng, ports, clock = engine()
+    eng, ports, _ = engine()
     ports.status["veh-3"] = "out_of_service"          # e.g. the orchestrator's approved pull landed first
     eng.run_until(at(12))
     assert not [o for o in eng.observations_log if o.product == "scheduling"]
@@ -96,7 +96,7 @@ def test_dispatcher_does_not_flip_a_vehicle_that_is_already_out_of_service():
 
 
 def test_shop_does_not_open_a_second_record_when_one_is_open():
-    eng, ports, clock = engine()
+    eng, ports, _ = engine()
     ports.open_records["veh-3"] = ["wo-1"]            # e.g. the orchestrator's work order exists
     eng.run_until(at(12))
     assert not [o for o in eng.observations_log if (o.product, o.kind) == ("maintenance", "fault_on")]
@@ -106,7 +106,7 @@ def test_shop_does_not_open_a_second_record_when_one_is_open():
 
 def test_callout_is_recorded_by_the_dispatcher_after_dispatcher_min():
     s = DayScript("agency-a", (Beat(at(6, 10), "op-1", "callout", {"operator": "op-1"}),))
-    eng, ports, _ = engine(s)
+    eng, _, _ = engine(s)
     eng.run_until(at(7))
     assert rows(eng) == [("workforce", "op-1", "callout", at(6, 10), at(6, 22))]
 
