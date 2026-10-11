@@ -1,0 +1,5 @@
+# Vehicle class order and typical lengths. ASSUMED (A66): ordering matches the scheduling mock
+# (cutaway < standard < articulated); lengths are rounded typical values used only as a tagged default
+# when a vehicle record carries no length.
+order: [cutaway, standard, articulated]
+typical_length_ft: {cutaway: 24.0, standard: 40.0, articulated: 60.0}

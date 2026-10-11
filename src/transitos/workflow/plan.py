@@ -21,7 +21,6 @@ def build_plan(run_id: str, plan_version: int, out: ModelOutput, vehicle_id: str
                     assumptions=out.assumptions)
     pull_at = out.pull_at if (out.decision == "pull_at_block_end" and out.pull_at) else now
     assign = {a.block_id: a for a in out.assignments}
-    needs_op = {b["block_id"]: b["needs_operator"] for b in blocks}
     cur_op = {b["block_id"]: b.get("current_operator") for b in blocks}
     req = [b["block_id"] for b in blocks if b["block_id"] in assign]
 
@@ -34,7 +33,8 @@ def build_plan(run_id: str, plan_version: int, out: ModelOutput, vehicle_id: str
         raw.append(("reassign_block", {"block_id": bid, "to_vehicle_id": assign[bid].spare_id,
                                        "from_vehicle_id": vehicle_id}))
     for bid in req:
-        if needs_op.get(bid):
+        new_op = assign[bid].operator_id
+        if new_op and new_op != cur_op.get(bid):   # keep the block's operator unless the plan changes it
             raw.append(("assign_operator", {"block_id": bid, "operator_id": assign[bid].operator_id,
                                             "from_operator_id": cur_op.get(bid)}))
     for bid in req:

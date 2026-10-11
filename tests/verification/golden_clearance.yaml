@@ -1,0 +1,293 @@
+# Golden table for the clearance rules. Every row is derived from the POLICY TEXT, not from the code:
+#   A  = docs/phases/PHASE-10-amendment-A.md (Q1 vehicle fit, Q2 one module, Q3 missing data, Ranking)
+#   P  = docs/superpowers/plans/2026-10-11-realistic-fleet-and-world.md (Amendment A table, rule classification,
+#        Review Focus, Step 1 tasks 1.1-1.4)
+#   D  = a decision the policy text leaves open, recorded as an assumption (id in `source`)
+# `given` is a tiny DSL (extra keys: operator_window_h [from, to] hours after 06:00; operator.last_duty_end_h) read by tests/verification/test_golden_clearance.py:
+#   block:    needs overrides (type, seats, wheelchair_positions, lift, max_vehicle_length_ft), start_h, hours
+#   vehicle:  Vehicle field overrides      operator: Operator field overrides (dates as YYYY-MM-DD)
+#   expires:  {credential: date}           the block day is 2026-10-10
+#   drop:     capability-profile fields the product does not supply (workforce or scheduling)
+#   legacy:   true -> only the legacy `qualifications` list is supplied
+#   policy:   AgencyPolicy overrides (vehicle_fit, limits.*)
+# `expect.status` / `basis` / `requires_ack` are compared with the item named by `rule`.
+
+# ---- Q1: vehicle type is graded ------------------------------------------------------------------------
+- id: fit_exact_is_best
+  source: "A Q1: exact type is the best tier"
+  rule: vehicle_fit
+  expect: {status: pass, basis: native}
+- id: fit_larger_is_warning_needing_ack
+  source: "A Q1: a larger class is a fallback tier: allowed, shown as a warning, needs approver acknowledgement"
+  given: {vehicle: {type: articulated}}
+  rule: vehicle_fit
+  expect: {status: warn, basis: native, requires_ack: true}
+- id: fit_smaller_never_a_candidate
+  source: "A Q1: a smaller class is never a candidate"
+  given: {block: {type: articulated}, vehicle: {type: standard}}
+  rule: vehicle_fit
+  expect: {status: violation}
+- id: fit_exact_setting_excludes_larger
+  source: "A Q1: agency setting vehicle_fit exact | allow_larger; P table: larger = violation under exact"
+  given: {vehicle: {type: articulated}, policy: {vehicle_fit: exact}}
+  rule: vehicle_fit
+  expect: {status: violation}
+- id: fit_default_setting_allows_larger
+  source: "A Q1: default allow_larger"
+  given: {vehicle: {type: articulated}, policy: {vehicle_fit: allow_larger}}
+  rule: vehicle_fit
+  expect: {status: warn}
+- id: length_declared_restriction_blocks_larger
+  source: "A Q1: a block restriction (maximum vehicle length) that a larger vehicle violates is a hard block"
+  given: {block: {max_vehicle_length_ft: 45}, vehicle: {type: articulated, length_ft: 60}}
+  rule: vehicle_length
+  expect: {status: violation, basis: native}
+- id: length_within_restriction_passes
+  source: "A Q1 (converse)"
+  given: {block: {max_vehicle_length_ft: 45}, vehicle: {type: standard, length_ft: 40}}
+  rule: vehicle_length
+  expect: {status: pass, basis: native}
+- id: length_missing_uses_tagged_default
+  source: "A Q3: resolution order native, derived, agency default tagged ASSUMED, unknown"
+  given: {block: {max_vehicle_length_ft: 45}, vehicle: {type: standard}}
+  rule: vehicle_length
+  expect: {status: pass, basis: assumed}
+- id: length_assumed_breach_is_visible
+  source: "D A70: a breach on an assumed default excludes, and says it is assumed"
+  given: {block: {max_vehicle_length_ft: 45}, vehicle: {type: articulated}}
+  rule: vehicle_length
+  expect: {status: violation, basis: assumed}
+- id: length_nothing_to_go_on_is_unverifiable
+  source: "A Q3: unknown on a safety rule = unverifiable"
+  given: {block: {max_vehicle_length_ft: 45, type: null}, vehicle: {type: mystery}}
+  rule: vehicle_length
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- hard rules on KNOWN violations ---------------------------------------------------------------------
+- id: not_ready_is_violation
+  source: "A Q1: hard rules - vehicle not ready"
+  given: {vehicle: {status: reserved}}
+  rule: vehicle_ready
+  expect: {status: violation}
+- id: seats_shortfall_is_violation
+  source: "A Q1: known capacity shortfall"
+  given: {vehicle: {seats: 10}}
+  rule: vehicle_seats
+  expect: {status: violation}
+- id: wheelchair_shortfall_is_violation
+  source: "A Q1: known capacity shortfall"
+  given: {vehicle: {wheelchair_positions: 0}}
+  rule: vehicle_wheelchair
+  expect: {status: violation}
+- id: lift_shortfall_is_violation
+  source: "A Q1: known lift shortfall"
+  given: {vehicle: {lift_ok: false}}
+  rule: vehicle_lift
+  expect: {status: violation}
+- id: seats_not_supplied_is_unverifiable
+  source: "A Q3: no field is assumed; unknown on a safety rule = unverifiable"
+  given: {vehicle: {seats: 1}, drop: [seats]}
+  rule: vehicle_seats
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: lift_not_supplied_is_unverifiable
+  source: "A Q3"
+  given: {vehicle: {lift_ok: false}, drop: [lift_ok]}
+  rule: vehicle_lift
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- hours (P: daily and weekly 8-day window; Step 1 task 1.3) --------------------------------------------
+- id: daily_cap_exceeded
+  source: "A Q1: known legal hours cap; AgencyPolicy limit 10h"
+  given: {operator: {hours_today: 6.5}, block: {hours: 4}}
+  rule: operator_hours_day
+  expect: {status: violation}
+- id: daily_cap_met_exactly_is_allowed
+  source: "P 1.3: cap (a total equal to the limit does not exceed it)"
+  given: {operator: {hours_today: 6.0}, block: {hours: 4}}
+  rule: operator_hours_day
+  expect: {status: pass, basis: native}
+- id: weekly_cap_exceeded
+  source: "P D-1: max_operator_hours_week 70 over an 8-day window"
+  given: {operator: {hours_week: 67.0}, block: {hours: 4}}
+  rule: operator_hours_week
+  expect: {status: violation}
+- id: weekly_cap_met_exactly_is_allowed
+  source: "P D-1: 66 + 4 = 70, not above the cap"
+  given: {operator: {hours_week: 66.0}, block: {hours: 4}}
+  rule: operator_hours_week
+  expect: {status: pass}
+- id: weekly_hours_unknown_is_unverifiable
+  source: "A Q3: unknown on a legal rule = unverifiable"
+  given: {operator: {hours_week: 0.0}, drop: [hours_week]}
+  rule: operator_hours_week
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: weekly_hours_unknown_but_lower_bound_breaks_cap_is_derived_violation
+  source: "A Q3: derived from other data (today's hours are part of the week)"
+  given: {operator: {hours_today: 9.0}, drop: [hours_week], policy: {limits: {max_operator_hours_week: 12, max_operator_hours_day: 20}}, block: {hours: 4}}
+  rule: operator_hours_week
+  expect: {status: violation, basis: derived}
+- id: daily_hours_unknown_is_unverifiable
+  source: "A Q3"
+  given: {drop: [hours_today]}
+  rule: operator_hours_day
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- qualification (P 1.2: licence class, endorsement, trained type, lift, expiry) -------------------------
+- id: licence_class_too_low
+  source: "P 1.2: licence class vs licence_classes.yaml"
+  given: {operator: {licence_class: C}}
+  rule: operator_licence_class
+  expect: {status: violation}
+- id: licence_class_unknown
+  source: "A Q3: unknown on a safety rule = unverifiable"
+  given: {operator: {licence_class: null}}
+  rule: operator_licence_class
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: endorsement_missing
+  source: "P 1.2: endorsement; P 1.8 scenario endorsement_missing"
+  given: {operator: {endorsements: []}}
+  rule: operator_endorsement
+  expect: {status: violation}
+- id: trained_type_missing
+  source: "P 1.2: trained vehicle type"
+  given: {operator: {trained_vehicle_types: [cutaway]}}
+  rule: operator_vehicle_training
+  expect: {status: violation}
+- id: lift_training_missing
+  source: "A Q1: known missing lift training"
+  given: {operator: {lift_trained: false}}
+  rule: operator_lift_training
+  expect: {status: violation}
+- id: lift_training_not_supplied
+  source: "A Q3"
+  given: {operator: {lift_trained: false}, drop: [lift_trained]}
+  rule: operator_lift_training
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: qualification_data_wholly_missing
+  source: "A Q3: half the operator fields missing -> unverifiable, not violation, not pass"
+  given: {drop: [qualifications, licence_class, endorsements, trained_vehicle_types, training_valid_to]}
+  rule: operator_qualification
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: legacy_list_is_used_only_when_new_fields_absent
+  source: "P D-1: legacy qualifications ignored whenever the new fields are set"
+  given: {legacy: true, operator: {qualifications: [standard]}}
+  rule: operator_qualification
+  expect: {status: pass, basis: native}
+- id: legacy_list_missing_type
+  source: "P D-1 / existing behaviour: block type must be in the legacy list"
+  given: {legacy: true, operator: {qualifications: [van]}}
+  rule: operator_qualification
+  expect: {status: violation}
+
+# ---- Review Focus 1: expiry on the day it expires, not the day after ---------------------------------------
+- id: expiry_day_before_is_valid
+  source: "P Review Focus 1: credential expiring after the block's day is valid"
+  given: {expires: {P: "2026-10-11"}}
+  rule: operator_training_expiry
+  expect: {status: pass}
+- id: expiry_on_the_day_it_expires_is_violation
+  source: "P Review Focus 1: must be a violation on the day it expires"
+  given: {expires: {P: "2026-10-10"}}
+  rule: operator_training_expiry
+  expect: {status: violation}
+- id: expiry_day_after_is_violation
+  source: "P Review Focus 1: (and every later day)"
+  given: {expires: {P: "2026-10-09"}}
+  rule: operator_training_expiry
+  expect: {status: violation}
+- id: lift_training_expiry_on_the_day
+  source: "P Review Focus 1: expired lift training"
+  given: {expires: {lift: "2026-10-10"}}
+  rule: operator_training_expiry
+  expect: {status: violation}
+- id: expiry_dates_not_supplied
+  source: "A Q3"
+  given: {drop: [training_valid_to]}
+  rule: operator_training_expiry
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- availability, optional rules -------------------------------------------------------------------------
+- id: availability_inside_window_passes
+  source: "A Q1: availability window is a hard rule (converse)"
+  given: {operator: {available_from: "2026-10-10"}, block: {start_h: 8}}
+  rule: operator_availability
+  expect: {status: pass}
+- id: availability_starts_after_block
+  source: "A Q1: availability window"
+  given: {operator_window_h: [3, 30]}
+  rule: operator_availability
+  expect: {status: violation}
+- id: availability_not_supplied
+  source: "A Q3"
+  given: {drop: [availability]}
+  rule: operator_availability
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: rest_without_data_is_not_evaluated
+  source: "P Amendment A table: optional rule, unknown = not_evaluated; 1.3 rest and spread are OPTIONAL"
+  rule: operator_rest
+  expect: {status: not_evaluated, basis: unknown, requires_ack: false}
+- id: spread_without_data_is_not_evaluated
+  source: "P 1.3"
+  rule: operator_spread
+  expect: {status: not_evaluated, basis: unknown, requires_ack: false}
+- id: rest_known_breach_is_warning
+  source: "P table: optional rule known breach = warn (D A72: warn, acknowledgement required)"
+  given: {operator: {last_duty_end_h: -2}}
+  rule: operator_rest
+  expect: {status: warn, requires_ack: true}
+
+# ---- option-level: spares (Review Focus 7), double-booking, kill switch ---------------------------------
+- id: spare_reused_non_overlapping_is_one_spare
+  source: "P Review Focus 7 / 1.3: a spare may serve several non-overlapping blocks; last-spare counts distinct spares"
+  option: {blocks: [[b1, 1, 2], [b2, 4, 2]], spares: [veh-2, veh-3], ready: 2, assign: [[b1, veh-2], [b2, veh-2]]}
+  rule: last_spare
+  expect: {status: pass}
+- id: spare_reused_non_overlapping_option_not_excluded
+  source: "P Review Focus 7: one spare consumed"
+  option: {blocks: [[b1, 1, 2], [b2, 4, 2]], spares: [veh-2, veh-3], ready: 2, assign: [[b1, veh-2], [b2, veh-2]]}
+  expect: {excluded: false}
+- id: spare_reused_overlapping_is_violation
+  source: "P Review Focus 7: across two overlapping blocks it is a violation"
+  option: {blocks: [[b1, 1, 3], [b2, 2, 3]], spares: [veh-2, veh-3], ready: 3, assign: [[b1, veh-2], [b2, veh-2]]}
+  rule: double_booking
+  expect: {status: violation}
+- id: two_distinct_spares_leave_too_few
+  source: "P 1.3 / A25: last-spare rule on distinct spares: 2 ready - 2 used = 0 < min_spares 1"
+  option: {blocks: [[b1, 1, 2], [b2, 4, 2]], spares: [veh-2, veh-3], ready: 2, assign: [[b1, veh-2], [b2, veh-3]]}
+  rule: last_spare
+  expect: {status: violation}
+- id: last_spare_one_ready_one_used
+  source: "A Q1: last-spare rule"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2], ready: 1, assign: [[b1, veh-2]]}
+  rule: last_spare
+  expect: {status: violation}
+- id: ready_count_unknown_is_unverifiable
+  source: "A Q3"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2], ready: null, assign: [[b1, veh-2]]}
+  rule: last_spare
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: commitments_overlap_is_double_booking
+  source: "A Q1: double-booking is a hard rule"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2], ready: 3, assign: [[b1, veh-2]], commitments: {"vehicle:veh-2": [[2, 4, other]]}}
+  rule: double_booking
+  expect: {status: violation, basis: native}
+- id: schedule_feed_missing_fails_closed
+  source: "P table: double-booking fails closed"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2], ready: 3, assign: [[b1, veh-2]], commitments: null}
+  rule: double_booking
+  expect: {status: violation, basis: unknown}
+- id: operator_hours_accumulate_over_new_blocks
+  source: "P 1.3: hours caps (a newly assigned operator takes both blocks)"
+  option: {blocks: [[b1, 1, 3, op-0], [b2, 5, 3, op-0]], spares: [veh-2], ready: 4, assign: [[b1, veh-2, op-1], [b2, veh-2, op-1]], operator: {hours_today: 4.5}}
+  rule: operator_hours_day
+  expect: {status: violation}
+- id: kill_switch_fails_closed
+  source: "P table: kill switch fails closed"
+  kill_switch: true
+  rule: kill_switch
+  expect: {status: violation}
+- id: kill_switch_off_passes
+  source: "P table"
+  kill_switch: false
+  rule: kill_switch
+  expect: {status: pass}

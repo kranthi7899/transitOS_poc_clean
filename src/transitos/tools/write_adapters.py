@@ -10,18 +10,21 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from transitos.clearance.evaluate import (
+    Assign,
+    Option,
+    double_booking_item,
+    evaluate_vehicle_move,
+    kill_switch_item,
+    operator_items,
+)
+from transitos.clearance.facts import Facts, commitments_from_blocks
 from transitos.contracts.events import SYSTEM_ACTOR
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
 from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
 
 from .common import Deps, Http, ProductUnavailable, native_of
-from .policy import (
-    check_lift_qualification,
-    check_min_spares,
-    check_operator_hours,
-    check_spare_meets_needs,
-    kill_switch,
-)
+from .policy import kill_switch
 from .read_adapters import (
     MaintenanceReader,
     SchedulingReader,
@@ -46,7 +49,7 @@ class _Base:
 
     def _run(self, agency: str, tool: str, key: str, fn: Callable[[], Result], *, idem: bool = True) -> Result:
         policy = self.deps.policy_for(agency)
-        if kill_switch(agency, self.deps.killswitch, policy):
+        if kill_switch_item(kill_switch(agency, self.deps.killswitch, policy)).status == "violation":
             return Result.blocked(KILL_SWITCH, f"writes disabled for {agency}")
         if idem and (prior := self.deps.idem.get(agency, tool, key)) is not None:
             return prior
@@ -162,21 +165,28 @@ class SchedulingWriter(_Base):
         return self._run(agency, "reassign_block", key, go)
 
     def _recheck(self, agency: str, block_id: str, to_vehicle_id: str) -> None:
-        """Hard limits re-evaluated from live product state, regardless of what the caller claims."""
-        limits = self.deps.policy_for(agency).limits
+        """Hard limits re-evaluated from live product state through the clearance module, regardless of what
+        the caller claims. Only KNOWN violations block; unverifiable items were the approver's to acknowledge."""
+        policy = self.deps.policy_for(agency)
         block = self.reader.get_block(agency, block_id)
         veh = self.reader.get_vehicle(agency, to_vehicle_id)
         ready = self.reader.list_ready_vehicles(agency, block.value.start, block.value.end, Needs()) \
             if block.status == "ok" else block
-        for r in (block, veh, ready):
+        sched = self.reader.list_blocks(agency, block.value.start, block.value.end) \
+            if block.status == "ok" else block
+        for r in (block, veh, ready, sched):
             if r.status != "ok":  # cannot verify -> cannot act (partial counts: conflicts unchecked)
                 raise ProductUnavailable(r.product or "scheduling", f"cannot verify hard limits: {r.note}")
-        assert block.value and veh.value and ready.value is not None
-        v = check_spare_meets_needs(veh.value, block.value.needs)
-        if veh.value.status != "ready" or to_vehicle_id not in {x.id for x in ready.value}:
+        assert block.value and veh.value and ready.value is not None and sched.value is not None
+        facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value}, operators={},
+                      ready_count=len(ready.value), commitments=commitments_from_blocks(sched.value),
+                      profiles={"scheduling": self.reader.capability_profile(agency)})
+        c = evaluate_vehicle_move(block.value.id, veh.value.id, facts, policy)
+        v = [i.detail or i.rule for i in c.violations if i.rule != "last_spare"]
+        if to_vehicle_id not in {x.id for x in ready.value}:
             v.append(f"spare_not_ready: {to_vehicle_id} is not a ready, unassigned vehicle for this window")
         else:
-            v += check_min_spares(len(ready.value), limits)
+            v += [i.detail for i in c.violations if i.rule == "last_spare"]
         if v:
             raise HardLimit(v)
 
@@ -209,16 +219,27 @@ class WorkforceWriter(_Base):
         return self._run(agency, "assign_operator", key, go)
 
     def _recheck(self, agency: str, block_id: str, operator_id: str) -> None:
-        limits = self.deps.policy_for(agency).limits
+        policy = self.deps.policy_for(agency)
         block = self.sched.get_block(agency, block_id)
         if block.status != "ok":
             raise ProductUnavailable(block.product or "scheduling", f"cannot verify hard limits: {block.note}")
         assert block.value is not None
-        op = next((o for o in self.workforce.operators(agency) if o.id == operator_id), None)
+        veh = self.sched.get_vehicle(agency, block.value.vehicle_id)   # the vehicle now on the block
+        sched = self.sched.list_blocks(agency, block.value.start, block.value.end)
+        for r in (veh, sched):
+            if r.status != "ok":
+                raise ProductUnavailable(r.product or "scheduling", f"cannot verify hard limits: {r.note}")
+        assert veh.value is not None and sched.value is not None
+        ops, profile = self.workforce._export(agency)
+        op = next((o for o in ops if o.id == operator_id), None)
         if op is None:
             raise HardLimit([f"operator_unknown: {operator_id} not in workforce export"])
-        v = check_operator_hours(op.hours_today, block.value.start, block.value.end, limits)
-        v += check_lift_qualification(block.value.needs, op)
+        facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value},
+                      operators={op.id: op}, ready_count=None, commitments=commitments_from_blocks(sched.value),
+                      profiles={"workforce": profile, "scheduling": self.sched.capability_profile(agency)})
+        items = operator_items(block.value, op, veh.value.type, facts, policy)
+        items.append(double_booking_item(Option((Assign(block.value.id, veh.value.id, op.id),)), facts))
+        v = [i.detail or i.rule for i in items if i.status == "violation"]
         if v:
             raise HardLimit(v)
 

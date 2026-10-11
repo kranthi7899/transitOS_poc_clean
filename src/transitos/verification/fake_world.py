@@ -10,6 +10,15 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from transitos.clearance.evaluate import (
+    operator_items,
+    summarise,
+    unacknowledged,
+    vehicle_items,
+)
+from transitos.clearance.facts import Facts, commitments_from_blocks, native_profile
+from transitos.clearance.rank import rank_plans
+from transitos.clearance.rules import min_distinct_spares
 from transitos.contracts import ids
 from transitos.contracts.envelope import START_TYPES, CloudEvent
 from transitos.contracts.objects import (
@@ -29,6 +38,7 @@ from .model import RETURN_ACTION, AuditEvent, Observation, WriteRecord
 from .scenarios import AGENCY, NATIVE_ASSET, NATIVE_TELEMATICS, T0, Scenario
 
 BLOCK_HOURS = 4
+LENGTH_FT = {"cutaway": 24.0, "standard": 40.0, "articulated": 60.0}   # ASSUMED A66
 CROSSWALK = {NATIVE_TELEMATICS: "veh-1", NATIVE_ASSET: "veh-1", "BUS-44": "veh-1"}
 
 
@@ -46,7 +56,6 @@ class FakeWorld:
     def apply(self, scenario: Scenario) -> None:
         t, self.chaos = scenario.tweaks, dict(scenario.chaos)
         self.tweaks = t
-        self.policy = AgencyPolicy(agency=AGENCY)
         self.seq = 0
         self.now = T0
         self.writes: list[WriteRecord] = []
@@ -59,23 +68,43 @@ class FakeWorld:
         self.alerts: list[dict] = []
         self.key_effects: dict[str, str] = {}
         self.wo_n = 0
+        self.acks: dict[str, list[str]] = {}
+        g = lambda name, default: getattr(t, name, default)
+        self.policy = AgencyPolicy(agency=AGENCY, vehicle_fit=g("vehicle_fit", "allow_larger"))
+        btype, stype = g("block_type", "standard"), g("spare_type", "standard")
         needs = Needs(seats=30, wheelchair_positions=t.block_wheelchair_positions, lift=t.block_needs_lift,
-                      type="bus")
-        self.vehicles = {"veh-1": Vehicle(id="veh-1", agency=AGENCY, seats=40, wheelchair_positions=2,
-                                          lift_ok=True, status="in_service", depot="north")}
+                      type=btype, max_vehicle_length_ft=g("block_max_length_ft", None))
+        self.vehicles = {"veh-1": Vehicle(id="veh-1", agency=AGENCY, seats=40, wheelchair_positions=2, lift_ok=True,
+                                          type=btype, status="in_service", depot="North", length_ft=LENGTH_FT[btype])}
         for i in range(t.spares):
             vid = f"veh-{i + 2}"
-            self.vehicles[vid] = Vehicle(id=vid, agency=AGENCY, seats=t.spare_seats, status="ready",
-                                         wheelchair_positions=t.spare_wheelchair_positions,
-                                         lift_ok=t.spare_lift_ok, depot="north")
+            self.vehicles[vid] = Vehicle(id=vid, agency=AGENCY, seats=t.spare_seats, status="ready", type=stype,
+                                         wheelchair_positions=t.spare_wheelchair_positions, lift_ok=t.spare_lift_ok,
+                                         depot="North", length_ft=g("spare_length_ft", None) or LENGTH_FT[stype])
         self.blocks = {"blk-1": Block(id="blk-1", vehicle_id="veh-1", operator_id="OP-1", start=T0 + timedelta(hours=1),
-                                      end=T0 + timedelta(hours=1 + BLOCK_HOURS), needs=needs)}
-        quals = ["bus"] if t.operators_qualified else ["van"]
+                                      end=T0 + timedelta(hours=1 + BLOCK_HOURS), start_depot="North", needs=needs)}
+        if g("second_block", False):
+            self.blocks["blk-2"] = Block(id="blk-2", vehicle_id="veh-1", operator_id="OP-2",
+                                         start=T0 + timedelta(hours=g("second_block_start_h", 6.0)),
+                                         end=T0 + timedelta(hours=g("second_block_start_h", 6.0) + 2),
+                                         start_depot="North",
+                                         needs=needs.model_copy(update={"seats": 20, "wheelchair_positions": 0,
+                                                                        "lift": False}))
+        trained = list(g("operator_trained_types", ("standard",))) if t.operators_qualified else ["van"]
+        endorsements = list(g("operator_endorsements", ("P",)))
+        offsets = dict(g("credential_days", ()))
+        day = T0.replace(hour=0, minute=0)
+        creds = [*endorsements, *trained, *(["lift"] if t.operators_lift_trained else [])]
+        valid = {c: day + timedelta(days=offsets.get(c, 365)) for c in creds}
         hours = {"OP-1": t.operator_hours_today if t.assigned_operator_hours_today is None
                  else t.assigned_operator_hours_today, "OP-2": t.operator_hours_today}
-        self.operators = {o: Operator(id=o, qualifications=quals, lift_trained=t.operators_lift_trained,
-                                      hours_today=hours[o], on_extra_board=(o == "OP-2"))
+        self.operators = {o: Operator(id=o, licence_class=g("operator_licence_class", "B"), endorsements=endorsements,
+                                      trained_vehicle_types=trained, training_valid_to=valid,
+                                      lift_trained=t.operators_lift_trained, hours_today=hours[o],
+                                      hours_week=g("operator_hours_week", 20.0), on_extra_board=(o == "OP-2"))
                           for o in ("OP-1", "OP-2")}
+        self.profiles = {"scheduling": native_profile("scheduling"),
+                         "workforce": native_profile("workforce", drop=tuple(g("drop_operator_fields", ())))}
         self.work_orders: dict[str, WorkOrder] = {}
         if t.human_wo_exists:
             self.work_orders["WO-H1"] = WorkOrder(id="WO-H1", native_no="H1", asset_vehicle_id="veh-1",
@@ -124,48 +153,62 @@ class FakeWorld:
                 run.plan = Plan(decision="monitor", reasoning=f"PM only {over} mi overdue")
                 run.status = "DONE"
                 return
-        block = self.blocks["blk-1"]
+        affected = sorted((b for b in self.blocks.values() if b.vehicle_id == run.vehicle_id),
+                          key=lambda b: (b.start, b.id))
         spares = [v for v in self.vehicles.values() if v.id != run.vehicle_id and v.status == "ready"
                   and not any(b.vehicle_id == v.id for b in self.blocks.values())]
-        viol = []
-        fits = [v for v in spares if v.seats >= block.needs.seats
-                and v.wheelchair_positions >= block.needs.wheelchair_positions
-                and (v.lift_ok or not block.needs.lift)]
-        if not spares:
-            viol.append("no_feasible_spare")
-        elif not fits:
-            viol.append("wheelchair_mismatch" if all(v.wheelchair_positions < block.needs.wheelchair_positions
-                                                     for v in spares) else "lift_mismatch")
-        elif len(spares) - 1 < self.policy.limits.min_spares:
+        probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=len(spares), profiles=self.profiles,
+                      commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id)
+        viol: list[str] = []
+        spare_ok: dict[str, list[str]] = {}
+        op_ok: dict[str, list[str]] = {}
+        for b in affected:
+            spare_ok[b.id] = [v.id for v in spares
+                              if not any(i.status == "violation" for i in vehicle_items(b, v, probe, self.policy))]
+            op_ok[b.id] = [o.id for o in self.operators.values()
+                           if not any(i.status == "violation"
+                                      for i in operator_items(b, o, b.needs.type, probe, self.policy))]
+            if not spare_ok[b.id]:
+                viol.append(f"no_feasible_spare:{b.id}")
+            if b.operator_id not in op_ok[b.id] and not op_ok[b.id]:
+                viol.append(f"no_feasible_operator:{b.id}")
+        need = min_distinct_spares(affected, spare_ok) if affected else 0
+        if not viol and need is not None and len(spares) - need < self.policy.limits.min_spares:
             viol.append("last_spare")
-        ops = [o for o in self.operators.values()
-               if o.hours_today + BLOCK_HOURS <= self.policy.limits.max_operator_hours_day
-               and (block.needs.type in o.qualifications) and (o.lift_trained or not block.needs.lift)]
-        current_ok = block.operator_id in {o.id for o in ops}   # keep the assigned operator if allowed
-        swap = [o for o in ops if o.id != block.operator_id]
-        if not viol and not current_ok and not swap:
-            if all(o.hours_today + BLOCK_HOURS > self.policy.limits.max_operator_hours_day for o in self.operators.values()):
-                viol.append("operator_hours")
-            else:
-                viol.append("operator_unqualified")
+        ranked = None
+        if not viol:
+            snap = Facts(blocks={b.id: b for b in affected}, vehicles={v.id: v for v in spares},
+                         operators=dict(self.operators), ready_count=len(spares), profiles=self.profiles,
+                         commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id)
+            ranked = rank_plans([], affected, spare_ok, {b.id: op_ok[b.id] for b in affected}, snap, self.policy, self.now)
+            if not ranked.options:
+                viol.append("no_safe_option")
         if viol:
             return self._escalate(run, *viol)
+        top = ranked.options[0]
         human_wo = next((w for w in self.work_orders.values() if w.source == "human" and w.status != "closed"), None)
         run.wo_id = human_wo.id if human_wo else None
         pv = run.plan_version
-        params = {
-            "create_work_order": {"vehicle_id": run.vehicle_id, "description": "fault"},
-            "set_vehicle_unavailable": {"vehicle_id": run.vehicle_id},
-            "reassign_block": {"block_id": block.id, "to_vehicle_id": fits[0].id, "from_vehicle_id": run.vehicle_id},
-            "assign_operator": {"block_id": block.id, "operator_id": swap[0].id if swap else None,
-                                "from_operator_id": block.operator_id},
-            "publish_rider_alert": {"block_id": block.id, "message": "Bus change"},
-        }
-        steps = [Step(action=a, params=params[a], idempotency_key=ids.step_key(run.run_id, a, pv),  # type: ignore[arg-type]
-                      compensation=_step_comp(a))  # type: ignore[arg-type]
-                 for a in SAGA_ORDER if not (a == "create_work_order" and human_wo)
-                 and not (a == "assign_operator" and current_ok)]
-        run.plan = Plan(decision="pull_now", steps=steps, reasoning="fake")
+        raw: list[tuple[str, dict]] = []
+        if not human_wo:
+            raw.append(("create_work_order", {"vehicle_id": run.vehicle_id, "description": "fault"}))
+        raw.append(("set_vehicle_unavailable", {"vehicle_id": run.vehicle_id}))
+        for a in top.option.assignments:
+            raw.append(("reassign_block", {"block_id": a.block_id, "to_vehicle_id": a.spare_id,
+                                           "from_vehicle_id": run.vehicle_id}))
+        for a in top.option.assignments:
+            if a.operator_id:
+                raw.append(("assign_operator", {"block_id": a.block_id, "operator_id": a.operator_id,
+                                                "from_operator_id": self.blocks[a.block_id].operator_id}))
+        for a in top.option.assignments:
+            raw.append(("publish_rider_alert", {"block_id": a.block_id, "message": "Bus change"}))
+        raw.sort(key=lambda t: SAGA_ORDER.index(t[0]))
+        steps = [Step(action=act, params=p, idempotency_key=ids.step_key(
+                      run.run_id, f"{act}:{p['block_id']}" if "block_id" in p else act, pv),
+                      compensation=_step_comp(act))  # type: ignore[arg-type]
+                 for act, p in raw]
+        run.plan = Plan(decision="pull_now", steps=steps, reasoning="fake", clearance=summarise(top.clearance.items),
+                        vehicle_fit=top.clearance.tier, rank_reason=ranked.reason_first_beat_second)
         run.status = "AWAITING_APPROVAL"
         self.proposed_at[run.run_id] = self.now
         self._audit("proposal", run.run_id, plan_version=pv)
@@ -184,11 +227,15 @@ class FakeWorld:
         if run.status != "AWAITING_APPROVAL":
             return
         self._audit("approval", run_id, plan_version=run.plan_version, scope="plan", by=by)
+        run.acknowledged = sorted(set(run.acknowledged) | set(self.acks.get(run_id, [])))
+        if run.plan is not None and unacknowledged(run.plan.clearance, run.acknowledged):
+            return    # approved without acknowledging every requires_ack item: nothing executes
         run.decision, run.decided_by, run.decided_at = "approve", by, self.now
-        block_veh = self.plan_spare(run)
-        if block_veh is None or self.vehicles[block_veh].status != "ready":   # revalidate
+        spares = [st.params["to_vehicle_id"] for st in (run.plan.steps if run.plan else [])
+                  if st.action == "reassign_block"]
+        if not spares or any(self.vehicles[v].status != "ready" for v in spares):   # revalidate
             run.plan_version += 1
-            run.plan, run.decision = None, None
+            run.plan, run.decision, run.acknowledged = None, None, []
             return self._gather_and_propose(run)
         run.status = "EXECUTING"
         self._execute(run)
@@ -218,6 +265,9 @@ class FakeWorld:
             if wo:
                 wo.status, wo.closed_at = "closed", self.now
             run.status = "RETURNING"
+
+    def acknowledge(self, run_id: str, rules: list[str]) -> None:
+        self.acks.setdefault(run_id, []).extend(rules)
 
     def take_spare(self, run_id: str) -> None:
         run = self.runs[run_id]

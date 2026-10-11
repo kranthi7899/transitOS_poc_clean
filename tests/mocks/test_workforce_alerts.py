@@ -10,7 +10,9 @@ def test_csv_export(make):
     assert r.headers["content-type"].startswith("text/csv")
     rows = list(csv.DictReader(io.StringIO(r.text)))
     assert list(rows[0]) == ["operator", "qualifications", "lift_trained", "hours_today", "hours_week",
-                             "available_from", "available_to", "on_extra_board"]
+                             "available_from", "available_to", "on_extra_board",
+                             "licence_class", "endorsements", "trained_vehicle_types", "training_valid_to",
+                             "medical_valid_to", "last_duty_end", "duty_start_today"]
     assert rows[0]["operator"] == "OP-310" and ";" in rows[0]["qualifications"]
     assert any(float(r["hours_today"]) >= 9 for r in rows) and any(r["on_extra_board"] == "true" for r in rows)
     assert any(r["lift_trained"] == "false" for r in rows)
@@ -97,3 +99,34 @@ def test_run_build_all():
     from transitos.mocks.run import PORTS, build_all
     apps = build_all()
     assert set(apps) == set(PORTS)
+
+
+def test_csv_carries_licence_endorsement_and_dated_training(make):
+    c, _ = make("workforce")
+    rows = {r["operator"]: r for r in csv.DictReader(io.StringIO(c.get("/export/operators.csv", headers=A).text))}
+    artic, plain = rows["OP-310"], rows["OP-311"]            # OP-310 holds ARTIC in the legacy string
+    assert (artic["licence_class"], plain["licence_class"]) == ("A", "B")
+    assert artic["endorsements"] == "P" and "articulated" in artic["trained_vehicle_types"].split(";")
+    assert "articulated" not in plain["trained_vehicle_types"].split(";") and "standard" in plain["trained_vehicle_types"]
+    assert all(k in artic["training_valid_to"] for k in ("P=", "standard=", "lift="))
+    assert "lift=" not in rows["OP-313"]["training_valid_to"]    # not lift trained -> no lift credential
+    assert artic["last_duty_end"] == "" and artic["duty_start_today"] == ""   # optional rules: no data
+
+
+def test_seed_is_deterministic(make):
+    a, _ = make("workforce")
+    first = a.get("/export/operators.csv", headers=A).text
+    a.post("/sim/reset", headers=A)
+    a.post("/sim/seed", headers=A)
+    assert a.get("/export/operators.csv", headers=A).text == first
+
+
+def test_scenario_switch_drops_operator_columns_and_reset_restores(make):
+    c, _ = make("workforce")
+    r = c.post("/sim/operator-fields", json={"drop": ["licence_class", "hours_week", "operator", "nonsense"]}, headers=A)
+    assert r.json() == {"drop": ["licence_class", "hours_week"]}
+    header = next(csv.reader(io.StringIO(c.get("/export/operators.csv", headers=A).text)))
+    assert "licence_class" not in header and "hours_week" not in header and "operator" in header
+    c.post("/sim/reset", headers=A)
+    c.post("/sim/seed", headers=A)
+    assert "licence_class" in next(csv.reader(io.StringIO(c.get("/export/operators.csv", headers=A).text)))

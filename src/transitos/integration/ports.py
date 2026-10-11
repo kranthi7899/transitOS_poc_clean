@@ -63,7 +63,8 @@ class GraphRunGateway:
         return out
 
     def submit_decision(self, run_id: str, decision: str, plan_version: int,
-                        edits: dict[str, Any] | None, user: str) -> RunState:
+                        edits: dict[str, Any] | None, user: str,
+                        acknowledged: list[str] | None = None) -> RunState:
         run = self.get_run(run_id)
         if run is None:
             raise RunNotFound(run_id)
@@ -72,8 +73,9 @@ class GraphRunGateway:
         if plan_version != run.plan_version:
             raise StaleVersion(f"current plan_version is {run.plan_version}")
         self.s.log_human("approval" if decision in ("approve", "edit") else "rejection", run_id, run.plan_version,
-                         scope="plan", decision=decision, by=user)
-        resume_approval(self.s.graph, self.s.store, run_id, decision, user, edits, at=self.s.clock.now())
+                         scope="plan", decision=decision, by=user, acknowledged=list(acknowledged or []))
+        resume_approval(self.s.graph, self.s.store, run_id, decision, user, edits, at=self.s.clock.now(),
+                        acknowledged=acknowledged)
         return self.get_run(run_id)  # type: ignore[return-value]
 
     def submit_return(self, run_id: str, decision: str, user: str) -> RunState:

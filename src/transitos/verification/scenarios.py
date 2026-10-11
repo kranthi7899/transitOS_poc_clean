@@ -175,4 +175,7 @@ SCENARIOS: tuple[Scenario, ...] = (
        tweaks=Tweaks(spares=3), expect_plan_version=2, expect_wo_creates=1),
 )
 
+from .scenarios_step1 import STEP1_SCENARIOS  # Phase 10 Step 1
+
+SCENARIOS = SCENARIOS + STEP1_SCENARIOS
 BY_ID = {s.id: s for s in SCENARIOS}

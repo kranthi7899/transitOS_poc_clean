@@ -34,6 +34,10 @@ class World(Protocol):
 
     def set_kill_switch(self, on: bool) -> None: ...
 
+    def acknowledge(self, run_id: str, rules: list[str]) -> None:
+        """The approver acknowledges these clearance rule ids; the next plan approval carries them
+        (execution waits for every requires_ack item to be acknowledged)."""
+
     def close_work_order(self, run_id: str) -> None:
         """Simulate the shop closing the WO (emits WorkOrderClosed); process to quiescence."""
 

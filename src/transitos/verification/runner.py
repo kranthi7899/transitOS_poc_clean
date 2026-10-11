@@ -76,6 +76,8 @@ def drive(world: World, scenario: Scenario) -> Observation:
             continue
         elif name == "approve":
             world.approve(rid, scope=arg)
+        elif name == "ack":
+            world.acknowledge(rid, list(arg))
         elif name == "reject":
             world.reject(rid)
         elif name == "advance":

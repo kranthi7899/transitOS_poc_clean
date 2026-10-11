@@ -36,6 +36,7 @@ class DecisionBody(BaseModel):
     edits: dict[str, Any] | None = None
     user: str
     scope: Literal["plan", "return_to_service"] = "plan"  # return_to_service: the separate return approval
+    acknowledged: list[str] = []  # clearance rule ids the approver acknowledges (Phase 10, amendment A)
 
 
 class DefectBody(BaseModel):
@@ -59,6 +60,8 @@ def _summary(run: RunState) -> dict[str, Any]:
         "status": run.status, "plan_version": run.plan_version,
         "decision": run.plan.decision if run.plan else None,
         "reasoning": run.plan.reasoning if run.plan else "",
+        "needs_acknowledgement": sorted({i.rule for i in run.plan.clearance if i.requires_ack}
+                                        - set(run.acknowledged)) if run.plan else [],
     }
 
 
@@ -113,9 +116,38 @@ def _e(v: Any) -> str:
     return escape(str(v))
 
 
+def _clearance_card(run: RunState) -> str:
+    """Every derived, assumed, unverifiable or not-evaluated rule with its basis, and what still needs the
+    approver's acknowledgement."""
+    items = run.plan.clearance if run.plan else []
+    if not items:
+        return "<div class='card'><h2>Clearance</h2>All rules passed on native data.</div>"
+    rows = "".join(
+        f"<tr><td>{_e(i.rule)}</td><td>{'<span class=warn>' if i.status in ('violation', 'unverifiable') else ''}"
+        f"{_e(i.status)}{'</span>' if i.status in ('violation', 'unverifiable') else ''}</td>"
+        f"<td>{_e(i.basis)}</td><td>{_e(i.detail)}</td>"
+        f"<td>{'acknowledged' if i.rule in run.acknowledged else ('needs acknowledgement' if i.requires_ack else '')}"
+        "</td></tr>" for i in items)
+    return ("<div class='card'><h2>Clearance</h2><table><tr><th>Rule</th><th>Status</th><th>Basis</th>"
+            f"<th>Detail</th><th>Approver</th></tr>{rows}</table></div>")
+
+
 async def _form(request: Request) -> dict[str, str]:
     raw = (await request.body()).decode()
     return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
+
+
+async def _form_multi(request: Request) -> dict[str, list[str]]:
+    raw = (await request.body()).decode()
+    return parse_qs(raw, keep_blank_values=True)
+
+
+def _missing_acks(run: RunState, acknowledged: list[str]) -> list[str]:
+    """Rule ids with a requires_ack clearance item that neither this request nor the run has acknowledged."""
+    if run.plan is None:
+        return []
+    need = {i.rule for i in run.plan.clearance if i.requires_ack}
+    return sorted(need - set(acknowledged) - set(run.acknowledged))
 
 
 def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
@@ -157,9 +189,11 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
             raise HTTPException(409, "run already decided")
         if body.plan_version != run.plan_version:
             raise HTTPException(409, f"stale plan_version: current is {run.plan_version}")
+        if body.decision == "approve" and (missing := _missing_acks(run, body.acknowledged)):
+            raise HTTPException(409, "acknowledgement required for: " + ", ".join(missing))
         try:
             run = gateway.submit_decision(run_id, body.decision, body.plan_version,
-                                          body.edits, body.user)
+                                          body.edits, body.user, body.acknowledged)
         except RunNotFound:
             raise HTTPException(404, "run not found")
         except (StaleVersion, DecisionConflict) as exc:
@@ -257,7 +291,10 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                   f"<p><b>Reasoning:</b> {_e(plan.reasoning)}</p>"
                   f"<table><tr><th>Step</th><th>Params</th><th>Status</th></tr>{steps}</table>"
                   f"<p><b>Assumptions:</b> {_e('; '.join(plan.assumptions) or '-')}</p>"
-                  f"<p><b>Alternatives:</b> {_e(plan.alternatives or '-')}</p></div>")
+                  f"<p><b>Alternatives:</b> {_e(plan.alternatives or '-')}</p>"
+                  f"<p><b>Ranking:</b> {_e(plan.rank_reason or '-')} "
+                  f"(vehicle fit: {_e(plan.vehicle_fit or '-')})</p></div>")
+            b += _clearance_card(run)
         b += f"<div class='card'><h2>Facts</h2><pre>{_e(json.dumps(run.facts, indent=2, default=str))}</pre></div>"
         hist = "".join(f"<tr><td>v{r.plan_version}</td><td>{_e(r.outcome)}</td>"
                        f"<td>{_e(r.human_action)}</td><td>{_e(r.actions)}</td></tr>"
@@ -276,6 +313,9 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         elif run.decision is None:
             rid = _e(run_id)
             hidden = f"<input type='hidden' name='plan_version' value='{run.plan_version}'>"
+            for rule in sorted({i.rule for i in (plan.clearance if plan else []) if i.requires_ack}):
+                hidden += (f"<label><input type='checkbox' name='acknowledged' value='{_e(rule)}'> "
+                           f"I acknowledge: {_e(rule)}</label><br>")
             btn = lambda d, cls, label: (
                 f"<button class='{cls}' name='decision' value='{d}' "
                 f"hx-post='/ui/runs/{rid}/decision' hx-include='closest form' "
@@ -293,10 +333,12 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
     @app.post("/ui/runs/{run_id:path}/decision", response_class=HTMLResponse)
     async def ui_decision(run_id: str, request: Request):
         f = await _form(request)
+        acks = (await _form_multi(request)).get("acknowledged", [])
         try:
             edits = json.loads(f["edits"]) if f.get("edits", "").strip() else None
             body = DecisionBody(decision=f.get("decision", ""), plan_version=int(f.get("plan_version", "")),
-                                edits=edits, user=f.get("user", ""), scope=f.get("scope") or "plan")
+                                edits=edits, user=f.get("user", ""), scope=f.get("scope") or "plan",
+                                acknowledged=acks)
             res = do_decision(run_id, body)
             msg, code = f"Recorded {_e(body.decision)} (status {_e(res['status'])})", 200
         except HTTPException as exc:

@@ -17,13 +17,14 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     ctx = Ctx("scheduling", clock, chaos, db_path)
     st = ctx.store
     tenant = Depends(ctx.tenant)
-    KEYS = ("id", "seats", "wheelchair_positions", "lift_ok", "type", "status", "depot", "updated_at")
+    KEYS = ("id", "seats", "wheelchair_positions", "lift_ok", "type", "status", "depot", "length_ft", "updated_at")
 
     def seeder(a: str) -> None:
         now = iso(clock.now())
         fleet = build_fleet(a, clock.now())
         for v in fleet.vehicles:
             d = {k: v[k] for k in ("seats", "wheelchair_positions", "lift_ok", "type", "status", "depot")}
+            d["length_ft"] = v.get("length_ft")  # optional (Phase 10): fleets that carry no length report null
             st.put(a, "vehicles", v["sched"], {"id": v["sched"], **d, "updated_at": now})
         for b in fleet.blocks:
             blk = {k: b[k] for k in ("id", "vehicle", "operator", "start", "end", "start_depot", "needs")}
@@ -43,7 +44,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         st.put(a, "vehicles", v["id"], v)
         n = st.next_seq(a, "change")
         st.put(a, "changes", f"{n:08d}", {"vehicle": v["id"], "status": status, "changed_at": now, "changed_by": by})
-        return {k: v[k] for k in KEYS}
+        return {k: v.get(k) for k in KEYS}
 
     def since_ok(ts: str, since: str | None) -> bool:
         return not since or parse_ts(ts) >= parse_ts(since)
@@ -51,14 +52,14 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     @app.get("/vehicles")
     def vehicles(status: str | None = None, updated_since: str | None = None, a: str = tenant):
         return [
-            {k: v[k] for k in KEYS} for v in st.all(a, "vehicles")
+            {k: v.get(k) for k in KEYS} for v in st.all(a, "vehicles")
             if (not status or v["status"] == status) and since_ok(v["updated_at"], updated_since)
         ]
 
     @app.get("/vehicles/{vid}")
     def one_vehicle(vid: str, a: str = tenant):
         v = vehicle(a, vid)
-        return {k: v[k] for k in KEYS}
+        return {k: v.get(k) for k in KEYS}
 
     @app.get("/blocks")
     def blocks(vehicle: str | None = None, from_: str | None = Query(default=None, alias="from"),
@@ -114,6 +115,9 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
                 raise HTTPException(409, "target lacks wheelchair positions")
             if needs.get("lift") and not target["lift_ok"]:
                 raise HTTPException(409, "target lacks working lift")
+            # PERMISSIVE ON PURPOSE (Phase 10, A14/A68): the product accepts any class at or above the block's
+            # (type_ok is >=) and knows nothing of operator qualification or declared length limits; the
+            # graded fit, length restriction and qualification live in transitos.clearance, not here.
             if not type_ok(target["type"], needs.get("type")):
                 raise HTTPException(409, "target vehicle type unsuitable")
         s, e = parse_ts(b["start"]), parse_ts(b["end"])
