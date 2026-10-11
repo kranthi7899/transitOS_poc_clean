@@ -13,6 +13,7 @@ from transitos.contracts.policy import AgencyPolicy
 
 from .evaluate import Assign, Clearance, Option, safe_evaluate
 from .facts import Facts
+from .rules import count_distinct_spares
 
 
 @dataclass
@@ -83,7 +84,20 @@ def greedy_option(blocks: Sequence[Block], spare_order: Mapping[str, Sequence[st
                   at: datetime) -> Option | None:
     """One assignment per block, earliest block first. For each block take the candidate (spare, operator
     choice) with the best clearance, preferring an already-used spare (fewer distinct spares consumed), then
-    the listing order. The block's own operator is tried first; others only when that fails everywhere."""
+    the listing order. The block's own operator is tried first; others only when that fails everywhere.
+    If that finds nothing, retry preferring the spares of an exact minimum cover (F6): a block-by-block greedy
+    can spend a spare that a later block needed, while the exact count proves a cover exists."""
+    opt = _greedy(blocks, spare_order, op_order, facts, policy, at, {})
+    if opt is None:
+        cover = count_distinct_spares(list(blocks), {k: list(v) for k, v in spare_order.items()})
+        if cover.assignment:
+            opt = _greedy(blocks, spare_order, op_order, facts, policy, at, dict(cover.assignment))
+    return opt
+
+
+def _greedy(blocks: Sequence[Block], spare_order: Mapping[str, Sequence[str]],
+            op_order: Mapping[str, Sequence[str]], facts: Facts, policy: AgencyPolicy, at: datetime,
+            prefer: Mapping[str, str]) -> Option | None:
     chosen: list[Assign] = []
     for b in sorted(blocks, key=lambda x: (x.start, x.id)):
         used = {a.spare_id for a in chosen}
@@ -97,7 +111,8 @@ def greedy_option(blocks: Sequence[Block], spare_order: Mapping[str, Sequence[st
                     c = safe_evaluate(Option((*chosen, cand)), facts, policy, at)
                     if c.excluded:
                         continue
-                    k = (0 if c.tier == "exact" else 1, c.unverifiable, c.warnings, s not in used,
+                    k = (0 if c.tier == "exact" else 1, c.unverifiable, c.warnings,
+                         bool(prefer) and s != prefer.get(b.id), s not in used,
                          facts.vehicles[s].depot != b.start_depot, si, oi)
                     if best is None or k < best[0]:
                         best = (k, cand)

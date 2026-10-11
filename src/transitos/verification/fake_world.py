@@ -18,7 +18,7 @@ from transitos.clearance.evaluate import (
 )
 from transitos.clearance.facts import Facts, commitments_from_blocks, native_profile
 from transitos.clearance.rank import rank_plans
-from transitos.clearance.rules import min_distinct_spares
+from transitos.clearance.rules import count_distinct_spares, guarded, last_spare_item
 from transitos.contracts import ids
 from transitos.contracts.envelope import START_TYPES, CloudEvent
 from transitos.contracts.objects import (
@@ -165,18 +165,20 @@ class FakeWorld:
         viol: list[str] = []
         spare_ok: dict[str, list[str]] = {}
         op_ok: dict[str, list[str]] = {}
+        def ok(where: str, fn, *args) -> bool:   # one candidate; an exception excludes only it (F4)
+            return not any(i.status == "violation" for i in guarded(where, fn, *args))
+
         for b in affected:
-            spare_ok[b.id] = [v.id for v in spares
-                              if not any(i.status == "violation" for i in vehicle_items(b, v, probe, self.policy))]
+            spare_ok[b.id] = [v.id for v in spares if ok(f"spare {v.id}", vehicle_items, b, v, probe, self.policy)]
             op_ok[b.id] = [o.id for o in self.operators.values()
-                           if not any(i.status == "violation"
-                                      for i in operator_items(b, o, b.needs.type, probe, self.policy))]
+                           if ok(f"operator {o.id}", operator_items, b, o, b.needs.type, probe, self.policy)]
             if not spare_ok[b.id]:
                 viol.append(f"no_feasible_spare:{b.id}")
             if b.operator_id not in op_ok[b.id] and not op_ok[b.id]:
                 viol.append(f"no_feasible_operator:{b.id}")
-        need = min_distinct_spares(affected, spare_ok) if affected else 0
-        if not viol and need is not None and len(spares) - need < self.policy.limits.min_spares:
+        need = count_distinct_spares(affected, spare_ok).n if affected else 0   # same function as the workflow
+        if not viol and need is not None and \
+                last_spare_item(len(spares), need, self.policy.limits.min_spares).status == "violation":
             viol.append("last_spare")
         ranked = None
         if not viol:

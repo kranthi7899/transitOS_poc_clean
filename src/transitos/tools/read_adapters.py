@@ -17,6 +17,7 @@ from transitos.clearance.facts import (
     Facts,
     native_profile,
 )
+from transitos.clearance.rules import guarded as guarded_items
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrder
 from transitos.contracts.results import Result
 
@@ -198,9 +199,10 @@ class SchedulingReader:
         probe = Block(id="-", vehicle_id="-", start=start, end=end, needs=needs)
         facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
                       profiles={"scheduling": self.capability_profile(agency)})
-        cands = [v for v in (map_vehicle(self.deps, agency, r) for r in raw)
+        cands = [v for v in (map_vehicle(self.deps, agency, r) for r in raw)   # one bad record excludes only it (F4)
                  if v.status == "ready"
-                 and not any(i.status == "violation" for i in vehicle_items(probe, v, facts, policy))]
+                 and not any(i.status == "violation"
+                             for i in guarded_items(f"vehicle {v.id}", vehicle_items, probe, v, facts, policy))]
         try:
             blocks = self.http.json(agency, "GET", "/blocks", params={"from": _iso(start), "to": _iso(end)})
         except ProductUnavailable as e:
@@ -285,9 +287,10 @@ class WorkforceReader:
         ops, profile = self._export(agency)
         facts = Facts(blocks={block.id: block}, vehicles={}, operators={}, ready_count=None, commitments=None,
                       profiles={"workforce": profile})
-        elig = [op for op in ops  # the block's current operator is listed too when eligible
-                if not any(i.status == "violation"
-                           for i in operator_items(block, op, block.needs.type, facts, policy))]
+        elig = [op for op in ops  # the block's current operator is listed too when eligible; a record that breaks
+                if not any(i.status == "violation"   # a rule (F4) excludes only that operator
+                           for i in guarded_items(f"operator {op.id}", operator_items, block, op, block.needs.type,
+                                                  facts, policy))]
         return Result.success(elig, note="from daily export; hours may be stale")
 
 

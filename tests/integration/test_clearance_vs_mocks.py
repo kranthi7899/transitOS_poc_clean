@@ -83,6 +83,27 @@ def test_list_blocks_is_the_schedule_feed_with_assignments_applied(env):
     assert {b.id for b in r.value} >= {"BLK-1-1", "BLK-8-8"}
 
 
+def test_a_malformed_operator_record_excludes_only_that_operator_in_the_read_adapter(env):
+    """F4: a zone-less availability bound raises inside clearance; the adapter excludes THAT operator (fail
+    closed per candidate) instead of failing the whole read."""
+    block = env.tools.list_affected_blocks(AG, "veh-1", datetime(2026, 1, 5, 7, 0, tzinfo=UTC),
+                                           datetime(2026, 1, 5, 9, 0, tzinfo=UTC)).value[0]
+    env.c("workforce").post("/sim/operator", headers=H, json={"operator": "OP-311",
+                                                              "available_from": "2026-01-05T05:00:00"})
+    r = env.tools.list_eligible_operators(AG, block)
+    assert r.status == "ok", r.note
+    ids = {o.id for o in r.value}
+    assert "op-2" not in ids and "op-1" in ids
+
+
+def test_a_malformed_operator_record_blocks_the_write_with_a_clearance_error(env):
+    env.c("workforce").post("/sim/operator", headers=H, json={"operator": "OP-319",
+                                                              "available_from": "2026-01-05T05:00:00"})
+    r = env.tools.assign_operator(AG, "BLK-1-2", "op-10", "k")
+    assert r.is_blocked and r.blocked_reason == "hard_limit" and "clearance_error" in r.note, r.note
+    assert env.c("workforce").get("/assignments/BLK-1-2", headers=H).json()["operator"] == "OP-310"
+
+
 def test_eligible_operators_drop_known_violations_but_keep_unverifiable(env):
     block = env.tools.list_affected_blocks(AG, "veh-1", datetime(2026, 1, 5, 7, 0, tzinfo=UTC),
                                            datetime(2026, 1, 5, 9, 0, tzinfo=UTC)).value[0]

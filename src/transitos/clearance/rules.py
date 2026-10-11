@@ -37,7 +37,8 @@ def unverifiable(rule: str, why: str) -> ClearanceItem:
 def clearance_error(where: str, e: BaseException) -> ClearanceItem:
     """Fail closed (amendment A Q2): an exception inside clearance is a violation for the candidate it was
     judging, never a crash of the caller and never a pass."""
-    return item("clearance_error", "violation", "unknown", f"{where}: {type(e).__name__}: {e}"[:200])
+    return item("clearance_error", "violation", "unknown",
+                f"clearance_error in {where}: {type(e).__name__}: {e}"[:200])
 
 
 def guarded(where: str, fn: Callable[..., list[ClearanceItem]], *args) -> list[ClearanceItem]:
@@ -380,6 +381,7 @@ class SpareCount:
     only overstate what is needed)."""
     n: int | None
     exact: bool = True
+    assignment: tuple[tuple[str, str], ...] = ()   # (block id, spare id) of one minimum cover (when exact)
 
 
 def _greedy_spares(order: Sequence[Block], candidates: dict[str, list[str]]) -> int | None:
@@ -408,9 +410,10 @@ def count_distinct_spares(blocks: Sequence[Block], candidates: dict[str, list[st
     if not order:
         return SpareCount(0)
     greedy = _greedy_spares(order, candidates)
-    best = [greedy if greedy is not None else len(order) + 1]
+    best: list = [len(order) + 1, ()]      # strictly better than "no cover"; the greedy count is beaten or matched
     nodes = [0]
     used: dict[str, list[tuple[datetime, datetime]]] = {}
+    path: list[tuple[str, str]] = []
 
     def search(i: int) -> bool:   # False = cap exceeded
         nodes[0] += 1
@@ -419,7 +422,7 @@ def count_distinct_spares(blocks: Sequence[Block], candidates: dict[str, list[st
         if len(used) >= best[0]:
             return True
         if i == len(order):
-            best[0] = len(used)
+            best[0], best[1] = len(used), tuple(path)
             return True
         b = order[i]
         cands = candidates[b.id]
@@ -427,7 +430,9 @@ def count_distinct_spares(blocks: Sequence[Block], candidates: dict[str, list[st
         fresh = [s for s in cands if s not in used]
         for s in reuse + fresh:
             used.setdefault(s, []).append((b.start, b.end))
+            path.append((b.id, s))
             ok = search(i + 1)
+            path.pop()
             used[s].pop()
             if not used[s]:
                 del used[s]
@@ -437,7 +442,7 @@ def count_distinct_spares(blocks: Sequence[Block], candidates: dict[str, list[st
 
     if not search(0):
         return SpareCount(greedy, exact=False)
-    return SpareCount(best[0] if best[0] <= len(order) else None)
+    return SpareCount(best[0], True, best[1]) if best[0] <= len(order) else SpareCount(None)
 
 
 def min_distinct_spares(blocks: list[Block], candidates: dict[str, list[str]]) -> int | None:

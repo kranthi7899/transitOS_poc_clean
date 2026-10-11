@@ -16,6 +16,7 @@ from transitos.clearance.evaluate import vehicle_items
 from transitos.clearance.facts import Facts, native_profile
 from transitos.clearance.rules import (
     day_hours_item,
+    guarded,
     last_spare_item,
     lift_training_item,
 )
@@ -108,7 +109,7 @@ def check_spare_meets_needs(vehicle: Vehicle, needs: Needs, policy: AgencyPolicy
     block = Block(id="-", vehicle_id="-", start=_EPOCH, end=_EPOCH, needs=needs)
     facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
                   profiles={"scheduling": native_profile("scheduling")})
-    items = vehicle_items(block, vehicle, facts, policy or AgencyPolicy(agency="-"))
+    items = guarded(f"vehicle {vehicle.id}", vehicle_items, block, vehicle, facts, policy or AgencyPolicy(agency="-"))
     return [i.detail for i in items if i.status == "violation" and i.rule != "vehicle_ready"]
 
 

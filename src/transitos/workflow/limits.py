@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from transitos.clearance.evaluate import operator_items, vehicle_items
 from transitos.clearance.facts import Facts, native_profile
-from transitos.clearance.rules import last_spare_item
+from transitos.clearance.rules import guarded, last_spare_item
 from transitos.contracts.objects import Block, Operator, Vehicle
 from transitos.contracts.policy import AgencyPolicy, Limits
 
@@ -39,11 +39,11 @@ class HardLimits:
         return AgencyPolicy(agency="-", limits=self.limits)
 
     def operator_violations(self, op: Operator, block: Block) -> list[str]:
-        items = operator_items(block, op, block.needs.type, self._facts(), self._policy())
+        items = guarded(f"operator {op.id}", operator_items, block, op, block.needs.type, self._facts(), self._policy())
         return [f"{i.rule}:{op.id}" for i in items if i.status == "violation"]
 
     def spare_violations(self, v: Vehicle, block: Block) -> list[str]:
-        items = vehicle_items(block, v, self._facts(), self._policy())
+        items = guarded(f"vehicle {v.id}", vehicle_items, block, v, self._facts(), self._policy())
         return [f"{i.rule}:{v.id}" for i in items if i.status == "violation"]
 
     def spares_left_ok(self, ready_count: int, used: int) -> bool:

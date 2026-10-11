@@ -17,6 +17,7 @@ from .facts import Facts
 from .rules import (
     EPS,
     block_hours,
+    clearance_error,
     item,
     kill_switch_item,
     last_spare_item,
@@ -28,7 +29,8 @@ from .rules import (
 
 __all__ = ["Assign", "Clearance", "Option", "double_booking_item", "evaluate_option", "evaluate_vehicle_move",
            "kill_switch_item", "last_spare_item",
-           "min_distinct_spares", "noteworthy", "operator_items", "safe_evaluate", "summarise", "unacknowledged",
+           "min_distinct_spares", "noteworthy", "operator_items", "safe_evaluate", "safe_vehicle_move", "summarise",
+           "unacknowledged",
            "vehicle_items"]
 
 
@@ -172,14 +174,20 @@ def evaluate_vehicle_move(block_id: str, spare_id: str, facts: Facts, policy: Ag
     return _clearance(vehicle_items(b, v, facts, policy) + option_items(opt, facts, policy))
 
 
+def safe_vehicle_move(block_id: str, spare_id: str, facts: Facts, policy: AgencyPolicy) -> Clearance:
+    """`evaluate_vehicle_move`, failing closed: any exception is a `clearance_error` violation (F4)."""
+    try:
+        return evaluate_vehicle_move(block_id, spare_id, facts, policy)
+    except Exception as e:  # noqa: BLE001
+        return Clearance(items=[clearance_error(f"vehicle {spare_id} for block {block_id}", e)], excluded=True)
+
+
 def safe_evaluate(option: Option, facts: Facts, policy: AgencyPolicy, at: datetime) -> Clearance:
     """Fail closed: any exception inside clearance excludes the option and records why."""
     try:
         return evaluate_option(option, facts, policy, at)
     except Exception as e:  # noqa: BLE001
-        return Clearance(items=[item("clearance_error", "violation", "unknown",
-                                     f"{type(e).__name__}: {e}"[:200])],
-                         excluded=True)
+        return Clearance(items=[clearance_error("option", e)], excluded=True)
 
 
 def noteworthy(i: ClearanceItem) -> bool:

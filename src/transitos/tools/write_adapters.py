@@ -14,11 +14,12 @@ from transitos.clearance.evaluate import (
     Assign,
     Option,
     double_booking_item,
-    evaluate_vehicle_move,
     kill_switch_item,
     operator_items,
+    safe_vehicle_move,
 )
 from transitos.clearance.facts import Facts, commitments_from_blocks
+from transitos.clearance.rules import guarded
 from transitos.contracts.events import SYSTEM_ACTOR
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
 from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
@@ -181,7 +182,7 @@ class SchedulingWriter(_Base):
         facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value}, operators={},
                       ready_count=len(ready.value), commitments=commitments_from_blocks(sched.value),
                       profiles={"scheduling": self.reader.capability_profile(agency)})
-        c = evaluate_vehicle_move(block.value.id, veh.value.id, facts, policy)
+        c = safe_vehicle_move(block.value.id, veh.value.id, facts, policy)   # an exception blocks (fail closed)
         v = [i.detail or i.rule for i in c.violations if i.rule != "last_spare"]
         if to_vehicle_id not in {x.id for x in ready.value}:
             v.append(f"spare_not_ready: {to_vehicle_id} is not a ready, unassigned vehicle for this window")
@@ -237,8 +238,9 @@ class WorkforceWriter(_Base):
         facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value},
                       operators={op.id: op}, ready_count=None, commitments=commitments_from_blocks(sched.value),
                       profiles={"workforce": profile, "scheduling": self.sched.capability_profile(agency)})
-        items = operator_items(block.value, op, veh.value.type, facts, policy)
-        items.append(double_booking_item(Option((Assign(block.value.id, veh.value.id, op.id),)), facts))
+        items = guarded(f"operator {op.id} for block {block.value.id}", lambda: [  # an exception blocks (F4)
+            *operator_items(block.value, op, veh.value.type, facts, policy),
+            double_booking_item(Option((Assign(block.value.id, veh.value.id, op.id),)), facts)])
         v = [i.detail or i.rule for i in items if i.status == "violation"]
         if v:
             raise HardLimit(v)
