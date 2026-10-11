@@ -1,4 +1,4 @@
-.PHONY: setup test lint verify schemas demo report kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
+.PHONY: setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
 setup:
 	uv sync
 test:
@@ -12,7 +12,18 @@ report:
 	uv run python -m transitos.verification.report --world transitos.integration.world:make_world --out verification-report.json
 demo:
 	uv run python -m transitos.integration.demo
-verify: schemas lint test report
+verify: schemas lint test report data-check
+
+# ---- Phase 10 external-data pipeline (the only target that touches the network is `data`; needs `uv sync --extra data`) ----
+# data: fetch (polite, manifest hosts only) -> verify (writes data/FETCH_REPORT.md) -> load data/reference.db -> derive data/derived/*.yaml
+data:
+	uv run --extra data python -m transitos.data.fetch
+	uv run --extra data python -m transitos.data.verify
+	uv run --extra data python -m transitos.data.load
+	uv run --extra data python -m transitos.data.derive
+# data-check: OFFLINE; reads only committed files (data/derived, fixtures, config) and validates them
+data-check:
+	uv run python -m transitos.data.check
 
 # ---- Kafka profile (project-local Apache Kafka under .local/, see scripts/kafka.sh) ----
 KAFKA ?= 127.0.0.1:9092
