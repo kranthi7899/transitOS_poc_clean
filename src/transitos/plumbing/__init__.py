@@ -5,6 +5,7 @@ from .crosswalk import SqliteCrosswalk
 from .crosswalk_service import CrosswalkService
 from .db import Db
 from .kafka_bus import KafkaBus
+from .pg import PgDb
 from .relay import Relay
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
            "Db",
            "DecisionStore",
            "KafkaBus",
+           "PgDb",
            "Relay",
            "SqliteBus",
            "SqliteCrosswalk",

@@ -30,7 +30,22 @@ CREATE TRIGGER IF NOT EXISTS {t}_no_delete BEFORE DELETE ON {t} BEGIN SELECT RAI
 )
 
 
+# PostgreSQL flavour of the same guarantee: row-level triggers that refuse UPDATE and DELETE.
+PG_APPEND_ONLY = ["""
+CREATE OR REPLACE FUNCTION transitos_append_only() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END $$ LANGUAGE plpgsql"""] + [
+    f"CREATE OR REPLACE TRIGGER {t}_append_only BEFORE UPDATE OR DELETE ON {t} "
+    "FOR EACH ROW EXECUTE FUNCTION transitos_append_only()"
+    for t in ("audit_raw", "audit_resolved", "decisions")]
+
+
 def ensure_schema(db: Db) -> None:
+    if getattr(db, "dialect", "sqlite") == "postgres":
+        db.script(SCHEMA)
+        with db.lock:
+            for stmt in PG_APPEND_ONLY:   # not through script(): the function body contains ';'
+                db.conn.execute(stmt)
+        return
     db.script(SCHEMA + APPEND_ONLY)
 
 

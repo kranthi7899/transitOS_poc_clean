@@ -15,9 +15,18 @@ from transitos.plumbing import (
 AG = "ag1"
 
 
-@pytest.fixture
-def db(tmp_path):
-    return Db(str(tmp_path / "t.db"))
+@pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])
+def db(request, tmp_path):
+    """Plumbing database: a SQLite file, or (when a server is up) a throwaway Postgres schema."""
+    if request.param == "sqlite":
+        yield Db(str(tmp_path / "t.db"))
+        return
+    from transitos.plumbing import pg
+    schema = pg.schema_name(f"test_{uuid.uuid4().hex[:10]}", "plumbing")
+    d = pg.PgDb(schema)
+    yield d
+    d.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    d.close()
 
 
 def kafka_bus() -> KafkaBus:

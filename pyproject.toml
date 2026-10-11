@@ -8,6 +8,10 @@ dependencies = ["pydantic>=2.7", "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27
 kafka = [
     "confluent-kafka>=2.6",
 ]
+postgres = [
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary]>=3.2",
+]
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.5"]
@@ -25,4 +29,6 @@ pythonpath = ["src"]
 markers = [
     "kafka: needs a reachable Kafka broker (auto-skipped unless 127.0.0.1:9092 answers or TRANSITOS_KAFKA is set)",
     "kafka_admin: also stops/starts the project-local broker via scripts/kafka.sh (needs TRANSITOS_KAFKA_ADMIN=1)",
+    "postgres: needs a reachable Postgres (auto-skipped unless 127.0.0.1:54329 answers or TRANSITOS_PG is set)",
+    "postgres_admin: also stops/starts the project-local server via scripts/postgres.sh (needs TRANSITOS_PG_ADMIN=1)",
 ]

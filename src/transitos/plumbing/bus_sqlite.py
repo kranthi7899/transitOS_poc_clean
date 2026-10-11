@@ -61,7 +61,7 @@ class SqliteBus:
     def commit(self, topic: str, group: str, offset: int) -> None:
         self.db.execute(
             "INSERT INTO bus_offsets(topic,grp,committed) VALUES(?,?,?) "
-            "ON CONFLICT(topic,grp) DO UPDATE SET committed=MAX(committed,excluded.committed)",
+            "ON CONFLICT(topic,grp) DO UPDATE SET committed=MAX(bus_offsets.committed,excluded.committed)",
             (topic, group, offset),
         )
 
