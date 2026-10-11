@@ -40,6 +40,13 @@
           ],
           "default": null,
           "title": "Max Vehicle Length Ft"
+        },
+        "unknown_fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unknown Fields",
+          "type": "array"
         }
       },
       "title": "Needs",

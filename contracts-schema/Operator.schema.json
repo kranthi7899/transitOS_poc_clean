@@ -134,6 +134,13 @@
       ],
       "default": null,
       "title": "Duty Start Today"
+    },
+    "unknown_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unknown Fields",
+      "type": "array"
     }
   },
   "required": [

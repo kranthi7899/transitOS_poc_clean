@@ -58,3 +58,12 @@ def test_resolution_outcome_and_candidates():
 def test_event_identity_attributes_optional():
     d = VehicleFaultDetectedData(native_vehicle_id="T-77", spn=110, fmi=0, native_vin="1ZZ", native_plate="ZZ-1")
     assert d.native_vin == "1ZZ" and PMOverdueData(native_asset_id="1", service_code="PM", due_mi=1, meter_mi=2).native_vin is None
+
+
+def test_per_row_unknown_fields_default_empty_and_roundtrip():
+    """C-2: a record can say which of its fields were blank or absent in the source."""
+    assert Operator(id="op-1").unknown_fields == []
+    assert Vehicle(id="v", agency="a", seats=1).unknown_fields == []
+    assert Needs().unknown_fields == []
+    o = Operator(id="op-1", unknown_fields=["hours_today", "lift_trained"])
+    assert Operator.model_validate_json(o.model_dump_json()).unknown_fields == ["hours_today", "lift_trained"]

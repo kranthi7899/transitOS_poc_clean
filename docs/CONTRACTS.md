@@ -42,3 +42,4 @@ Rules: schemas only grow; consumers ignore unknown fields; breaking change = new
 | `Plan.clearance`, `Plan.rank_reason`, `Plan.vehicle_fit`; `RunState.acknowledged`; `DecisionRecord.clearance`, `.acknowledged`, `.vehicle_fit` | `objects.py` | Show every non-native item and the approver's acknowledgement. |
 | `CrosswalkEntry`: `valid_from` (inclusive), `valid_to` (exclusive), `vin`, `plate`, `display_name`; `Resolution`, `Candidate`; `Crosswalk.lookup(..., at=)` and `Crosswalk.candidates(...)` | `crosswalk.py` | Time-bounded identity and explicit MATCH / AMBIGUOUS / NO_MATCH (B-1). |
 | Vehicle-event data: optional `native_vin`, `native_plate`, `native_name` | `events.py` | Identity evidence for the resolver. |
+| `Operator.unknown_fields`, `Vehicle.unknown_fields`, `Needs.unknown_fields` (request `C-2`) | `objects.py` | Per-record "blank or absent in the source", so a missing value is `unknown`, never a default pass or violation. |

@@ -17,6 +17,7 @@ class Needs(BaseModel):
     lift: bool = False
     type: str | None = None
     max_vehicle_length_ft: float | None = None  # v1.2 (C-1): a declared block restriction
+    unknown_fields: list[str] = Field(default_factory=list)  # v1.2 (C-2): keys the block did not declare
 
 
 class Vehicle(BaseModel):
@@ -30,6 +31,7 @@ class Vehicle(BaseModel):
     depot: str = ""
     ev_soc: float | None = None
     length_ft: float | None = None  # v1.2 (C-1)
+    unknown_fields: list[str] = Field(default_factory=list)  # v1.2 (C-2): fields blank/absent in the source
 
 
 class Block(BaseModel):
@@ -59,6 +61,7 @@ class Operator(BaseModel):
     medical_valid_to: datetime | None = None
     last_duty_end: datetime | None = None
     duty_start_today: datetime | None = None
+    unknown_fields: list[str] = Field(default_factory=list)  # v1.2 (C-2): fields blank/absent in the source
 
 
 class WorkOrder(BaseModel):
