@@ -26,7 +26,8 @@ from .rules import (
     vehicle_items,
 )
 
-__all__ = ["Assign", "Clearance", "Option", "evaluate_option", "kill_switch_item", "last_spare_item",
+__all__ = ["Assign", "Clearance", "Option", "double_booking_item", "evaluate_option", "evaluate_vehicle_move",
+           "kill_switch_item", "last_spare_item",
            "min_distinct_spares", "noteworthy", "operator_items", "safe_evaluate", "summarise", "unacknowledged",
            "vehicle_items"]
 
@@ -73,10 +74,12 @@ def _eff_operator(a: Assign, facts: Facts) -> str | None:
     return a.operator_id or facts.blocks[a.block_id].operator_id
 
 
-def option_items(option: Option, facts: Facts, policy: AgencyPolicy) -> list[ClearanceItem]:
-    out: list[ClearanceItem] = []
-    if not option.assignments:
-        return out
+def double_booking_item(option: Option, facts: Facts) -> ClearanceItem:
+    """Double-booking, judged inside the option (a vehicle or operator on overlapping blocks) and against the
+    schedule feed (`facts.commitments`). No feed -> fails closed."""
+    if facts.commitments is None:
+        return item("double_booking", "violation", "unknown",
+                    "schedule feed not available: double-booking cannot be ruled out (fails closed)")
     by_spare: dict[str, list[Assign]] = defaultdict(list)
     by_op: dict[str, list[Assign]] = defaultdict(list)
     for a in option.assignments:
@@ -92,21 +95,29 @@ def option_items(option: Option, facts: Facts, policy: AgencyPolicy) -> list[Cle
                     bx, by = facts.blocks[x.block_id], facts.blocks[y.block_id]
                     if overlaps(bx.start, bx.end, by.start, by.end):
                         clashes.append(f"{kind} {rid} is on overlapping blocks {bx.id} and {by.id}")
-    if facts.commitments is None:
-        out.append(item("double_booking", "violation", "unknown",
-                        "schedule feed not available: double-booking cannot be ruled out (fails closed)"))
-    else:
-        for a in option.assignments:
-            b = facts.blocks[a.block_id]
-            keys = [f"vehicle:{a.spare_id}"] + ([f"operator:{o}"] if (o := _eff_operator(a, facts)) else [])
-            for k in keys:
-                for s, e, bid in facts.commitments.get(k, []):
-                    if bid != b.id and overlaps(b.start, b.end, s, e):
-                        clashes.append(f"{k.replace(':', ' ')} is already on block {bid} during {b.id}")
-        if clashes:
-            out.append(item("double_booking", "violation", "native", "; ".join(sorted(set(clashes)))))
-        else:
-            out.append(item("double_booking", "pass", "native"))
+    for a in option.assignments:
+        b = facts.blocks[a.block_id]
+        keys = [f"vehicle:{a.spare_id}"] + ([f"operator:{o}"] if (o := _eff_operator(a, facts)) else [])
+        for k in keys:
+            for s, e, bid in facts.commitments.get(k, []):
+                if bid != b.id and overlaps(b.start, b.end, s, e):
+                    clashes.append(f"{k.replace(':', ' ')} is already on block {bid} during {b.id}")
+    if clashes:
+        return item("double_booking", "violation", "native", "; ".join(sorted(set(clashes))))
+    return item("double_booking", "pass", "native")
+
+
+def option_items(option: Option, facts: Facts, policy: AgencyPolicy) -> list[ClearanceItem]:
+    out: list[ClearanceItem] = []
+    if not option.assignments:
+        return out
+    by_spare: dict[str, list[Assign]] = defaultdict(list)
+    by_op: dict[str, list[Assign]] = defaultdict(list)
+    for a in option.assignments:
+        by_spare[a.spare_id].append(a)
+        if (oid := _eff_operator(a, facts)) is not None:
+            by_op[oid].append(a)
+    out.append(double_booking_item(option, facts))
     # operators driving several blocks accumulate hours
     lim = policy.limits
     for oid, group in by_op.items():
@@ -146,6 +157,14 @@ def evaluate_option(option: Option, facts: Facts, policy: AgencyPolicy, at: date
             items += operator_items(b, op, v.type, facts, policy)
     items += option_items(option, facts, policy)
     return _clearance(items)
+
+
+def evaluate_vehicle_move(block_id: str, spare_id: str, facts: Facts, policy: AgencyPolicy) -> Clearance:
+    """One block onto one vehicle, without judging its operator: vehicle rules, double-booking, last spare.
+    What the scheduling write adapter re-checks before `reassign_block`."""
+    opt = Option((Assign(block_id, spare_id),))
+    b, v = facts.blocks[block_id], facts.vehicles[spare_id]
+    return _clearance(vehicle_items(b, v, facts, policy) + option_items(opt, facts, policy))
 
 
 def safe_evaluate(option: Option, facts: Facts, policy: AgencyPolicy, at: datetime) -> Clearance:

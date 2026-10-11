@@ -15,7 +15,12 @@ from .common import Ctx, make_app
 from .seed import build_fleet
 
 COLUMNS = ["operator", "qualifications", "lift_trained", "hours_today", "hours_week",
-           "available_from", "available_to", "on_extra_board"]
+           "available_from", "available_to", "on_extra_board",
+           # Phase 10 (contract v1.2, D-1): licence, endorsements, training with expiry, medical, duty times.
+           # Lists are ";"-joined, training_valid_to is "code=timestamp;code=timestamp".
+           "licence_class", "endorsements", "trained_vehicle_types", "training_valid_to", "medical_valid_to",
+           "last_duty_end", "duty_start_today"]
+NEW_COLUMNS = COLUMNS[8:]
 
 
 def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
@@ -31,6 +36,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
                 "hours_today": o["hours_today"], "hours_week": o["hours_week"],
                 "available_from": o["available_from"], "available_to": o["available_to"],
                 "on_extra_board": o["on_extra_board"],
+                **{k: o.get(k) for k in NEW_COLUMNS},
             })
         for b in fleet.blocks:
             st.put(a, "assignments", b["id"], {"block": b["id"], "operator": b["operator"]})
@@ -54,10 +60,17 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
                 out[k] = f"{day}T{v}:00Z"
         return out
 
+    def dropped(a: str) -> set[str]:
+        cfg = st.get(a, "config", "operator_fields")
+        return set((cfg or {}).get("drop", []))
+
     @app.get("/export/operators.csv")
     def export(a: str = tenant):
+        """Daily export. A scenario can drop operator columns (POST /sim/operator-fields): the header then
+        omits them, as a product that does not hold that data would."""
+        cols = [c for c in COLUMNS if c not in dropped(a)]
         buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=COLUMNS, lineterminator="\n")
+        w = csv.DictWriter(buf, fieldnames=cols, lineterminator="\n", extrasaction="ignore")
         w.writeheader()
         for o in st.all(a, "operators"):
             row = rendered(o)
@@ -65,6 +78,13 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
             row["on_extra_board"] = str(row["on_extra_board"]).lower()
             w.writerow(row)
         return Response(buf.getvalue(), media_type="text/csv")
+
+    @app.post("/sim/operator-fields")
+    def sim_operator_fields(body: dict = Body(...), x_agency: str = Header()):
+        """Scenario switch: drop export columns (names from COLUMNS, never `operator`), or [] to restore."""
+        drop = [c for c in body.get("drop", []) if c in COLUMNS and c != "operator"]
+        st.put(x_agency, "config", "operator_fields", {"drop": drop})
+        return {"drop": drop}
 
     @app.get("/operators/{oid}")
     def get_operator(oid: str, a: str = tenant):

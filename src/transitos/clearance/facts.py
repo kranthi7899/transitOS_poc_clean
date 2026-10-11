@@ -87,6 +87,16 @@ def load_tables(config_dir: str | None = None) -> Tables:
 Interval = tuple[datetime, datetime, str]
 
 
+def commitments_from_blocks(blocks: Iterable[Block]) -> dict[str, list[Interval]]:
+    """Other scheduled work per resource, from a list of scheduled blocks (vehicle and operator)."""
+    out: dict[str, list[Interval]] = {}
+    for b in blocks:
+        out.setdefault(f"vehicle:{b.vehicle_id}", []).append((b.start, b.end, b.id))
+        if b.operator_id:
+            out.setdefault(f"operator:{b.operator_id}", []).append((b.start, b.end, b.id))
+    return out
+
+
 @dataclass
 class Facts:
     """Everything an option is judged against.
@@ -140,4 +150,5 @@ class Facts:
 
 
 __all__ = ["BASIS_ORDER", "PRODUCT_FIELDS", "SCHEDULING_FIELDS", "WORKFORCE_FIELDS", "Basis", "CapabilityProfile",
-           "Datum", "Facts", "Needs", "Tables", "load_tables", "native_profile", "weakest"]
+           "Datum", "Facts", "Needs", "Tables", "commitments_from_blocks", "load_tables", "native_profile",
+           "weakest"]

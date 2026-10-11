@@ -22,6 +22,19 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from transitos.clearance.evaluate import (
+    Assign,
+    Option,
+    noteworthy,
+    operator_items,
+    safe_evaluate,
+    summarise,
+    unacknowledged,
+    vehicle_items,
+)
+from transitos.clearance.facts import CapabilityProfile, Facts, commitments_from_blocks
+from transitos.clearance.rank import rank_plans
+from transitos.clearance.rules import min_distinct_spares
 from transitos.contracts.ids import compensation_key, step_key
 from transitos.contracts.objects import (
     Block,
@@ -149,8 +162,20 @@ def build_graph(deps: Deps, checkpointer):
             items.append({"block": b.model_dump(mode="json"),
                           "spares": [v.model_dump(mode="json") for v in sp.value or []],
                           "operators": [o.model_dump(mode="json") for o in ops.value or []]})
+        profiles: dict = {}
+        if (prof_fn := getattr(r, "capability_profiles", None)) is not None:
+            pr = prof_fn(ag)
+            if pr.status != "ok":
+                return None, f"unavailable:profiles:{pr.product or ''}:{pr.note or pr.status}"
+            profiles = pr.value or {}
+        schedule = None   # None = no schedule feed: double-booking then fails closed (clearance)
+        if (sched_fn := getattr(r, "list_blocks", None)) is not None:
+            sr = sched_fn(ag, now, end)
+            if sr.status != "ok":
+                return None, f"unavailable:schedule:{sr.product or ''}:{sr.note or sr.status}"
+            schedule = None if sr.value is None else [b.model_dump(mode="json") for b in sr.value]
         wo = res["work_order"].value
-        facts = {"now": now.isoformat(), "window_end": end.isoformat(),
+        facts = {"now": now.isoformat(), "window_end": end.isoformat(), "profiles": profiles, "schedule": schedule,
                  "vehicle": res["vehicle"].value.model_dump(mode="json"),
                  "existing_wo": wo.model_dump(mode="json") if wo else None,
                  "ready_ids": sorted(v.id for v in res["ready"].value or [] if v.id != vid and v.status == "ready"),
@@ -158,31 +183,49 @@ def build_graph(deps: Deps, checkpointer):
         return facts, None
 
     def do_check(run: RunState, facts: dict) -> tuple[dict, list[str]]:
-        lim = deps.limits
+        """Per-block candidate lists through the clearance module: a candidate is dropped only for a KNOWN
+        violation (unverifiable data keeps it listed; the plan ranks and flags it). The clearance snapshot
+        the reasoner/validator/ranker need travels inside the model-facing dict."""
+        lim, pol = deps.limits, deps.policy()
+        profiles = {k: CapabilityProfile.from_dict(v) for k, v in (facts.get("profiles") or {}).items()}
+        sched = facts.get("schedule")
+        commitments = None if sched is None else commitments_from_blocks(Block.model_validate(x) for x in sched)
+        ready_count = len(facts["ready_ids"])
+        probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=ready_count, commitments=commitments,
+                      profiles=profiles, trigger_vehicle_id=run.vehicle_id)
         violations: list[str] = []
-        blocks = []
+        blocks, block_objs, spare_ids = [], {}, {}
+        vehicles: dict[str, Vehicle] = {}
+        operators: dict[str, Operator] = {}
         for it in facts["blocks"]:
             b = Block.model_validate(it["block"])
-            spares = [Vehicle.model_validate(v) for v in it["spares"]]
-            spares = [v for v in spares if v.id != run.vehicle_id and not lim.spare_violations(v, b)]
+            spares = [v for v in (Vehicle.model_validate(x) for x in it["spares"]) if v.id != run.vehicle_id
+                      and not any(i.status == "violation" for i in vehicle_items(b, v, probe, pol))]
             ops = [o for o in (Operator.model_validate(x) for x in it["operators"])
-                   if not lim.operator_violations(o, b)]
+                   if not any(i.status == "violation" for i in operator_items(b, o, b.needs.type, probe, pol))]
             needs_op = b.operator_id is None or b.operator_id not in {o.id for o in ops}
             if not spares:
                 violations.append(f"no_feasible_spare:{b.id}")
             if needs_op and not ops:
                 violations.append(f"no_feasible_operator:{b.id}")
+            block_objs[b.id], spare_ids[b.id] = b, [v.id for v in spares]
+            vehicles.update({v.id: v for v in spares})
+            operators.update({o.id: o for o in ops})
             blocks.append({"block_id": b.id, "vehicle_id": b.vehicle_id, "start": b.start.isoformat(),
                            "end": b.end.isoformat(), "start_depot": b.start_depot, "needs": b.needs.model_dump(),
                            "current_operator": b.operator_id, "needs_operator": needs_op,
                            "spares": [v.model_dump(mode="json") for v in spares],
                            "operators": [o.model_dump(mode="json") for o in ops]})
-        ready_count = len(facts["ready_ids"])
-        if blocks and not lim.spares_left_ok(ready_count, len(blocks)):
-            violations.append(f"last_spare:{ready_count}_ready_for_{len(blocks)}_blocks")
+        if blocks:   # a spare may serve several non-overlapping blocks: count the distinct spares needed
+            need = min_distinct_spares(list(block_objs.values()), spare_ids)
+            if need is not None and not lim.spares_left_ok(ready_count, need):
+                violations.append(f"last_spare:{ready_count}_ready_for_{need}_distinct_spares")
+        snapshot = Facts(blocks=block_objs, vehicles=vehicles, operators=operators, ready_count=ready_count,
+                         commitments=commitments, profiles=profiles, trigger_vehicle_id=run.vehicle_id)
         mf = {"run_id": run.run_id, "trigger_type": run.trigger_event.get("type"), "now": facts["now"],
               "window_end": facts["window_end"], "vehicle": facts["vehicle"], "min_spares": lim.min_spares,
-              "ready_count": ready_count, "blocks": blocks, "previous_errors": []}
+              "ready_count": ready_count, "blocks": blocks, "previous_errors": [],
+              "clearance": snapshot.to_dict(), "clearance_policy": pol.model_dump(mode="json")}
         return mf, violations
 
     def plan_as_output(plan: Plan) -> ModelOutput:
@@ -200,6 +243,51 @@ def build_graph(deps: Deps, checkpointer):
         facts = ctx["facts"]
         return build_plan(run.run_id, run.plan_version, out, run.vehicle_id, facts["existing_wo"],
                           ctx["mf"]["blocks"], _parse(facts["now"]), run.trigger_event.get("type", ""))
+
+    def option_of(out: ModelOutput, mf: dict) -> Option:
+        cur = {b["block_id"]: b.get("current_operator") for b in mf["blocks"]}
+        return Option(tuple(Assign(a.block_id, a.spare_id or "", None if a.operator_id in (None, cur.get(a.block_id))
+                                   else a.operator_id) for a in out.assignments))
+
+    def finish_plan(run: RunState, ctx: dict, out: ModelOutput, *, rank: bool) -> Plan:
+        """Build the plan; when `rank`, choose among the model's proposal and code-generated options by
+        clearance (hard rules decide the list, then tier, unverifiable, warnings, soft score; top three kept),
+        otherwise just attach the clearance of this exact option (human edits)."""
+        mf = ctx["mf"]
+        if out.decision == "monitor":
+            return make_plan(run, ctx, out)
+        cf, pol, at = Facts.from_dict(mf["clearance"]), deps.policy(), _parse(mf["now"])
+        seed = option_of(out, mf)
+        alternatives: list[dict] = []
+        reason, chosen = "", None
+        if rank:
+            pull_at = out.pull_at if (out.decision == "pull_at_block_end" and out.pull_at) else at
+            req = [b for b in mf["blocks"] if _parse(b["end"]) > pull_at]
+            ranked = rank_plans([seed], [cf.blocks[b["block_id"]] for b in req],
+                                {b["block_id"]: [x["id"] for x in b["spares"]] for b in req},
+                                {b["block_id"]: [x["id"] for x in b["operators"]] for b in req}, cf, pol, at)
+            if ranked.options:
+                chosen, reason = ranked.options[0], ranked.reason_first_beat_second
+                alternatives = [{"rank": r.rank, "tier": r.clearance.tier, "warnings": r.clearance.warnings,
+                                 "unverifiable": r.clearance.unverifiable,
+                                 "assignments": [{"block_id": a.block_id, "spare_id": a.spare_id,
+                                                  "operator_id": a.operator_id} for a in r.option.assignments],
+                                 "clearance": [i.model_dump() for i in summarise(r.clearance.items)
+                                               if i.requires_ack or i.status == "warn"]}
+                                for r in ranked.top3[1:]]
+        if chosen is not None:
+            out = out.model_copy(update={"assignments": [Assignment(block_id=a.block_id, spare_id=a.spare_id,
+                                                                    operator_id=a.operator_id)
+                                                         for a in chosen.option.assignments]})
+            c = chosen.clearance
+        else:
+            c = safe_evaluate(seed, cf, pol, at)
+        plan = make_plan(run, ctx, out)
+        plan.clearance = summarise(c.items)
+        plan.vehicle_fit = c.tier
+        plan.rank_reason = reason
+        plan.alternatives = list(plan.alternatives) + alternatives
+        return plan
 
     def call_write(fn, *args) -> Result:
         res: Result = Result.unavailable("tools", "no attempt")
@@ -308,9 +396,10 @@ def build_graph(deps: Deps, checkpointer):
             parsed, errs = validate_output(code_ranked_fallback(mf), mf)
             if errs:
                 ctx["reason"] = "no_valid_plan:" + ",".join(errs)
+                run.violations = [e for e in errs if e.startswith("clearance:")] or list(errs)
                 return _out(run, ctx, "escalate")
         assert parsed is not None
-        plan = make_plan(run, ctx, parsed)
+        plan = finish_plan(run, ctx, parsed, rank=True)
         plan.fallback_used = used_fallback
         if used_fallback:
             plan.assumptions.append("model output rejected: " + "; ".join(first_errors))
@@ -348,7 +437,9 @@ def build_graph(deps: Deps, checkpointer):
                recommendation={"decision": run.plan.decision, "pull_at": run.plan.pull_at,
                                "steps": [s.action for s in run.plan.steps],
                                "fallback_used": run.plan.fallback_used, "reasoning": run.plan.reasoning},
-               model=ctx.get("model", "stub"), prompt_version=ctx.get("prompt_version", "v0"))
+               model=ctx.get("model", "stub"), prompt_version=ctx.get("prompt_version", "v0"),
+               clearance=[i.model_dump() for i in run.plan.clearance if noteworthy(i)],
+               vehicle_fit=deps.policy().vehicle_fit)
         if run.plan.decision == "monitor":
             ctx["reason"] = "monitor"
             return _out(run, ctx, "close")
@@ -371,7 +462,12 @@ def build_graph(deps: Deps, checkpointer):
                 return _out(run, ctx, "route_repair")
             return _out(run, ctx, "wait_for_repair")
         auto = pol.autonomy.get(pending[0].action, "approve")
-        if auto == "approve" and ctx.get("approved_version") != run.plan_version:
+        missing = unacknowledged(run.plan.clearance, run.acknowledged)
+        if missing and ctx.get("approved_version") == run.plan_version:
+            ctx["approved_version"] = None   # approved without acknowledging everything: ask again
+            run.decision, run.decided_by, run.decided_at = None, None, None
+            ctx["notice"] = "acknowledgement required for: " + ", ".join(missing)
+        if (auto == "approve" or missing) and ctx.get("approved_version") != run.plan_version:
             status(run, "AWAITING_APPROVAL")
             now = deps.clock()
             deps.store.set_awaiting(run.run_id, now, now + timedelta(minutes=pol.limits.approval_timeout_min))
@@ -397,11 +493,14 @@ def build_graph(deps: Deps, checkpointer):
         if decision not in ("approve", "edit", "reject", "expired"):
             ctx["notice"] = f"invalid decision {decision!r}"
             return _out(run, ctx, "gate")
+        if decision in ("approve", "edit"):
+            run.acknowledged = sorted(set(run.acknowledged) | set(resp.get("acknowledged") or []))
         run.decision = decision
         run.decided_by = resp.get("by")
         run.decided_at = _parse(resp["at"]) if resp.get("at") else deps.clock()
         record(run, ctx, human_action={"decision": decision, "by": run.decided_by,
-                                       "at": run.decided_at.isoformat(), "edits": resp.get("edits")})
+                                       "at": run.decided_at.isoformat(), "edits": resp.get("edits")},
+               acknowledged=list(run.acknowledged))
         wrote = bool(run.steps_done)
         if decision == "reject":
             if wrote:
@@ -428,12 +527,14 @@ def build_graph(deps: Deps, checkpointer):
                 run.decision = None
                 return _out(run, ctx, "gate")
             run.plan_version += 1
-            plan = make_plan(run, ctx, cand.model_copy(update={"reasoning": run.plan.reasoning + " (edited by human)"}))
+            plan = finish_plan(run, ctx, cand.model_copy(update={"reasoning": run.plan.reasoning + " (edited by human)"}),
+                               rank=False)
             plan.fallback_used = run.plan.fallback_used
             run.plan = plan
             deps.store.save_plan(run.run_id, run.plan_version, plan.model_dump(mode="json"))
             record(run, ctx, recommendation={"decision": plan.decision, "edited": True,
-                                             "steps": [s.action for s in plan.steps]})
+                                             "steps": [s.action for s in plan.steps]},
+                   clearance=[i.model_dump() for i in plan.clearance if noteworthy(i)])
         return _out(run, ctx, "revalidate")
 
     def revalidate(state: WState):
@@ -465,6 +566,7 @@ def build_graph(deps: Deps, checkpointer):
                 ctx["reason"] = "too_many_replans"
                 return _out(run, ctx, "escalate")
             run.plan_version += 1  # fresh idempotency keys, fresh approval; no write happened
+            run.acknowledged = []
             return _out(run, ctx, "reason")
         ctx["approved_version"] = run.plan_version
         return _out(run, ctx, "gate")
@@ -474,6 +576,9 @@ def build_graph(deps: Deps, checkpointer):
         assert run.plan is not None
         if deps.policy().kill_switch:
             ctx["reason"] = "kill_switch"
+            return _out(run, ctx, "escalate")
+        if not run.steps_done and (missing := unacknowledged(run.plan.clearance, run.acknowledged)):
+            ctx["reason"] = "unacknowledged:" + ",".join(missing)
             return _out(run, ctx, "escalate")
         step = next(s for s in run.plan.steps if s.status == "pending")
         name = step_name(step.action, step.params)

@@ -8,6 +8,11 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
+from transitos.clearance.evaluate import Assign, Option, safe_evaluate
+from transitos.clearance.facts import Facts
+from transitos.clearance.rank import greedy_option
+from transitos.contracts.policy import AgencyPolicy
+
 
 class Assignment(BaseModel):
     block_id: str
@@ -43,7 +48,31 @@ def _required_blocks(facts: dict, pull_at: datetime) -> list[dict]:
     return [b for b in facts["blocks"] if _parse(b["end"]) > pull_at]
 
 
+def clearance_context(facts: dict) -> tuple[Facts, AgencyPolicy, datetime] | None:
+    """The clearance snapshot `do_check` puts into the facts (None for hand-built facts without one)."""
+    if "clearance" not in facts:
+        return None
+    return (Facts.from_dict(facts["clearance"]), AgencyPolicy.model_validate(facts["clearance_policy"]),
+            _parse(facts["now"]))
+
+
 def _assign(facts: dict, pull_at: datetime, rank) -> list[dict]:
+    ctx = clearance_context(facts)
+    if ctx is not None:
+        cf, pol, at = ctx
+        req = _required_blocks(facts, pull_at)
+        spare_order = {b["block_id"]: [s["id"] for s in rank("spare", b, b["spares"])] for b in req}
+        op_order = {b["block_id"]: [o["id"] for o in rank("operator", b, b["operators"])] for b in req}
+        opt = greedy_option([cf.blocks[b["block_id"]] for b in req], spare_order, op_order, cf, pol, at)
+        if opt is not None:
+            by = {a.block_id: a for a in opt.assignments}
+            return [{"block_id": b["block_id"], "spare_id": by[b["block_id"]].spare_id,
+                     "operator_id": by[b["block_id"]].operator_id} for b in req]
+    return _assign_listed(facts, pull_at, rank)
+
+
+def _assign_listed(facts: dict, pull_at: datetime, rank) -> list[dict]:
+    """Pre-clearance assignment: first ranked spare/operator not yet used (also the last resort)."""
     used_s: set[str] = set()
     used_o: set[str] = set()
     out = []
@@ -121,6 +150,7 @@ def validate_output(raw: Any, facts: dict) -> tuple[ModelOutput | None, list[str
         errs.append("pull_at_outside_window")
         return out, errs
     by_block = {b["block_id"]: b for b in facts["blocks"]}
+    cctx = clearance_context(facts)
     seen_blocks: set[str] = set()
     used_s: set[str] = set()
     used_o: set[str] = set()
@@ -134,20 +164,30 @@ def validate_output(raw: Any, facts: dict) -> tuple[ModelOutput | None, list[str
         seen_blocks.add(a.block_id)
         if a.spare_id not in {s["id"] for s in b["spares"]}:
             errs.append(f"spare_not_feasible:{a.block_id}:{a.spare_id}")
-        elif a.spare_id in used_s:
+        elif cctx is None and a.spare_id in used_s:
             errs.append(f"spare_reused:{a.spare_id}")
         used_s.add(a.spare_id or "")
-        if b["needs_operator"]:
-            if a.operator_id not in {o["id"] for o in b["operators"]}:
+        keep = a.operator_id is None or a.operator_id == b.get("current_operator")
+        if keep:
+            if b["needs_operator"]:
                 errs.append(f"operator_not_feasible:{a.block_id}:{a.operator_id}")
+        elif a.operator_id not in {o["id"] for o in b["operators"]}:
+            errs.append(f"operator_not_feasible:{a.block_id}:{a.operator_id}")
+        elif cctx is None:
+            if not b["needs_operator"]:
+                errs.append(f"operator_unneeded:{a.block_id}")
             elif a.operator_id in used_o:
                 errs.append(f"operator_reused:{a.operator_id}")
             used_o.add(a.operator_id or "")
-        elif a.operator_id not in (None, b.get("current_operator")):
-            errs.append(f"operator_unneeded:{a.block_id}")
     for b in _required_blocks(facts, pull_at):
         if b["block_id"] not in seen_blocks:
             errs.append(f"missing_assignment:{b['block_id']}")
-    if facts["ready_count"] - len(used_s - {""}) < facts["min_spares"]:
+    if cctx is not None:
+        if not errs:   # the one rule implementation: hard rules, double-booking, distinct spares, hours
+            cf, pol, at = cctx
+            opt = Option(tuple(Assign(a.block_id, a.spare_id or "", None if a.operator_id == by_block[a.block_id].get(
+                "current_operator") else a.operator_id) for a in out.assignments))
+            errs += [f"clearance:{i.rule}:{i.detail}"[:240] for i in safe_evaluate(opt, cf, pol, at).violations]
+    elif facts["ready_count"] - len(used_s - {""}) < facts["min_spares"]:
         errs.append("last_spare_rule")
     return out, errs

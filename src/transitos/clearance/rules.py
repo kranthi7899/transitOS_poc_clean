@@ -111,6 +111,23 @@ def _expired(valid_to: datetime, block: Block) -> bool:
     return work_day >= valid_to.date()
 
 
+def day_hours_item(op_id: str, hours_today: float, block_hrs: float, limit: float, basis: Basis = "native") -> ClearanceItem:
+    """Daily hours cap, inclusive at the limit (10.0h is allowed, 10.1h is not)."""
+    total = hours_today + block_hrs
+    bad = total > limit + EPS
+    return item("operator_hours_day", "violation" if bad else "pass", basis,
+                f"operator_hours: {op_id} {hours_today:.1f}h today + {block_hrs:.1f}h block = {total:.1f}h "
+                f"> max {limit:g}h" if bad else "")
+
+
+def lift_training_item(op: Operator, basis: Basis) -> ClearanceItem:
+    if basis == "unknown":
+        return unverifiable("operator_lift_training", f"{op.id}: workforce does not supply lift training")
+    return item("operator_lift_training", "pass" if op.lift_trained else "violation", basis,
+                "" if op.lift_trained else
+                f"lift_qualification: operator {op.id} is not lift-trained but block needs a lift")
+
+
 def _hours_items(block: Block, op: Operator, facts: Facts, policy: AgencyPolicy) -> list[ClearanceItem]:
     lim, bh = policy.limits, block_hours(block)
     today_b, week_b = facts.basis("workforce", "hours_today"), facts.basis("workforce", "hours_week")
@@ -118,11 +135,7 @@ def _hours_items(block: Block, op: Operator, facts: Facts, policy: AgencyPolicy)
     if today_b == "unknown":
         out.append(unverifiable("operator_hours_day", f"{op.id}: workforce does not supply hours worked today"))
     else:
-        total = op.hours_today + bh
-        bad = total > lim.max_operator_hours_day + EPS
-        out.append(item("operator_hours_day", "violation" if bad else "pass", today_b,
-                        f"operator_hours: {op.id} {op.hours_today:.1f}h today + {bh:.1f}h block = {total:.1f}h "
-                        f"> max {lim.max_operator_hours_day:g}h" if bad else ""))
+        out.append(day_hours_item(op.id, op.hours_today, bh, lim.max_operator_hours_day, today_b))
     cap = lim.max_operator_hours_week
     if week_b != "unknown":
         total = op.hours_week + bh
@@ -160,13 +173,7 @@ def _qualification_items(block: Block, op: Operator, vehicle_type: str | None, f
         out.append(unverifiable("operator_qualification",
                                 f"{op.id}: workforce supplies no qualification data (licence, endorsement or training)"))
     if n.lift:
-        lb = wb("lift_trained")
-        if lb == "unknown":
-            out.append(unverifiable("operator_lift_training", f"{op.id}: workforce does not supply lift training"))
-        else:
-            out.append(item("operator_lift_training", "pass" if op.lift_trained else "violation", lb,
-                            "" if op.lift_trained else
-                            f"lift_qualification: operator {op.id} is not lift-trained but block needs a lift"))
+        out.append(lift_training_item(op, wb("lift_trained")))
     return out
 
 

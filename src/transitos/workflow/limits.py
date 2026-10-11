@@ -1,8 +1,19 @@
-"""Hard limits as code (CLAUDE.md rule 3). Never derived from model output."""
+"""Hard limits as code (CLAUDE.md rule 3). Never derived from model output.
+
+Phase 10: the rules live in `transitos.clearance` (one implementation). `HardLimits` keeps its public names
+as thin wrappers so callers and tests written against them stay valid; the graph itself calls clearance
+directly with real facts (capability profiles, schedule feed). The wrappers judge with a fully native legacy
+profile, i.e. they behave as the pre-Phase-10 checks did (qualification = block type in the legacy list)."""
 from __future__ import annotations
 
+from transitos.clearance.evaluate import operator_items, vehicle_items
+from transitos.clearance.facts import Facts, native_profile
+from transitos.clearance.rules import last_spare_item
 from transitos.contracts.objects import Block, Operator, Vehicle
-from transitos.contracts.policy import Limits
+from transitos.contracts.policy import AgencyPolicy, Limits
+
+_LEGACY_DROP = ("licence_class", "endorsements", "trained_vehicle_types", "training_valid_to",
+                "medical_valid_to", "duty_times")
 
 
 def block_hours(block: Block) -> float:
@@ -19,36 +30,22 @@ class HardLimits:
     def min_spares(self) -> int:
         return self.limits.min_spares
 
+    def _facts(self) -> Facts:
+        return Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
+                     profiles={"scheduling": native_profile("scheduling"),
+                               "workforce": native_profile("workforce", drop=_LEGACY_DROP)})
+
+    def _policy(self) -> AgencyPolicy:
+        return AgencyPolicy(agency="-", limits=self.limits)
+
     def operator_violations(self, op: Operator, block: Block) -> list[str]:
-        out: list[str] = []
-        if op.hours_today + block_hours(block) > self.limits.max_operator_hours_day:
-            out.append(f"operator_hours:{op.id}")
-        needs = block.needs
-        if needs.type and needs.type not in op.qualifications:
-            out.append(f"operator_qualification:{op.id}:{needs.type}")
-        if needs.lift and not op.lift_trained:
-            out.append(f"operator_lift_training:{op.id}")
-        if op.available_from and op.available_from > block.start:
-            out.append(f"operator_not_available:{op.id}")
-        if op.available_to and op.available_to < block.end:
-            out.append(f"operator_not_available:{op.id}")
-        return out
+        items = operator_items(block, op, block.needs.type, self._facts(), self._policy())
+        return [f"{i.rule}:{op.id}" for i in items if i.status == "violation"]
 
     def spare_violations(self, v: Vehicle, block: Block) -> list[str]:
-        out: list[str] = []
-        if v.status != "ready":
-            out.append(f"spare_not_ready:{v.id}")
-        n = block.needs
-        if v.seats < n.seats:
-            out.append(f"spare_seats:{v.id}")
-        if v.wheelchair_positions < n.wheelchair_positions:
-            out.append(f"spare_wheelchair:{v.id}")
-        if n.lift and not v.lift_ok:
-            out.append(f"spare_lift:{v.id}")
-        if n.type and v.type != n.type:
-            out.append(f"spare_type:{v.id}")
-        return out
+        items = vehicle_items(block, v, self._facts(), self._policy())
+        return [f"{i.rule}:{v.id}" for i in items if i.status == "violation"]
 
     def spares_left_ok(self, ready_count: int, used: int) -> bool:
-        """Last-spare rule: after using `used` spares at least min_spares must remain ready."""
-        return ready_count - used >= self.limits.min_spares
+        """Last-spare rule: after using `used` distinct spares at least min_spares must remain ready."""
+        return last_spare_item(ready_count, used, self.limits.min_spares).status != "violation"

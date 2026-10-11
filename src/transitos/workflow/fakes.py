@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from transitos.clearance.facts import native_profile
 from transitos.contracts.envelope import CloudEvent
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrder
 from transitos.contracts.policy import AgencyPolicy
@@ -110,6 +111,16 @@ class FakeReadTools:
         if self._u("list_eligible_operators"):
             return Result.unavailable("workforce", "down")
         return Result.success([o.model_copy() for o in self.w.operators.values()])  # code applies hard limits
+
+    def capability_profiles(self, agency):
+        """The fake supplies the legacy operator fields only (no licence/endorsement/training columns)."""
+        drop = ("licence_class", "endorsements", "trained_vehicle_types", "training_valid_to",
+                "medical_valid_to", "duty_times")
+        return Result.success({"scheduling": native_profile("scheduling").to_dict(),
+                               "workforce": native_profile("workforce", drop=drop).to_dict()})
+
+    def list_blocks(self, agency, start, end):
+        return Result.success([b.model_copy() for b in self.w.blocks.values() if b.end > start and b.start < end])
 
     def find_open_work_order(self, agency, vehicle_id):
         for wo in self.w.work_orders.values():

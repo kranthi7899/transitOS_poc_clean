@@ -15,7 +15,7 @@ from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrd
 from transitos.contracts.results import Result
 from transitos.contracts.tools import SAGA_ORDER
 
-from .common import TIMEOUT_S, Deps, StaticCrosswalk
+from .common import TIMEOUT_S, Deps, ProductUnavailable, StaticCrosswalk
 from .idem_store import IdemStore
 from .policy import CONFIG_DIR, KillSwitchStore, default_store, load_policy
 from .read_adapters import MaintenanceReader, SchedulingReader, WorkforceReader
@@ -57,13 +57,38 @@ BUILTIN_ADAPTERS: dict[str, AdapterFactory] = {
 class ToolSet:
     """Implements ReadTools + WriteTools for one agency by delegating each tool to its configured adapter."""
 
-    def __init__(self, agency: str, impl: dict[str, Callable[..., Result]], adapter_ids: dict[str, str]):
+    def __init__(self, agency: str, impl: dict[str, Callable[..., Result]], adapter_ids: dict[str, str],
+                 adapters: list[Any] | None = None):
         missing = [t for t in READ_TOOLS + WRITE_TOOLS if t not in impl]
         if missing:
             raise ValueError(f"registry for {agency} missing tools: {missing}")
         self.agency = agency
         self._impl = impl
         self.adapter_ids = adapter_ids
+        self._adapters = adapters or []
+
+    # ---- optional reads (Phase 10): not in ReadTools; supplied by whichever adapter offers them -------
+    def _optional(self, name: str) -> list[Callable[..., Any]]:
+        return [fn for a in self._adapters if callable(fn := getattr(a, name, None))]
+
+    def list_blocks(self, agency: str, start: datetime, end: datetime) -> Result[list[Block] | None]:
+        """Every scheduled block in the window (the feed double-booking is judged against). A None value means
+        no configured adapter offers it (the clearance rule then fails closed)."""
+        fns = self._optional("list_blocks")
+        if not fns:
+            return Result.success(None, note="not_supported")
+        return fns[0](agency, start, end)
+
+    def capability_profiles(self, agency: str) -> Result[dict[str, dict]]:
+        """What each configured product supplies, as {product: CapabilityProfile.to_dict()}."""
+        out: dict[str, dict] = {}
+        try:
+            for fn in self._optional("capability_profile"):
+                p = fn(agency)
+                out[p.product] = p.to_dict()
+        except ProductUnavailable as e:
+            return Result.unavailable(e.product, e.note)
+        return Result.success(out)
 
     def _call(self, tool: str, agency: str, *a: Any, **kw: Any) -> Result:
         if agency != self.agency:
@@ -163,7 +188,7 @@ class Registry:
                 raise KeyError(f"agency {agency}: tool {tool} -> unknown adapter {adapter_id!r}")
             inst = instances.setdefault(adapter_id, self.adapters[adapter_id](deps))
             impl[tool] = getattr(inst, tool)
-        ts = ToolSet(agency, impl, dict(cfg["tools"]))
+        ts = ToolSet(agency, impl, dict(cfg["tools"]), list(instances.values()))
         self._cache[agency] = ts
         return ts
 

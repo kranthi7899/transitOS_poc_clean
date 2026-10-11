@@ -46,8 +46,12 @@ _SPECS = [
     (12, "standard", 36, 0, False, "spare"),  # no lift
 ]
 _SERVICE_RANK = {"cutaway": 0, "standard": 1, "articulated": 2}
+_LENGTH_FT = {"cutaway": 24.0, "standard": 40.0, "articulated": 60.0}  # ASSUMED A66 (rounded typical lengths)
 
 # hours_today, hours_week, avail_from, avail_to, extra_board, lift_trained, quals
+# Legacy `quals` (licence codes) are kept as exported by the product but ignored by the clearance rules
+# once the licence/endorsement/training columns below are present (contract v1.2, D-1). ARTIC in the legacy
+# string became a trained vehicle type (A26 resolved): see _TRAINING.
 _OPS = [
     (4.0, 22.0, "05:00", "14:00", False, True, "CDL-B;PAX;ARTIC"),
     (6.5, 31.0, "05:00", "15:00", False, True, "CDL-B;PAX"),
@@ -60,6 +64,23 @@ _OPS = [
     (2.0, 12.0, "12:00", "21:00", False, True, "CDL-B;PAX"),
     (0.0, 8.0, "05:00", "21:00", True, True, "CDL-B;PAX;ARTIC"),  # extra board
 ]
+
+
+def _training(i: int, quals: str, lift: bool, day: datetime) -> dict[str, Any]:
+    """Deterministic licence/endorsement/training data for operator `i` (A67): class A where the legacy
+    string says ARTIC, else B; passenger endorsement for all; trained on cutaway and standard, plus
+    articulated for ARTIC holders; every credential valid for at least ~7 months, staggered per operator."""
+    artic = "ARTIC" in quals
+    types = ["cutaway", "standard"] + (["articulated"] if artic else [])
+    valid = {code: iso(day + timedelta(days=210 + 17 * i + 11 * n)) for n, code in enumerate(["P", *types])}
+    if lift:
+        valid["lift"] = iso(day + timedelta(days=210 + 17 * i + 5))
+    return {
+        "licence_class": "A" if artic else "B", "endorsements": "P", "trained_vehicle_types": ";".join(types),
+        "training_valid_to": ";".join(f"{k}={v}" for k, v in valid.items()),
+        "medical_valid_to": iso(day + timedelta(days=300 + 9 * i)),
+        "last_duty_end": None, "duty_start_today": None,
+    }
 
 
 @dataclass
@@ -100,7 +121,7 @@ def build_fleet(agency: str, now: datetime) -> Fleet:
             "idx": i, "canonical": f"op-{i}", "native": cfg.op.format(n=cfg.op_off + i),
             "qualifications": quals, "lift_trained": lift, "hours_today": hours_today,
             "hours_week": hours_week, "available_from": a_from, "available_to": a_to,
-            "on_extra_board": extra,
+            "on_extra_board": extra, **_training(i, quals, lift, day),
         })
 
     for n, kind, seats, wc, lift, role in _SPECS:
@@ -110,7 +131,7 @@ def build_fleet(agency: str, now: datetime) -> Fleet:
             "tele": cfg.tele.format(n=cfg.tele_off + n),
             "maint": cfg.maint.format(n=cfg.maint_off + n),
             "name": f"Bus {cfg.sched_off + n}", "type": kind, "seats": seats,
-            "wheelchair_positions": wc, "lift_ok": lift,
+            "wheelchair_positions": wc, "lift_ok": lift, "length_ft": _LENGTH_FT[kind],
             "depot": cfg.depots[n % 2], "status": "ready" if role == "spare" else "in_service",
         })
         meter = 20000 + 1700 * n

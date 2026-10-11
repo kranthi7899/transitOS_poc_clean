@@ -12,7 +12,14 @@ from pathlib import Path
 
 import yaml
 
-from transitos.contracts.objects import Needs, Operator, Vehicle
+from transitos.clearance.evaluate import vehicle_items
+from transitos.clearance.facts import Facts, native_profile
+from transitos.clearance.rules import (
+    day_hours_item,
+    last_spare_item,
+    lift_training_item,
+)
+from transitos.contracts.objects import Block, Needs, Operator, Vehicle
 from transitos.contracts.policy import AgencyPolicy, Limits
 
 CONFIG_DIR = Path(__file__).parent / "config"
@@ -70,43 +77,39 @@ def kill_switch(agency: str, store: KillSwitchStore | None = None,
 
 
 # ---- pure hard-limit checks -------------------------------------------------------------------
+# Thin wrappers over `transitos.clearance` (Phase 10: one rule implementation). They return violation
+# strings (empty list == allowed) with the shapes callers already match on.
+
+_EPOCH = datetime(1970, 1, 1)
+
 
 def check_min_spares(ready_spares_before: int, limits: Limits) -> list[str]:
     """Using one spare must leave at least min_spares ready (never pull the last spare)."""
-    remaining = ready_spares_before - 1
-    if remaining < limits.min_spares:
-        return [f"min_spares: {remaining} spare(s) would remain, minimum is {limits.min_spares}"]
-    return []
+    it = last_spare_item(ready_spares_before, 1, limits.min_spares)
+    return [it.detail] if it.status == "violation" else []
 
 
 def check_operator_hours(hours_today: float, block_start: datetime, block_end: datetime,
                          limits: Limits) -> list[str]:
-    block_hours = (block_end - block_start).total_seconds() / 3600.0
-    total = hours_today + block_hours
-    if total > limits.max_operator_hours_day + 1e-9:
-        return [(f"operator_hours: {hours_today:.1f}h today + {block_hours:.1f}h block = {total:.1f}h "
-                f"> max {limits.max_operator_hours_day:g}h")]
-    return []
+    bh = (block_end - block_start).total_seconds() / 3600.0
+    it = day_hours_item("operator", hours_today, bh, limits.max_operator_hours_day)
+    return [it.detail] if it.status == "violation" else []
 
 
 def check_lift_qualification(needs: Needs, operator: Operator) -> list[str]:
-    if needs.lift and not operator.lift_trained:
-        return [f"lift_qualification: operator {operator.id} is not lift-trained but block needs a lift"]
-    return []
+    if not needs.lift:
+        return []
+    it = lift_training_item(operator, "native")
+    return [it.detail] if it.status == "violation" else []
 
 
-def check_spare_meets_needs(vehicle: Vehicle, needs: Needs) -> list[str]:
-    v: list[str] = []
-    if vehicle.seats < needs.seats:
-        v.append(f"needs: vehicle {vehicle.id} has {vehicle.seats} seats, needs {needs.seats}")
-    if vehicle.wheelchair_positions < needs.wheelchair_positions:
-        v.append(f"needs: vehicle {vehicle.id} has {vehicle.wheelchair_positions} wheelchair positions, "
-                 f"needs {needs.wheelchair_positions}")
-    if needs.lift and not vehicle.lift_ok:
-        v.append(f"needs: vehicle {vehicle.id} lift not operational")
-    if needs.type and vehicle.type != needs.type:
-        v.append(f"needs: vehicle {vehicle.id} type {vehicle.type} != required {needs.type}")
-    return v
+def check_spare_meets_needs(vehicle: Vehicle, needs: Needs, policy: AgencyPolicy | None = None) -> list[str]:
+    """Capacity, lift and graded type fit (a larger class passes with a warning, smaller never)."""
+    block = Block(id="-", vehicle_id="-", start=_EPOCH, end=_EPOCH, needs=needs)
+    facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
+                  profiles={"scheduling": native_profile("scheduling")})
+    items = vehicle_items(block, vehicle, facts, policy or AgencyPolicy(agency="-"))
+    return [i.detail for i in items if i.status == "violation" and i.rule != "vehicle_ready"]
 
 
 def check_hard_limits(*, limits: Limits, needs: Needs | None = None, vehicle: Vehicle | None = None,
