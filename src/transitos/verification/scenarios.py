@@ -73,6 +73,10 @@ class Scenario:
     expect_plan_version: int | None = None
     expect_attached: int = 0
     note: str = ""
+    # Phase 10 Step 3 fix round (all default to "no change" for every older scenario):
+    known_gap: str = ""                                   # a PASS that rests on a documented gap; shown beside PASS
+    expect_forward_actions: tuple[str, ...] | None = None  # actions that must appear among the OK forward writes
+    real_world_only: bool = False                         # needs product lag: skipped (with reason) on FakeWorld
 
 
 # ---- event builders -------------------------------------------------------------------------------
@@ -185,4 +189,9 @@ SCENARIOS = SCENARIOS + STEP3_SCENARIOS
 from .scenarios_step2 import STEP2_SCENARIOS  # Phase 10 Step 2 (appended after Step 3)
 
 SCENARIOS = SCENARIOS + STEP2_SCENARIOS
+from .scenarios_step3 import (
+    STEP3B_SCENARIOS,  # Phase 10 Step 3 fix round (appended last: ids/order of the rest unchanged)
+)
+
+SCENARIOS = SCENARIOS + STEP3B_SCENARIOS
 BY_ID = {s.id: s for s in SCENARIOS}

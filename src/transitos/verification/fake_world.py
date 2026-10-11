@@ -62,6 +62,8 @@ def _step_comp(action: str) -> str | None:
 
 
 class FakeWorld:
+    supports_world_lag = False      # no products, no lag: scenarios marked real_world_only are skipped with a reason
+
     def __init__(self) -> None:
         self.apply(Scenario(id="_blank", title="", events=(), expected=None, script=()))  # type: ignore[arg-type]
 

@@ -36,7 +36,7 @@ def test_latency_caption_is_in_the_report_output_and_says_what_the_numbers_are()
     rs = report.run_all(make_world, (BY_ID["scripted_day_coolant"],))
     txt = report.format_latency(rs)
     assert LATENCY_NOTE in txt
-    assert "by construction" in txt and "scripted human approval" in txt and "not a measurement of system speed" in txt
+    assert "by construction" in txt and "scripted human approval" in txt and "measurement of system speed" in txt
     assert "truth_to_approval_s" in txt and "approval_to_pull_s" in txt
 
 

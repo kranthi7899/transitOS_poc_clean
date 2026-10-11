@@ -32,7 +32,7 @@ from types import SimpleNamespace
 
 from transitos.contracts.envelope import TOPIC_FAILED, CloudEvent
 from transitos.contracts.objects import Block, Operator, RunState, Vehicle, WorkOrder
-from transitos.mocks.clock import SimClock, iso
+from transitos.mocks.clock import SimClock
 from transitos.mocks.seed import build_fleet, register_fleet
 from transitos.tools.read_adapters import map_block, map_vehicle, map_work_order
 from transitos.verification.latency import detection_latency
@@ -53,6 +53,7 @@ ACTION_PRODUCT = {"set_vehicle_unavailable": "scheduling", "set_vehicle_availabl
 
 
 class IntegrationWorld:
+    supports_world_lag = True
     def __init__(self) -> None:
         self.system: System | None = None
         self._acks: dict[str, list[str]] = {}
@@ -94,18 +95,19 @@ class IntegrationWorld:
 
         def stamped_idle(*a, **k):
             n = run_idle(*a, **k)
-            at = iso(s.clock.now())
+            at = s.clock.now().isoformat()   # sub-second precision (iso() truncates to whole seconds)
             for r in s.runs():
                 run = RunState.model_validate(r)
                 if run.plan is not None and (run.run_id, run.plan_version) not in seen_plans:
                     seen_plans.add((run.run_id, run.plan_version))
                     self.latency_audit.append(AuditEvent(seq=len(self.latency_audit), kind="proposal",
                                                          run_id=run.run_id, plan_version=run.plan_version,
-                                                         data={"at": at}))
+                                                         data={"at": at, "vehicle": run.vehicle_id}))
             for rec in s.writes.records[n_writes[0]:]:
                 self.latency_audit.append(AuditEvent(seq=len(self.latency_audit), kind="write", run_id=rec.run_id,
                                                      key=rec.key, data={"action": rec.action, "at": at, "ok": rec.ok,
-                                                                        "compensation": rec.compensation}))
+                                                                        "compensation": rec.compensation,
+                                                                        "vehicle": rec.params.get("vehicle_id")}))
             n_writes[0] = len(s.writes.records)
             return n
         s.run_until_idle = stamped_idle  # type: ignore[method-assign]
@@ -121,7 +123,8 @@ class IntegrationWorld:
         self.engine.run_until(hhmm_on(T0, hhmm))
 
     def latency(self) -> dict | None:
-        return None if self.engine is None else detection_latency(self.engine.observations_log, self.latency_audit)
+        return None if self.engine is None else detection_latency(self.engine.observations_log, self.latency_audit,
+                                                             self.engine.truth.applied)
 
     def timeline_json(self) -> str:
         """Everything the world did and every product ended up holding, canonical JSON (byte-compare across runs)."""
@@ -186,9 +189,13 @@ class IntegrationWorld:
             return
         # the panel's RunGateway logs the accepted decision (ordered before any write it causes); the panel
         # itself answers 409 when a requires_ack clearance item is not acknowledged
-        s.panel_client.post(f"/runs/{run_id}/decision", json={
+        r = s.panel_client.post(f"/runs/{run_id}/decision", json={
             "decision": decision, "plan_version": run.plan_version, "user": by, "scope": scope,
             "acknowledged": sorted(set(self._acks.get(run_id, [])))})
+        if self.engine is not None and decision == "approve" and r.status_code < 300:   # latency: the human part (A99)
+            self.latency_audit.append(AuditEvent(
+                seq=len(self.latency_audit), kind="approval", run_id=run_id, plan_version=run.plan_version,
+                data={"at": s.clock.now().isoformat(), "vehicle": run.vehicle_id, "scope": scope}))
         s.run_until_idle()
 
     def approve(self, run_id: str, scope: str = "plan", by: str = "dispatcher") -> None:

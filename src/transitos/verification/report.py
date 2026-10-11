@@ -13,7 +13,7 @@ import json
 import sys
 from collections.abc import Callable
 
-from .latency import KEYS
+from .latency import KEYS, LATENCY_NOTE
 from .runner import ScenarioResult, run_scenario
 from .scenarios import SCENARIOS, Scenario
 from .world import World
@@ -42,13 +42,19 @@ def format_table(results: list[ScenarioResult]) -> str:
     rows = [("scenario", "expected", "outcome", "invariants", "result")]
     for r in results:
         bad = [k for k, v in r.invariants.items() if v]
-        rows.append((r.scenario_id, r.expected, r.outcome, "pass" if not bad else "FAIL " + ",".join(bad),
-                     "PASS" if r.passed else "FAIL"))
+        verdict = ("SKIP" if r.skipped else "PASS" if r.passed else "FAIL")
+        if r.known_gap and r.passed and not r.skipped:
+            verdict = f"PASS (known gap: {r.known_gap})"
+        rows.append((r.scenario_id, r.expected, r.outcome, "pass" if not bad else "FAIL " + ",".join(bad), verdict))
     widths = [max(len(row[i]) for row in rows) for i in range(5)]
     lines = ["  ".join(c.ljust(w) for c, w in zip(row, widths)) for row in rows]
     lines.insert(1, "  ".join("-" * w for w in widths))
     n_ok = sum(r.passed for r in results)
-    lines.append(f"\n{n_ok}/{len(results)} scenarios passed")
+    n_skip = sum(bool(r.skipped) for r in results)
+    lines.append(f"\n{n_ok}/{len(results)} scenarios passed" + (f" ({n_skip} skipped)" if n_skip else ""))
+    for r in results:
+        if r.skipped:
+            lines.append(f"  [{r.scenario_id}] SKIP: {r.skipped}")
     for r in results:
         for m in r.mismatches:
             lines.append(f"  [{r.scenario_id}] {m}")
@@ -60,16 +66,17 @@ def format_table(results: list[ScenarioResult]) -> str:
 
 def format_latency(results: list[ScenarioResult]) -> str:
     """Detection latency per scenario that has a world engine (simulated seconds; '-' = not measurable)."""
-    rows = [("scenario", "truth_to_telematics_s", "truth_to_first_proposal_s", "truth_to_pull_s")]
+    rows = [("scenario", *KEYS)]
     for r in results:
         if r.latency is not None:
             rows.append((r.scenario_id, *("-" if r.latency.get(k) is None else f"{r.latency[k]:.1f}" for k in KEYS)))
     if len(rows) == 1:
         return ""
-    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     lines = ["  ".join(c.ljust(w) for c, w in zip(row, widths)) for row in rows]
     lines.insert(1, "  ".join("-" * w for w in widths))
-    return "detection latency (simulated seconds from the physical fault)\n" + "\n".join(lines)
+    return ("detection latency (simulated seconds from the physical fault)\n" + "\n".join(lines)
+            + "\nNote: " + LATENCY_NOTE)
 
 
 def to_json(results: list[ScenarioResult]) -> dict:
@@ -81,6 +88,8 @@ def to_json(results: list[ScenarioResult]) -> dict:
             "invariants": {k: [v.model_dump() for v in vs] for k, vs in r.invariants.items()},
             "not_checked": list(r.not_checked),
             "latency": r.latency,    # sim seconds; null for scenarios without a world engine
+            "latency_note": LATENCY_NOTE if r.latency is not None else None,
+            "known_gap": r.known_gap, "skipped": r.skipped,
         } for r in results]}
 
 
