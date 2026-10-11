@@ -1,221 +1,184 @@
-# Realistic fleet, messy IDs, world engine: Implementation Plan
+# Phase 10: realistic fleet and world. Implementation plan (Gate 1 approved with Amendment A)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan wave by wave. Steps use checkbox syntax. The supervisor (program lead session) merges, edits `contracts/`, and runs the Kafka and Postgres profiles; nobody else does.
 
-**Goal:** Make the base fleet complete a run, make cross-product identity genuinely hard, then drive the mocks from a scripted ground truth with per-product delays and zone-less timestamps.
+**Goal:** Test the orchestrator on mess: a fleet that completes a run under realistic qualification and spare rules, identifiers that disagree across products, a scripted-then-stochastic world with per-product delays, and shop and timestamp quirks.
 
-**Architecture:** Four stages, strictly in order; each ends with `make verify` green and its own commit. Stage 1 fixes two hard-limit mismatches in code (licence codes, spare count per horizon). Stage 2 adds validity-dated, ambiguity-aware crosswalk entries (one additive contract change, requested via `coordination/requests/`). Stage 3 adds a seeded ground-truth store that the five mocks project with their own lag. Stage 4 adds a Pending Repair flow and local-time timestamps that adapters must normalise.
+**Architecture:** Four steps in order. Step 1 fixes hard-limit semantics in code. Step 2 adds an identity resolver over a validity-dated crosswalk. Step 3 adds a seeded ground-truth world that products observe with their own lag. Step 4 adds a Pending Repair flow and zone-less local timestamps. A small offline data pipeline derives three committed files from two public datasets.
 
-**Tech Stack:** Python 3.11, pydantic v2, FastAPI mocks, SQLite/Kafka/Postgres profiles, LangGraph, pytest, ruff, uv.
+**Tech Stack:** Python 3.11, pydantic v2, FastAPI mocks, LangGraph, SQLite/Kafka/Postgres profiles, pytest, ruff, uv. New: `rapidfuzz` (core, from Step 2), optional extra `data` (`pandas`, `openpyxl`, `httpx`, `pyyaml`).
 
-**Spec:** the four-item brief the owner pasted on 2026-10-11 (this plan's "Stage 1..4"), plus `CLAUDE.md` rules and `docs/ARCHITECTURE.md`.
+**Spec:** `docs/phases/PHASE-10-realistic-fleet-and-world.md` (the build prompt), `docs/phases/PHASE-10-amendment-A.md` (owner decisions; wins on conflict), `docs/RESEARCH_DATA_SOURCES.md`, `data/MANIFEST.yaml`.
 
-## Global Constraints
+## Reconciliation with the earlier draft of this file
 
-- Contracts in `src/transitos/contracts/` are edited only by the program lead, and only after a request file `coordination/requests/<track>-<n>.md` exists. Changes are additive; `make schemas` regenerates `contracts-schema/` and `tests/contracts` must stay green.
-- Hard limits are code, never model output (CLAUDE.md rule 3). Violation strings keep their existing shape (`operator_qualification:<op>:<type>`, `no_feasible_spare:<block>`, `last_spare:...`).
-- Everything seeded and deterministic: no wall clock, no unseeded randomness. All time is `SimClock`.
-- Products stay SIMULATED. No client names or documents in the repo or the docs.
-- "Done" means `make verify` output pasted. Kafka and Postgres profiles are re-run (`make verify-kafka`, `make verify-postgres`) at the end of Stages 2 and 4, with only one of the two servers up at a time.
-- Track leads edit only their own directory plus its tests; where one commit has to cross tracks (Stage 1 fixtures), the commit message names the tracks touched.
-- Skipped on purpose (owner decision): separate DB engines per mock, separate processes per mock, full relational schemas.
+The earlier draft (commit `4946d4c`, same session lineage) is superseded. Differences, all resolved in favour of the build prompt:
 
-## Review Focus
+| Topic | Earlier draft | This plan (follows the prompt) |
+|---|---|---|
+| Qualification | licence codes mapped to vehicle class, one constant | D-A: licence class + passenger endorsement + trained vehicle types + lift/ramp training, with expiry dates; class mapping in config |
+| Spares | 4 h planning horizon | D-C: a spare may serve several non-overlapping blocks; last-spare counts distinct spares (A49 closed) |
+| Identity | validity dates + candidates | D-E: `Resolver` protocol, MATCH/AMBIGUOUS/NO_MATCH + confidence, VIN check digit, rapidfuzz, third generated agency |
+| World engine | scripted only | scripted first, then seeded stochastic mode from derived NTD failure rates |
+| Data | none | offline pipeline (fetch, verify, load, derive) feeding three committed files |
+| Kept from the earlier draft | | DST fall-back and spring-forward tests; the Review Focus list below; the A14 decision |
 
-- A bus whose operator holds `CDL-B;PAX` is offered an articulated block: must be a violation, not a silent pass.
-- An event whose native id arrives dirty (`bus 44`, `BUS-044`, trailing space, lowercase) must resolve to the same vehicle as `BUS-44`, never create a second vehicle.
-- Two crosswalk rows that both match an event's id and timestamp must park the event for a human, never pick one.
-- An event timestamped before a device swap must resolve to the old vehicle; after the swap, to the new one; exactly on the boundary, to the new one (`valid_from` inclusive, `valid_to` exclusive).
-- A retired asset still present in maintenance must never be proposed as a spare or reported as a fault source.
-- A zone-less local timestamp around the DST change must normalise to one unambiguous UTC instant, and a skipped/ambiguous local hour must be handled deterministically.
 
----
+## Amendment A (owner answers at Gate 1; wins over everything above and below)
 
-## Stage 1: Fix the base fleet
+| Gate-1 question | Decision | Effect on this plan |
+|---|---|---|
+| A14 vehicle type | Graded, not a wall. Exact type = best tier; larger class = fallback tier (allowed, warning, approver acknowledgement, ranks below every exact plan); smaller class never a candidate; a declared block restriction (for example maximum vehicle length) that a larger vehicle violates is a hard block. Agency setting `vehicle_fit: exact \| allow_larger` (default `allow_larger`), recorded in the decision record. Scheduling mock stays permissive. | Replaces "equality" in task 1.4. New contract fields below. |
+| Where rules live | One pure module `src/transitos/clearance/` (owner: Track C lead), called by the planner, write adapters, `validate_output` and verification. No second implementation. Verification keeps only an outcome tripwire (hours cap, minimum spares left, no double-booking) plus a golden table written from the policy text. Fail closed on any exception inside clearance. | Replaces "qualification in `tools/policy.py` + F's own copy". |
+| Missing data | No field is assumed. Adapters report a capability profile. Each rule resolves data in order: native, derived, agency default (ASSUMED), unknown. Unknown on an optional rule = `not_evaluated`; unknown on a safety or legal rule = `unverifiable` (stays on the list, ranks below fully verified options, needs approver acknowledgement of that rule). Never a violation, never a silent pass. Everything non-native is shown in the plan, decision record and panel. | Replaces "enforce when fields present". New scenario `half_operator_fields_missing`. |
+| NTD links | Hand-set rates tagged ASSUMED if links fail, stated wherever used. | As planned. |
+| History push | After this phase. | Local commits only until then; see Risks. |
+| Ranking | Hard rules decide the list; rank by unverifiable count, then warnings, then soft terms; keep top three with a one-line reason why #1 beat #2. | New `rank.py`; `Plan.alternatives` carries the runners-up. |
 
-Decision recorded (owner's recommendation, adopted): "qualified" = the operator holds every licence code the block's vehicle class requires. Licence codes and vehicle class are separate; the mapping from class to required codes is a hard-limit constant. This resolves A26. A49 (one spare per block vs shared) stays open; Stage 1 makes agency-042 complete by planning a 4 h horizon instead (blocks beyond it are re-planned when they come into the window).
+**Rule classification (used by clearance):**
 
-### Task 1: Licence-code qualification (hard limit + invariant + fixtures)
+| Class | Rules | Known violation | Unknown data |
+|---|---|---|---|
+| Hard, safety/legal | vehicle ready; seats, wheelchair, lift capacity; daily and weekly hours cap; licence class, endorsement, trained type, lift training, expiry; availability window; last-spare; kill switch; double-booking; declared block restriction (for example length) | violation (excluded) | `unverifiable` (ack required), except kill switch and double-booking which fail closed |
+| Graded | vehicle fit (exact / larger) | larger = `warn` (ack required) under `allow_larger`; larger = violation under `exact`; smaller = excluded | not applicable (type is required) |
+| Optional | rest, spread, soft preferences | known breach = `warn`/violation per agency setting | `not_evaluated` |
 
-**Files:**
-- Modify: `src/transitos/workflow/limits.py` (Track D)
-- Modify: `src/transitos/verification/invariants.py:75` and `src/transitos/verification/fake_world.py:73,143` (Track F)
-- Modify: `src/transitos/integration/fleets.py` (`quals = ...` line) (integration)
-- Test: `tests/workflow/test_limits_licences.py` (create), existing `tests/verification/test_invariants.py`
+**New contract fields beyond `D-1` and `B-1` (request file `C-1.md`, all optional):**
+- `contracts/clearance.py`: `ClearanceItem(rule: str, status: Literal["pass","warn","unverifiable","not_evaluated","violation"], basis: Literal["native","derived","assumed","unknown"], detail: str = "", requires_ack: bool = False)`.
+- `Plan`: `clearance: list[ClearanceItem] = []`, `rank_reason: str = ""`, `vehicle_fit: str | None = None`. `RunState`: `acknowledged: list[str] = []`. `DecisionRecord`: `clearance: list[dict] = []`, `acknowledged: list[str] = []`, `vehicle_fit: str | None = None`.
+- `AgencyPolicy`: `vehicle_fit: Literal["exact","allow_larger"] = "allow_larger"`. `Needs`: `max_vehicle_length_ft: float | None = None`. `Vehicle`: `length_ft: float | None = None`.
 
-**Interfaces:**
-- Produces: `REQUIRED_LICENCES: dict[str, frozenset[str]]` and `required_licences(vehicle_type: str | None) -> frozenset[str]` in `workflow/limits.py`; `HardLimits.operator_violations` unchanged in signature and violation string.
-- Mapping (ASSUMED, A26): `cutaway -> {PAX}`, `standard -> {CDL-B, PAX}`, `articulated -> {CDL-B, PAX, ARTIC}`. Unknown type -> empty set (no requirement), as `needs.type is None` already does.
+## Global constraints
 
-- [ ] **Step 1: Write the failing tests** in `tests/workflow/test_limits_licences.py`: `test_standard_block_needs_cdl_b_and_pax` (operator `["CDL-B","PAX"]` -> no `operator_qualification` violation), `test_articulated_block_rejects_operator_without_artic` (operator `["CDL-B","PAX"]`, block type `articulated` -> `["operator_qualification:op-1:articulated"]`), `test_vehicle_type_string_is_not_a_qualification` (operator `["standard"]`, block `standard` -> violation), `test_no_type_means_no_requirement`.
-- [ ] **Step 2: Run** `uv run pytest tests/workflow/test_limits_licences.py -q`; expect 3 failures (the first passes only by accident of old code: confirm which).
-- [ ] **Step 3: Implement** `required_licences` and swap the check in `operator_violations` to `missing = required_licences(needs.type) - set(op.qualifications)`; emit the existing string when `missing` is non-empty.
-- [ ] **Step 4: Mirror the rule independently in Track F**: `invariants.py` gets its own copy of the mapping (the invariant must not import the code it audits) and a test `test_licence_map_matches_hard_limits` asserting the two dicts are equal. `fake_world.py` qualifications become `["CDL-B","PAX"]` / `["van"]` and its eligibility test uses the same subset rule.
-- [ ] **Step 5: Fix the baseline fleet** in `integration/fleets.py`: `quals = "CDL-B;PAX" if t.operators_qualified else "PAX"` (unqualified = missing `CDL-B`, so `standard` blocks fail).
-- [ ] **Step 6: Run** `make verify`; expect 24/24 scenarios incl. `unqualified_operator`, tests green.
-- [ ] **Step 7: Commit** `fix(limits): qualification = licence codes per vehicle class (A26)`.
+- `contracts/` is edited only by the supervisor, only after the request files below exist, and only additively (v1.2). Non-additive change: stop and ask the owner.
+- Hard limits are code, never model output. Violation strings keep their current shape.
+- No network in `make verify`, `make test`, `make report`. Network only in `make data`. `data/raw/` and `data/reference.db` are never committed.
+- Every random draw uses a seeded `random.Random`; same seed, byte-identical output.
+- The existing 24 scenarios and their baseline fleets are not edited. New realism goes into new fleet profiles and new scenarios.
+- Products stay SIMULATED. Every mock response carries `"simulated": true`. No client names or documents.
+- Every invented behaviour, field or number gets an `ASSUMPTIONS.md` row and a code tag. Reserved id blocks (so parallel agents never collide): Step 1 `A65-A74`, Step 2 `A75-A89`, Step 3 `A90-A104`, Step 4 `A105-A114`, data pipeline `A115-A124`.
+- "Done" is pasted `make verify` output.
 
-### Task 2: agency-042 completes a run
+## Review Focus (cases no single task would otherwise pin)
 
-**Files:**
-- Modify: `src/transitos/integration/system.py` (`System.__init__`, the `Deps(...)` call near line 193): accept `horizon_hours: int = 24` and pass it to `Deps`.
-- Modify: `src/transitos/integration/demo.py`: pass `horizon_hours=4` where the agency-042 `System` is built (the demo's baseline fleet is unaffected).
-- Test: `tests/integration/test_agency_042_run.py` (create)
-
-**Interfaces:**
-- Produces: `System(agency, mocks, data_dir=None, *, horizon_hours: int = 24, ...)`.
-- Consumes: `build_fleet("agency-042", now)` (8 two-hour blocks per line vehicle from 05:00; 3 spares; 10 operators with `CDL-B;PAX[;ARTIC]`).
-
-- [ ] **Step 1: Write the failing test** `test_agency_042_severe_fault_completes_a_run`: seed agency-042, deliver a `VehicleFaultDetected` for `T-77`, approve the plan, advance 48 h, close the work order, approve return to service; assert final status `DONE`, no `last_spare` or `no_feasible_*` violation, and `len(plan reassign steps) <= 2`.
-- [ ] **Step 2: Run it;** expect failure with `last_spare:3_ready_for_8_blocks` (confirms the diagnosis) or a qualification violation if Task 1 is not merged.
-- [ ] **Step 3: Implement** the `horizon_hours` parameter and use `4` for agency-042 in the test and the demo.
-- [ ] **Step 4: Run** the test; expect PASS. Then `make verify`.
-- [ ] **Step 5: Docs:** `docs/ASSUMPTIONS.md`: A26 -> resolved (licence codes + class map), A49 -> stays open with the note "agency-042 plans a 4 h horizon"; `docs/ARCHITECTURE.md` Known gaps: delete the agency-042 bullet.
-- [ ] **Step 6: Commit** `fix(integration): agency-042 completes a run (4h horizon); A26 resolved`.
+1. Operator with an expired passenger endorsement or expired lift training is offered a block: must be a violation on the day it expires, not the day after.
+2. Dirty id (`bus 44`, `BUS-044`, `BUS-44 `, O versus 0) must resolve to the same vehicle as `BUS-44`, never create a second vehicle.
+3. Two candidates within 0.1 confidence must go to a human; a lone candidate at 0.85 must also go to a human (below the 0.9 MATCH threshold), never auto-resolve.
+4. An event timestamped before a device swap resolves to the old vehicle; exactly at the swap, to the new one (`valid_from` inclusive, `valid_to` exclusive).
+5. A retired asset in maintenance is never a spare, never a fault source, and a work order against it is blocked.
+6. A zone-less local time in the fall-back hour (01:30 twice) and in the spring-forward gap normalises deterministically to UTC.
+7. A spare reused across two non-overlapping blocks is one spare consumed; across two overlapping blocks it is a violation.
 
 ---
 
-## Stage 2: Messy IDs
+## Gate 1 summary (one screen)
 
-Contract request first (program lead writes `coordination/requests/A-1.md`, then edits `contracts/`).
+- **Four steps, five waves, about six builders plus reviewers.** Step 1 first (everything depends on it) alongside the data pipeline (independent). Steps 2 and 3 in parallel after Step 1. Step 4 after. Final verification of all three profiles by the supervisor alone.
+- **Contract v1.2 is one supervisor commit before any builder starts**, via three request files: `B-1` (crosswalk validity, resolution outcome, event identity attributes), `D-1` (operator qualification fields; hours limits), `C-1` (clearance items, plan/decision-record fields, `vehicle_fit`, length attributes).
+- **Biggest risks:** (1) the spare-reuse change touches four places that must agree (workflow check, reasoning validator, adapter re-check, F invariant); (2) several dataset URLs in the manifest are unverified; (3) parallel steps colliding in `scenarios.py`, `seed.py`, `maintenance.py`.
+- **Needs from you at Gate 1:** answers to the five questions at the end.
 
-### Task 3: Contract request and additive contract change
+## Contract request files (exact field lists)
 
-**Files:**
-- Create: `coordination/requests/A-1.md`
-- Modify: `src/transitos/contracts/crosswalk.py`, `src/transitos/contracts/envelope.py` (only if a new event field is needed; prefer none), `docs/CONTRACTS.md` (v1.2 table), `contracts-schema/*` via `make schemas`
-- Test: `tests/contracts/test_contracts.py` (existing schema-staleness test), `tests/contracts/test_crosswalk_contract.py` (create)
+All additive; every new field optional with a default; `make schemas` regenerates `contracts-schema/`; `tests/contracts` stays green.
 
-**Interfaces (Produces):**
-- `CrosswalkEntry` gains optional `valid_from: datetime | None = None`, `valid_to: datetime | None = None` (inclusive start, exclusive end), `vin: str | None = None`, `plate: str | None = None`.
-- `Crosswalk.lookup(agency, product, native_id, at: datetime | None = None) -> str | None` (new optional `at`; `None` = ignore validity, today's behaviour).
-- `Crosswalk.candidates(agency, product, native_id, at: datetime | None = None) -> list[str]` (distinct canonical ids, sorted; 0 = unknown, 1 = resolved, 2+ = ambiguous).
-- `Crosswalk.add_ambiguous(agency, product, native_id, event_id, candidates: list[str]) -> None`.
+**`coordination/requests/D-1.md` (operator qualification and hours)**
+- `Operator`: `licence_class: Literal["A","B","C"] | None = None`; `endorsements: list[str] = []` (e.g. `"P"` passenger); `trained_vehicle_types: list[str] = []` (e.g. `"standard"`, `"articulated"`); `training_valid_to: dict[str, datetime] = {}` (key = endorsement code or trained type or `"lift"`); `medical_valid_to: datetime | None = None`; `last_duty_end: datetime | None = None`; `duty_start_today: datetime | None = None`. Existing `qualifications` and `lift_trained` stay (legacy; ignored by the new check when the new fields are set).
+- `Limits`: `max_operator_hours_week: float = 70.0` (window = 8 days, the 49 CFR 395.5 default; ASSUMED); `min_rest_hours: float = 8.0`; `max_spread_hours: float = 15.0`.
 
-- [ ] **Step 1: Write `A-1.md`**: problem (identity is too easy), the four additive changes above, what each track does (A seeds VIN/plate and scenarios, B implements, F adds scenarios), no breaking change (all new params optional).
-- [ ] **Step 2: Write the failing contract test** `test_crosswalk_entry_validity_defaults_open` and `test_protocol_has_candidates`; run, expect failure.
-- [ ] **Step 3: Edit the contract**, run `make schemas`, run `uv run pytest tests/contracts -q`; expect green.
-- [ ] **Step 4: Commit** `contracts: v1.2 crosswalk validity, VIN/plate, candidates (request A-1)`.
+**`coordination/requests/B-1.md` (identity)**
+- `CrosswalkEntry`: `valid_from: datetime | None = None` (inclusive), `valid_to: datetime | None = None` (exclusive), `vin: str | None = None`, `plate: str | None = None`, `display_name: str | None = None`.
+- New models in `contracts/crosswalk.py`: `ResolutionOutcome = Literal["MATCH","AMBIGUOUS","NO_MATCH"]`; `Candidate(canonical_id: str, score: float, evidence: list[str])`; `Resolution(outcome, confidence: float, candidates: list[Candidate])`.
+- `Crosswalk.lookup(..., at: datetime | None = None)` and `Crosswalk.candidates(agency, product, native_id, at=None) -> list[CrosswalkEntry]` (protocol additions; existing callers unaffected).
+- Vehicle-event `data` payloads (`VehicleFaultDetected`, `DefectReported`, `VehicleStatusChanged`, `PMOverdue`, `WorkOrderOpened`, `WorkOrderClosed`): optional `native_vin`, `native_plate`, `native_name`.
 
-### Task 4: Crosswalk implementation with validity, normalisation and ambiguity (Track B)
+**Not requested (deliberately):** no change to `Vehicle` (VIN and plate are identity evidence in events and crosswalk rows, not canonical vehicle attributes).
 
-**Files:**
-- Modify: `src/transitos/plumbing/crosswalk.py` (schema: add `valid_from`, `valid_to`, `vin`, `plate` columns; primary key becomes `(agency, product, native_id, valid_from)` with `valid_from` stored as `''` when open), `src/transitos/plumbing/crosswalk_service.py` (`_handle`), `src/transitos/plumbing/pg_stores.py` (same schema on Postgres)
-- Create: `src/transitos/plumbing/native_id.py`
-- Test: `tests/plumbing/test_crosswalk_validity.py`, `tests/plumbing/test_native_id.py`, storage contract suite parametrised over SQLite and Postgres (existing `tests/plumbing` storage contract)
+## Data pipeline (Track A lead; `src/transitos/data/`, `data/`, `fixtures/`, `config/`)
 
-**Interfaces:**
-- Produces: `normalize_native(product: str, raw: str) -> str` in `native_id.py`: strip, upper-case, collapse separators, drop leading zeros in the numeric part, so `"bus 44"`, `"BUS-044"`, `" Bus-44 "` all become `"BUS-44"`; products with numeric-only ids (maintenance) strip whitespace/zeros only.
-- `SqliteCrosswalk.lookup`/`candidates` try the exact id, then `normalize_native`; both filter by `valid_from <= at < valid_to` when `at` is given.
-- Event `time` is the `at` passed by `CrosswalkService._handle`.
-- Ambiguous outcome: event parked in a new table `xw_ambiguous(agency, product, native_id, event_id, candidates TEXT)`, `events.failed` published with `failurereason="ambiguous <entity> <product>:<native>: veh-1|veh-9"`, `xw_processed.status='parked'`. `apply_mapping(entry)` (human pick) republishes as today.
+Task list. Each stage is a function with offline tests. Fetching into `data/raw/` is the only network step (`make data`).
 
-- [ ] **Step 1: Failing tests** (names and assertions): `test_dirty_ids_normalise_to_one_vehicle` (`"bus 44"`, `"BUS-044"` -> `veh-1`); `test_device_swap_resolves_by_event_time` (T-77 -> veh-1 until 2026-10-10T12:00Z, T-90 -> veh-1 from then; T-77 reused by veh-9 from 12:00; an event for T-77 at 11:59:59Z -> veh-1, at 12:00:00Z -> veh-9); `test_two_matches_are_ambiguous` (two open rows for one native id -> `candidates == ["veh-1","veh-9"]`, service parks and emits `events.failed` with the candidate list); `test_human_pick_republishes`.
-- [ ] **Step 2: Run;** expect failures for each.
-- [ ] **Step 3: Implement** in the order: `native_id.py`, SQLite schema + `candidates`/`lookup`, `_handle` branches (0/1/2+), Postgres schema parity.
-- [ ] **Step 4: Run** `uv run pytest tests/plumbing -q`, then `make verify`.
-- [ ] **Step 5: Commit** `plumbing: validity-dated crosswalk, dirty-id normalisation, ambiguous parking`.
+- [ ] **P1 `fetch.py`**: read `data/MANIFEST.yaml`, honour `fetch: auto|manual|reference_only`, 1 req/s, the manifest user agent, write `PROVENANCE.json` per file and `data/MANIFEST.lock.json` (sha256, bytes, fetched_at, http_status, verified). Tests with a stubbed HTTP transport: throttle respected, `reference_only` never fetched, a failing link is recorded not raised.
+- [ ] **P2 `verify.py`**: status 200 and content type; CSV header row and row count against `expected_rows`; XLSX sheet list and real headers; write `data/derived/<id>_columns.json` and `data/FETCH_REPORT.md`. Checklist per dataset, tick only what was observed: `ntd_rvi_2024` (headers, sheets, vehicle-type values, VIN/plate columns present or absent); `ntd_breakdowns_2022_2024` (about 3,731 rows with `$limit` set, `mode` and `mode_name` values, meaning of the `_1`/`_2` columns); `ntd_breakdowns_agency_totals`; `ntd_vehicle_type_count` (v3 export auth, else `/resource/` fallback); `ntd_vehicle_age_distribution` (guessed URL); `ecfr_565_15` and `ecfr_395_5` (HTML parses, worked example present); `cincinnati_fleet_work_orders` (probe `$limit=5`, headers, licence); vPIC reference only.
+- [ ] **P3 `load.py`**: verified tables into `data/reference.db` as `ref_<id>` plus `ref_provenance`. Nothing at runtime reads it.
+- [ ] **P4 `derive.py`**: `data/derived/fault_rates.yaml` (miles between major failures per mode, per year and pooled, p10/p25/p50/p75/p90, small-fleet cut `agency_voms` 10-50, sample sizes; rows with failures > 0, revenue miles > 0, no quality flag), `data/derived/fleet_mix.yaml` (share by type, make, model, seats, length, fuel, ADA; manufacture-year and model-year gap), optional `data/derived/repair_durations.yaml`. Each file has a provenance header comment.
+- [ ] **P5 loaders and `make data-check`**: pydantic-validated loaders that fail loudly on a missing or malformed file; `make data-check` (offline) joins `make verify`.
+- [ ] **P6 hand-written fixtures** (no download, own words, ASSUMED, ids `A115+`): `fixtures/j1939_spn_fmi.yaml` (about 15 rows), `config/fault_mix.yaml`, `config/shop_behaviour.yaml` (fallback if no usable duration data).
+- [ ] **P7 `.gitignore` fix** (supervisor, Wave 0): replace `data/` with `data/raw/`, `data/reference.db`, `data/MANIFEST.lock.json` so derived files, fixtures and the manifest are committable.
 
-### Task 5: Messy mock data (Track A)
+If a link fails: record in `FETCH_REPORT.md`, continue, fall back to hand-set defaults tagged `source: assumption`.
 
-**Files:**
-- Modify: `src/transitos/mocks/seed.py` (vehicles get `vin`, `plate`; add `AGENCIES["agency-042"]` extras below), `mocks/scheduling.py`, `mocks/telematics.py`, `mocks/maintenance.py` (return `vin`/`plate`), `mocks/crosswalk_seed.py` (emit `vin`/`plate`, validity)
-- Test: `tests/mocks/test_messy_ids.py` (create), existing `tests/mocks/test_seed.py`
+## Step 1: Fix the base fleet (sequential, first; builder S1; amended)
 
-**Interfaces:**
-- Deliberate mismatches in the agency-042 seed (all documented in the module docstring): (1) telematics unit `T-90` with no maintenance asset (new bus `veh-13`, VIN known only to telematics); (2) maintenance asset `1999` for a retired bus: `status="retired"`, no scheduling vehicle, no crosswalk row; (3) scheduling emits `BUS-044` for `veh-4` while the crosswalk row is `BUS-44` (a dirty id emitted by the product itself); (4) veh-1's telematics unit `T-77` is swapped to `T-120` on day 2 (two crosswalk rows with `valid_to` / `valid_from` at the swap time).
-- VINs: 17 characters, deterministic (`1FD` + zero-padded index), plates `TR-{idx:04d}`; two vehicles in different products carry the same VIN but different native ids (the matching evidence for tests).
+**Files (by track):** C new `src/transitos/clearance/` (`facts.py`, `rules.py`, `evaluate.py`, `rank.py`), `tools/policy.py` (delegates), `tools/read_adapters.py` and `write_adapters.py` (capability profile, call clearance), `tools/config/licence_classes.yaml`, `tools/config/vehicle_classes.yaml` (class order, ASSUMED); D `workflow/limits.py` (thin wrapper over clearance), `workflow/graph.py` (`do_check`, facts carry provenance), `workflow/reasoning.py` (`_assign`, `validate_output` call clearance, top-three ranking), `workflow/plan.py`; A `mocks/seed.py`, `mocks/workforce.py`; F `verification/invariants.py` (tripwire only), `fake_world.py`, new `scenarios_step1.py`, golden table `tests/verification/golden_clearance.yaml`; integration `integration/world.py`, `integration/fleets.py`; E panel shows clearance items and acknowledgement.
 
-- [ ] **Step 1: Failing tests:** `test_every_vehicle_has_vin_and_plate_in_each_product`, `test_retired_asset_present_in_maintenance_only`, `test_telematics_unit_without_asset`, `test_scheduling_emits_dirty_id`. Run; expect failures.
-- [ ] **Step 2: Implement** the seed additions and expose `vin`/`plate` on the three products' read endpoints; update `docs/MOCK_API.md`.
-- [ ] **Step 3: Run** `uv run pytest tests/mocks -q` then `make verify`.
-- [ ] **Step 4: Commit** `mocks: VIN/plate, deliberate ID mismatches, validity rows`.
+- [ ] **1.1 Clearance core.** Interfaces: `Datum(value: Any, basis: Basis, note: str = "")`; `CapabilityProfile(product: str, fields: dict[str, Basis])` (each read adapter returns one); `evaluate_option(option: Option, facts: Facts, policy: AgencyPolicy, at: datetime) -> Clearance` with `Clearance(items: list[ClearanceItem], excluded: bool, warnings: int, unverifiable: int, tier: Literal["exact","larger"])`; `safe_evaluate(...)` wraps it and returns `excluded=True` with a `clearance_error` item on any exception (fail closed). Tests: golden table (one row per rule x status x basis, written from the policy text, not from the code), property test that missing data never yields `violation` and never yields `pass`, and a test that an injected exception excludes the option.
+- [ ] **1.2 Qualification and fit rules.** Licence class, endorsement, trained vehicle type, lift/ramp training, expiry (inclusive on the day it expires), against `licence_classes.yaml`. Vehicle fit: exact is tier 1; larger class is tier 2 under `allow_larger` (`warn`, `requires_ack`); smaller is never a candidate; `max_vehicle_length_ft` violated by a larger vehicle is a violation. `exact` setting turns tier 2 into exclusion.
+- [ ] **1.3 Hours, spares, availability, double-booking.** Daily and weekly caps (weekly window 8 days, ASSUMED); rest and spread are optional rules; last-spare counts distinct spares consumed (greedy interval assignment, a spare may serve several non-overlapping blocks, overlapping use is a violation); availability window; double-booking. All inside clearance; `do_check`, `validate_output` and the adapter re-check call it. `workflow/limits.py` keeps its public names as thin wrappers so existing tests stay valid.
+- [ ] **1.4 Ranking.** `rank_options(options: list[tuple[Option, Clearance, float]]) -> RankedList`: excluded options dropped; order by `unverifiable`, then `warnings`, then soft score; `RankedList.top3` with `reason_first_beat_second: str`. The plan carries #1 as the steps and #2/#3 in `alternatives`; `Plan.rank_reason` holds the sentence. The decision record stores `vehicle_fit`, every non-native clearance item, and the approver's `acknowledged` list; execution refuses to start while a `requires_ack` item is unacknowledged.
+- [ ] **1.5 Capability profiles.** Each read adapter reports which fields it can supply natively; derived and assumed values are tagged at the point of derivation. Workforce mock gains a switch to drop operator fields (used by the half-missing scenario).
+- [ ] **1.6 Fleet.** agency-042 operators get licence class, endorsements, trained types, expiry dates, deterministic; `ARTIC` becomes a trained vehicle type. Baseline fleet in `integration/fleets.py` gets the new fields so the 24 scenarios keep their meaning (their expected outcomes do not change).
+- [ ] **1.7 Verification.** `verification/invariants.py` reduced to the tripwire on final numbers; remove its own qualification and spare logic; add `test_golden_table_matches_policy_text`.
+- [ ] **1.8 Tests and scenarios.** `tests/integration/test_agency_042_run.py::test_agency_042_severe_fault_completes_with_five_saga_steps`; new scenarios in `scenarios_step1.py`: `expired_training` (`ESCALATE_NO_SAFE_OPTION`), `endorsement_missing` (`ESCALATE_NO_SAFE_OPTION`), `spare_reused_across_blocks` (`PLAN_VALID`, one spare), `weekly_hours_cap` (`ESCALATE_NO_SAFE_OPTION`), `larger_class_fallback` (`PLAN_VALID` only after acknowledgement; no exact spare exists), `length_restriction_blocks_larger` (`ESCALATE_NO_SAFE_OPTION`), `half_operator_fields_missing` (`PLAN_VALID` after acknowledging the unverifiable items), `vehicle_fit_exact_excludes_larger` (`ESCALATE_NO_SAFE_OPTION`). Runner gains script op `("ack", [rule ids])`.
+- [ ] **1.9 Gate:** `make verify` pasted; A26, A49, A14 resolved in `ASSUMPTIONS.md`; Known gaps updated; reviewer R1 signs off.
 
-### Task 6: Three scenarios (Track F)
+## Step 2: Make identifiers messy (after Step 1 and contract v1.2)
 
-**Files:**
-- Modify: `src/transitos/verification/scenarios.py` (new `Outcome.NEEDS_HUMAN_MATCH = "needs-human-match"`; `Tweaks.crosswalk: str = "clean"`; three scenarios), `src/transitos/verification/invariants.py` (ambiguity invariant: no run exists and zero writes for an ambiguous event), `src/transitos/verification/fake_world.py`, `src/transitos/integration/world.py` (apply the crosswalk variant)
-- Test: existing `tests/verification/*`, `tests/e2e/*` (scenario list parametrised)
+**Files:** A `src/transitos/data/identifiers.py`, `mocks/seed.py` (new fleet profile `agency-088`), mocks (VIN/plate/name in each product), `mocks/crosswalk_seed.py`; B `plumbing/resolver.py`, `plumbing/native_id.py`, `plumbing/crosswalk.py`, `plumbing/pg_stores.py`, `plumbing/crosswalk_service.py`, watch adapters (carry native VIN/plate/name into event data); E `panel/app.py` (candidates on `/unresolved`); F `scenarios_step2.py`, runner op `("pick", canonical_id)`.
 
-**Interfaces:**
-- `device_swap`: the vehicle's telematics unit changes; the fault arrives from the new unit after the swap time -> `PLAN_VALID`; a second case in the same scenario delivers an old-unit event dated after the swap -> parked (asserts `dead_letters` contains it).
-- `ambiguous_match`: two assets match the event id -> `NEEDS_HUMAN_MATCH`, zero runs, zero writes, and after `("pick", "veh-1")` in the script the run starts and completes (`PLAN_VALID` path) -> script op `("pick", canonical_id)` added to the runner.
-- `renumbered_asset`: maintenance asset `1106` renumbered to `2106` with validity; a `PMOverdue` for `2106` -> `PLAN_VALID`.
+- [ ] **2.1 Identifiers.** `vin_check_digit(vin17: str) -> str` and `make_vin(wmi: str, vds: str, model_year: int, plant: str, serial: int) -> str` (49 CFR 565.15 weights and transliteration; I/O/Q rejected); `make_plate(rng: random.Random, jurisdiction: str = "ZZ") -> str`; dirtying helpers `dirty_fleet_number`, `dirty_plate`. Unit test reproduces the check digit of the worked example **extracted from the fetched eCFR HTML**, not from any transcription. WMI list committed after one cached vPIC check that each WMI is unrecognised (`synthetic: true`); real WMIs only in an opt-in fixture.
+- [ ] **2.2 Fleet profile `agency-088`.** Drawn from `fleet_mix.yaml`, seeded. Deliberate mess: VIN/plate in each product with inconsistent formatting; a telematics unit with no maintenance asset; a retired bus still in maintenance (asset status blocks new work orders); a non-revenue vehicle; a device swap on a known date; a cutaway with Ford chassis VIN vs body-builder make in maintenance. `crosswalk_seed.py` does not derive this profile's crosswalk from generator truth: the resolver sees only native ids, names, VIN, plate.
+- [ ] **2.3 Resolver.** `class Resolver(Protocol): def resolve(self, agency: str, product: str, evidence: Evidence, at: datetime) -> Resolution`. Order: normalise; exact VIN (validate check digit; bad digit on 17 chars is a dirty-VIN signal), score 1.0; exact normalised plate 0.95; rapidfuzz fleet number inside the agency namespace 0.6-0.9; filter to rows valid at `at`. `MATCH` if top >= 0.9 and lead over runner-up >= 0.1; `AMBIGUOUS` if two within 0.1 (human queue with candidates); else `NO_MATCH` (`events.failed` as today). `CrosswalkService._handle` calls it; exact-id fast path unchanged for existing agencies.
+- [ ] **2.4 Panel.** `/unresolved` returns candidates and evidence for AMBIGUOUS; a human choice via `POST /crosswalk` republishes.
+- [ ] **2.5 Scenarios (all `scenarios_step2.py`):** `device_swap` (`PLAN_VALID`; second delivery of an old-unit event after the swap is parked), `ambiguous_match` (`NEEDS_HUMAN_MATCH`, zero runs and zero writes until `pick`, then `PLAN_VALID`), `renumbered_asset` (`PLAN_VALID`), `dirty_id_normalised` (`PLAN_VALID`), `orphan_telematics_unit` (`DEAD_LETTER` or `NEEDS_HUMAN_MATCH`, zero writes), `retired_asset_blocks_wo` (`ESCALATE_NO_SAFE_OPTION`). A unit test per resolver rule and per Review Focus 2-5.
+- [ ] **2.6 Gate:** `make verify` pasted; ids `A75-A89` registered.
 
-- [ ] **Step 1: Add the scenarios and runner op;** run `make report`; expect the three new ones to fail.
-- [ ] **Step 2: Wire** `Tweaks.crosswalk` in `IntegrationWorld.apply` and `FakeWorld.apply`.
-- [ ] **Step 3: Run** `make verify`; expect 27/27 scenarios. Update README and ARCHITECTURE counts.
-- [ ] **Step 4: Run** `make verify-kafka` and `make verify-postgres` (one server at a time).
-- [ ] **Step 5: Commit** `verification: device_swap, ambiguous_match, renumbered_asset scenarios`.
+## Step 3: World engine (after Step 1 and contract v1.2; parallel with Step 2)
 
----
+**Files (Track A lead, new `src/transitos/world/`):** `truth.py` (ground-truth store), `script.py` (day scripts), `lag.py`, `actors.py`, `stochastic.py`; mocks read due observations through the engine; F `verification/latency.py`, `report.py`, `scenarios_step3.py`.
 
-## Stage 3: World engine, scripted first
+- [ ] **3.1 Truth store.** `GroundTruth(clock: SimClock, script: DayScript, seed: int)` with `.advance_to(t) -> list[Beat]` (each beat exactly once) and `.state(vehicle) -> Literal["ok","faulted","out_of_service"]`. `Beat(at, vehicle, kind: Literal["fault_on","fault_off","return_to_service","dvir","callout"], params)`. Example script: bus 3 coolant fault 09:40, clears 10:15, returns 11:30.
+- [ ] **3.2 Per-product lag.** `ProductLag(telematics_s=5, shop_rule_min=20, dispatcher_min=12)` (values ASSUMED); `ShopActor` and `DispatcherActor` apply truth to maintenance and scheduling after their delays; `WorldEngine.observations_log` records `(product, vehicle, kind, truth_at, visible_at)`.
+- [ ] **3.3 Stochastic mode (behind a flag, second).** Failures as a Poisson process in revenue miles at rate `1 / quantile` from `fault_rates.yaml`; system and SPN from `fault_mix.yaml` and `j1939_spn_fmi.yaml`; intermittent faults that clear and recur; operator call-out 0.07 per operator-shift (sensitivity 0.10), extra board one to two of ten. Same seed, identical timeline.
+- [ ] **3.4 Measurement.** `detection_latency(obs_log, audit) -> dict` with `truth_to_telematics_s`, `truth_to_first_proposal_s`, `truth_to_pull_s`, printed per scenario in the verification report.
+- [ ] **3.5 Scenarios:** `scripted_day_coolant` (`PLAN_VALID`), `intermittent_fault_clears` (`MONITOR` or attach), `callout_with_extra_board` (`PLAN_VALID`); tests that scripted days are byte-identical across runs and that a fixed-seed stochastic run reproduces exactly.
+- [ ] **3.6 Gate:** merge after Step 2; `make verify` pasted; ids `A90-A104` registered.
 
-### Task 7: Ground truth and day scripts (Track A, new package `src/transitos/mocks/world/`)
+## Step 4: Two cheap behaviours (after Steps 2 and 3; one agent, sequential parts)
 
-**Files:**
-- Create: `src/transitos/mocks/world/truth.py`, `script.py`, `__init__.py`
-- Test: `tests/mocks/world/test_truth.py`
+- [ ] **4.1 Pending Repair.** `mocks/maintenance.py`: `PendingRepair` collection, `POST /pending-repairs`, `GET /pending-repairs`; `ForemanActor(delay_min, parts_wait_prob, seed)` converts to a work order, sometimes `WAITING_PARTS`, sometimes deferring back to `PENDING`. Status vocabulary `OPEN`, `IN_PROGRESS`, `WAITING_PARTS`, `PENDING`, `COMPLETE`, WO `CLOSED`. Adapter status map: `WAITING_PARTS` to `in_progress`, `PENDING` to `open` (A23 extended). Poller must not emit `WorkOrderClosed` for `WAITING_PARTS` or `PENDING`. Delays from `repair_durations.yaml` or `shop_behaviour.yaml`. Scenarios `repair_with_parts_wait` (`PLAN_VALID`, run stays in `wait_for_repair`), `human_wo_exists_pending` (`PLAN_VALID`, no duplicate).
+- [ ] **4.2 Timestamp quirks.** Maintenance and workforce CSV return zone-less local time (agency `timezone` in `tools/config/<agency>.yaml`, `zoneinfo`); telematics may emit epoch milliseconds. `tools/common.py`: `to_utc(naive: str, tz: str, *, fold: int = 0) -> datetime`; fall-back ambiguity resolved by a documented rule (first occurrence, `fold=0`; an optional `utc_offset` field disambiguates when present); spring-forward gap resolves forward by the gap; a string that carries a zone raises `ValueError`. Adapters never emit a naive timestamp (test asserts on every adapter output). Scenarios `local_time_normalised`, `dst_fallback_event`.
+- [ ] **4.3 Gate:** `make verify`, then `make verify-postgres`, then `make verify-kafka`, one server at a time; ids `A105-A114`.
 
-**Interfaces:**
-- `Beat(at: datetime, vehicle: str, kind: Literal["fault_on","fault_off","return_to_service","dvir"], params: dict)` (frozen dataclass).
-- `DayScript(agency: str, beats: tuple[Beat, ...])`; `DayScript.example_coolant_fault(day: date) -> DayScript` = bus 3 `fault_on` 09:40 (SPN 110, FMI 0), `fault_off` 10:15, `return_to_service` 11:30.
-- `GroundTruth(clock: SimClock, script: DayScript, seed: int)`: `.advance_to(t: datetime) -> list[Beat]` (beats now due, in order, each exactly once), `.state(vehicle: str) -> Literal["ok","faulted","out_of_service"]`.
+## Execution: waves, agents, supervision
 
-- [ ] **Steps:** failing tests for ordering, exactly-once delivery across repeated `advance_to`, and seed determinism; implement; `uv run pytest tests/mocks/world -q`; commit `mocks/world: ground truth and day scripts`.
+| Wave | Who | Work | Parallel? |
+|---|---|---|---|
+| 0 (before agents) | Supervisor | `.gitignore` fix (P7); the three request files; apply contract v1.2 in one commit; `make schemas`; reserve assumption ids; place the phase prompt, digest, and manifest in the repo | alone |
+| 1 | Builder S1 (steps 1.1-1.7). Builder DP (P1-P6) | Step 1 and the data pipeline | yes (disjoint directories) |
+| Gate 2 | Reviewer R1 on Step 1; supervisor merges; `make verify` | | |
+| 2 | Builder S2 (Step 2). Builder S3 (Step 3) | identity resolver; world engine | yes, separate worktrees; each in its own scenario file |
+| Gate 3 | Reviewers R2, R3; merge S2 then S3; `make verify` after each | | |
+| 3 | Builder S4 (Step 4) | pending repair, then timestamps (same file, sequential) | no |
+| Final | Supervisor | `make verify`, `verify-postgres`, `verify-kafka` (one server at a time); refresh `ARCHITECTURE.md`, `ASSUMPTIONS.md`, `MOCK_API.md`, README counts, report | alone |
 
-### Task 8: Per-product lag (Track A)
+**Supervision protocol**
+- Each builder works in its own git worktree, edits only its own directories and tests, and runs only the default (SQLite) profile. Only the supervisor starts Kafka or Postgres.
+- A builder may launch Haiku workers only, at most 4 at a time, depth 2 (workers launch nothing). Workers get mechanical, fully specified jobs (test boilerplate from a spec, hand-written fixtures, header inspection, doc tables, grep, running a command). They never touch `contracts/`, hard-limit logic, resolver thresholds, or reviews. The builder verifies every worker output before using it.
+- A builder that needs a larger model or more reasoning effort stops and sends an escalation request (what is blocked, what was tried, what is wanted). Only the supervisor upgrades.
+- Acceptance checklist per report (a report missing any item is sent back): pasted command output; only own-directory files touched; assumption ids tagged and registered; seeded and deterministic; no network in tests; 24 existing scenarios green; Review Focus cases covered; number of Haiku workers used.
+- Anything on hard limits, identity resolution, or timestamps also gets an independent reviewer agent plus a supervisor read of the diff.
+- A cross-track blocker: write `coordination/handoffs/<track>-phase10.md` and stop.
 
-**Files:**
-- Create: `src/transitos/mocks/world/lag.py`, `actors.py`
-- Modify: `src/transitos/mocks/telematics.py`, `maintenance.py`, `scheduling.py` (each reads due observations from the engine)
-- Test: `tests/mocks/world/test_lag.py`
+## Risks
 
-**Interfaces:**
-- `ProductLag(telematics_s: int = 5, shop_rule_min: int = 20, dispatcher_min: int = 12)`; `WorldEngine(truth: GroundTruth, lag: ProductLag)` with `.tick() -> None` that, on each beat, schedules: telematics fault at `at + 5 s`; `ShopActor` creates a maintenance record `shop_rule_min` later; `DispatcherActor` flips scheduling status `dispatcher_min` later (and only when the vehicle is not already out of service in scheduling).
-- `WorldEngine.observations_log: list[Observation(product, vehicle, kind, truth_at, visible_at)]` (feeds Stage 3's latency measure).
+1. Spare reuse touches four places (graph check, reasoning validator, adapter re-check, F invariant); mitigated by one table-driven test of the same cases against all four.
+2. Dataset URLs unverified; mitigated by P2 and the fallbacks.
+3. File collisions; mitigated by per-step scenario files, reserved assumption id blocks, one agent for the shared maintenance mock.
+4. Nested-agent permission or depth limits may differ from assumption; mitigated by a small trial before Wave 1.
+5. Resolver thresholds are invented (0.9 and 0.1 from the prompt); they are ASSUMED and tested at the boundaries.
+6. Public-repo hygiene: no raw data, no real alert text, no VINs that decode to real vehicles.
 
-- [ ] **Steps:** failing tests (telematics sees the fault 5 s after truth; maintenance after 20 min; scheduling after 12 min and never before the maintenance record when the script says so); implement; wire `/sim/world/tick`; commit.
+## Gate 1 questions: resolved
 
-### Task 9: Detection-latency metric (Track F)
-
-**Files:**
-- Create: `src/transitos/verification/latency.py`; Modify: `verification/report.py` (adds `latency` block to the JSON report)
-- Test: `tests/verification/test_latency.py`
-
-**Interfaces:**
-- `detection_latency(obs_log: list[Observation], audit: list[AuditEvent]) -> dict[str, float]` with keys `truth_to_telematics_s`, `truth_to_first_proposal_s`, `truth_to_pull_s` (seconds, sim time).
-- [ ] **Steps:** failing test on the example script (proposal is produced within one poll tick of the telematics event); implement; run `make verify`; commit `verification: detection latency`. Randomness (failure benchmarks 2,700–12,000 miles) is explicitly deferred until after this stage.
-
----
-
-## Stage 4: Two behaviours from the research
-
-### Task 10: Pending Repair converted by a simulated foreman
-
-**Files:**
-- Modify: `src/transitos/mocks/maintenance.py` (new `pending_repair` collection, `POST /pending-repairs`, `GET /pending-repairs`, WO status `parts_wait`), `src/transitos/mocks/world/actors.py` (`ForemanActor`), `src/transitos/plumbing/watch/` maintenance poller (parts-wait is not "closed": no `WorkOrderClosed`), `src/transitos/tools/read_adapters.py` (status map: `parts_wait -> in_progress`, A23)
-- Test: `tests/mocks/test_pending_repair.py`, `tests/integration/test_parts_wait.py`
-
-**Interfaces:**
-- `ForemanActor(delay_min: int, parts_wait_prob: float, seed: int)`: converts a pending repair to a WO after the delay; with seeded probability puts it in `parts_wait` for `parts_wait_hours` before `in_progress`.
-- TransitOS `create_work_order` becomes "create pending repair if the product only exposes that" behind a registry flag `maintenance.mode: pending_repair`; the adapter's read-back accepts the converted WO by idempotency key.
-
-- [ ] **Steps:** failing tests (pending repair converted after delay; `parts_wait` does not resume the run; closing resumes it); implement; `make verify`; commit.
-
-### Task 11: Zone-less local timestamps
-
-**Files:**
-- Modify: `src/transitos/mocks/maintenance.py` and `mocks/workforce.py` (render naive local time using an agency zone), `src/transitos/mocks/seed.py` (`AgencyCfg.tz`), `src/transitos/tools/common.py` (create `to_utc(naive: str, tz: str) -> datetime`), `tools/read_adapters.py` (use it for work orders, PM, and the operator CSV), `tools/config/agency-042.yaml` (`timezone: America/Los_Angeles`)
-- Test: `tests/tools/test_local_time.py`
-
-**Interfaces:**
-- `to_utc(naive: str, tz: str) -> datetime`: parses `YYYY-MM-DDTHH:MM:SS` or `HH:MM` on a given date; ambiguous fall-back hour resolves to the first occurrence (`fold=0`); a nonexistent spring-forward time resolves forward by the gap; raises `ValueError` on strings that carry a zone (mixed formats are a bug).
-- [ ] **Steps:** failing tests including the two DST edge cases (Review Focus); implement; run `make verify`, `make verify-kafka`, `make verify-postgres`; commit; update README numbers and `docs/ASSUMPTIONS.md` (new assumptions: pending-repair semantics, local-time rendering).
-
----
-
-## Not in this plan
-
-LLM provider wiring (after Stage 3, owner decision), random fault generation calibrated to failure benchmarks (after Stage 3), Docker compose profile, separate processes per mock.
+All five answered by the owner (Amendment A). Open item carried forward: the history-rewrite force-push happens after this phase. Until then every commit stays local (not pushed), and the rewrite is redone on the final history from a fresh clone; `~/transitOS_poc_rewrite_tmp` is stale.

@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .clearance import ClearanceItem
+
 VehicleStatus = Literal["ready", "in_service", "out_of_service", "reserved"]
 
 
@@ -14,6 +16,7 @@ class Needs(BaseModel):
     wheelchair_positions: int = 0
     lift: bool = False
     type: str | None = None
+    max_vehicle_length_ft: float | None = None  # v1.2 (C-1): a declared block restriction
 
 
 class Vehicle(BaseModel):
@@ -26,6 +29,7 @@ class Vehicle(BaseModel):
     status: VehicleStatus = "ready"
     depot: str = ""
     ev_soc: float | None = None
+    length_ft: float | None = None  # v1.2 (C-1)
 
 
 class Block(BaseModel):
@@ -47,6 +51,14 @@ class Operator(BaseModel):
     available_from: datetime | None = None
     available_to: datetime | None = None
     on_extra_board: bool = False
+    # v1.2 (D-1): qualification model; `qualifications` is legacy and ignored when these are set
+    licence_class: Literal["A", "B", "C"] | None = None
+    endorsements: list[str] = Field(default_factory=list)
+    trained_vehicle_types: list[str] = Field(default_factory=list)
+    training_valid_to: dict[str, datetime] = Field(default_factory=dict)
+    medical_valid_to: datetime | None = None
+    last_duty_end: datetime | None = None
+    duty_start_today: datetime | None = None
 
 
 class WorkOrder(BaseModel):
@@ -84,6 +96,9 @@ class Plan(BaseModel):
     alternatives: list[dict[str, Any]] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     fallback_used: bool = False  # True when code-ranked fallback replaced model output
+    clearance: list[ClearanceItem] = Field(default_factory=list)  # v1.2 (C-1)
+    rank_reason: str = ""
+    vehicle_fit: str | None = None
 
 
 class RunState(BaseModel):
@@ -103,6 +118,7 @@ class RunState(BaseModel):
     compensations_done: list[Step] = Field(default_factory=list)
     wo_id: str | None = None
     audit_refs: list[str] = Field(default_factory=list)
+    acknowledged: list[str] = Field(default_factory=list)  # v1.2 (C-1): rule ids the approver acknowledged
 
 
 RUN_STATES = [
@@ -124,3 +140,6 @@ class DecisionRecord(BaseModel):
     human_action: dict[str, Any] = Field(default_factory=dict)
     actions: list[dict[str, Any]] = Field(default_factory=list)
     outcome: Literal["done", "compensated", "escalated", "rejected", "pending"] = "pending"
+    clearance: list[dict[str, Any]] = Field(default_factory=list)  # v1.2 (C-1)
+    acknowledged: list[str] = Field(default_factory=list)
+    vehicle_fit: str | None = None

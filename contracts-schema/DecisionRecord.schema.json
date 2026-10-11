@@ -57,6 +57,33 @@
       ],
       "title": "Outcome",
       "type": "string"
+    },
+    "clearance": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Clearance",
+      "type": "array"
+    },
+    "acknowledged": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Acknowledged",
+      "type": "array"
+    },
+    "vehicle_fit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Vehicle Fit"
     }
   },
   "required": [

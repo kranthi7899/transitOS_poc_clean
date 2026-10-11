@@ -28,6 +28,18 @@
           ],
           "default": null,
           "title": "Type"
+        },
+        "max_vehicle_length_ft": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Vehicle Length Ft"
         }
       },
       "title": "Needs",

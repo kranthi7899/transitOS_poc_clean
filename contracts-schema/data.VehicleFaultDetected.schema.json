@@ -85,6 +85,42 @@
       ],
       "default": null
     },
+    "native_vin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Vin"
+    },
+    "native_plate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Plate"
+    },
+    "native_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Name"
+    },
     "native_vehicle_id": {
       "title": "Native Vehicle Id",
       "type": "string"

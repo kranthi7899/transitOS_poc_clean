@@ -4,7 +4,9 @@ __pycache__/
 *.sqlite
 .pytest_cache/
 .ruff_cache/
-data/
+data/raw/
+data/reference.db
+data/MANIFEST.lock.json
 .claude/worktrees/
 journal/*.tmp
 journal/.lock

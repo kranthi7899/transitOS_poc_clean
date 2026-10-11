@@ -56,6 +56,84 @@
       "default": false,
       "title": "On Extra Board",
       "type": "boolean"
+    },
+    "licence_class": {
+      "anyOf": [
+        {
+          "enum": [
+            "A",
+            "B",
+            "C"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Licence Class"
+    },
+    "endorsements": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Endorsements",
+      "type": "array"
+    },
+    "trained_vehicle_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Trained Vehicle Types",
+      "type": "array"
+    },
+    "training_valid_to": {
+      "additionalProperties": {
+        "format": "date-time",
+        "type": "string"
+      },
+      "title": "Training Valid To",
+      "type": "object"
+    },
+    "medical_valid_to": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Medical Valid To"
+    },
+    "last_duty_end": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Duty End"
+    },
+    "duty_start_today": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duty Start Today"
     }
   },
   "required": [

@@ -1,5 +1,51 @@
 {
   "$defs": {
+    "ClearanceItem": {
+      "properties": {
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "warn",
+            "unverifiable",
+            "not_evaluated",
+            "violation"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "basis": {
+          "enum": [
+            "native",
+            "derived",
+            "assumed",
+            "unknown"
+          ],
+          "title": "Basis",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "requires_ack": {
+          "default": false,
+          "title": "Requires Ack",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rule",
+        "status",
+        "basis"
+      ],
+      "title": "ClearanceItem",
+      "type": "object"
+    },
     "Plan": {
       "properties": {
         "decision": {
@@ -55,6 +101,30 @@
           "default": false,
           "title": "Fallback Used",
           "type": "boolean"
+        },
+        "clearance": {
+          "items": {
+            "$ref": "#/$defs/ClearanceItem"
+          },
+          "title": "Clearance",
+          "type": "array"
+        },
+        "rank_reason": {
+          "default": "",
+          "title": "Rank Reason",
+          "type": "string"
+        },
+        "vehicle_fit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vehicle Fit"
         }
       },
       "required": [
@@ -253,6 +323,13 @@
         "type": "string"
       },
       "title": "Audit Refs",
+      "type": "array"
+    },
+    "acknowledged": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Acknowledged",
       "type": "array"
     }
   },

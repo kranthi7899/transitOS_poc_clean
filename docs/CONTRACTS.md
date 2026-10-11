@@ -29,3 +29,16 @@ Rules: schemas only grow; consumers ignore unknown fields; breaking change = new
 | `ActionName` includes `cancel_work_order` (request F-1). | `objects.py` | `Step.compensation` for `create_work_order`. |
 
 `tests/contracts/test_contracts.py::test_committed_json_schemas_match_models` fails if `contracts-schema/` is stale.
+
+## v1.2 additions (Phase 10, additive only; requests `B-1`, `C-1`, `D-1`; schemas regenerated)
+
+| Change | Where | Why |
+|---|---|---|
+| `Operator`: `licence_class`, `endorsements`, `trained_vehicle_types`, `training_valid_to`, `medical_valid_to`, `last_duty_end`, `duty_start_today` (legacy `qualifications` stays) | `objects.py` | Real qualification model (D-1); fixes A26. |
+| `Limits`: `max_operator_hours_week` (70), `min_rest_hours` (8), `max_spread_hours` (15) | `policy.py` | Agency-configurable hours rules, 49 CFR 395.5 defaults (ASSUMED). |
+| `AgencyPolicy.vehicle_fit` (`exact` or `allow_larger`, default `allow_larger`) | `policy.py` | Graded vehicle fit (Amendment A). |
+| `Needs.max_vehicle_length_ft`, `Vehicle.length_ft` | `objects.py` | A declared block restriction can hard-block a larger vehicle. |
+| `ClearanceItem` (rule, status, basis, detail, requires_ack) | `clearance.py` | One rule's verdict plus the basis of its data. Missing data is never a violation, never a silent pass. |
+| `Plan.clearance`, `Plan.rank_reason`, `Plan.vehicle_fit`; `RunState.acknowledged`; `DecisionRecord.clearance`, `.acknowledged`, `.vehicle_fit` | `objects.py` | Show every non-native item and the approver's acknowledgement. |
+| `CrosswalkEntry`: `valid_from` (inclusive), `valid_to` (exclusive), `vin`, `plate`, `display_name`; `Resolution`, `Candidate`; `Crosswalk.lookup(..., at=)` and `Crosswalk.candidates(...)` | `crosswalk.py` | Time-bounded identity and explicit MATCH / AMBIGUOUS / NO_MATCH (B-1). |
+| Vehicle-event data: optional `native_vin`, `native_plate`, `native_name` | `events.py` | Identity evidence for the resolver. |

@@ -22,6 +22,10 @@ class VehicleRefs(BaseModel):
 
 class _VehicleData(_Data):
     refs: VehicleRefs | None = None  # set by the crosswalk on events.resolved
+    # v1.2 (B-1): identity evidence as the product reported it, for the resolver
+    native_vin: str | None = None
+    native_plate: str | None = None
+    native_name: str | None = None
 
 
 class Lamps(BaseModel):

@@ -64,6 +64,42 @@
       ],
       "default": null
     },
+    "native_vin": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Vin"
+    },
+    "native_plate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Plate"
+    },
+    "native_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Name"
+    },
     "native_asset_id": {
       "title": "Native Asset Id",
       "type": "string"

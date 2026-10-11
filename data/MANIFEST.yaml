@@ -1,0 +1,193 @@
+# data/MANIFEST.yaml
+# Hand-curated list of external sources for Phase 10. Do not edit from code: the fetch tool writes
+# results (sha256, bytes, fetched_at, http_status, verified) to data/MANIFEST.lock.json.
+#
+# Provenance of this file: a web research run on 2026-10-11. Nothing here was downloaded by that run,
+# so every `verified` below means "the link was seen on a page" at best, never "the file was fetched".
+# Claude Code must verify each entry (status, content type, headers, row count) before relying on it.
+#
+# fetch:  auto            download unattended into target_path
+#         manual          landing page: read it, find the direct link, record it in the lock file
+#         reference_only  never downloaded unattended (read for shapes or vocabulary only)
+# kind:   file | api | landing | repo
+# used_for says which mock field, config file or scenario the source feeds.
+
+version: 1
+user_agent: "transitos-poc/0.1 (research; non-commercial; contact via repository owner)"
+throttle_seconds: 1.0
+
+datasets:
+  - id: ntd_rvi_2024
+    kind: file
+    fetch: auto
+    url: "https://www.transit.dot.gov/sites/fta.dot.gov/files/2025-10/2024%20Revenue%20Vehicle%20Inventory_250820.xlsx"
+    landing: "https://www.transit.dot.gov/ntd/data-product/2024-annual-database-revenue-vehicle-inventory"
+    format: xlsx
+    license: "US Government work (public domain; inferred, record anyway)"
+    expected_size: "about 4.77 MB"
+    expected_rows: null
+    target_path: data/raw/ntd_rvi_2024/rvi_2024.xlsx
+    used_for: "data/derived/fleet_mix.yaml: make, model, year, seats, length, fuel, ADA; vehicle_type enum"
+    notes: "Rows are fleets (groups of identical vehicles), probably no VINs or plates. Exact column headers UNKNOWN: print them. Data dictionary is linked from the landing page."
+    verified: false
+
+  - id: ntd_breakdowns_2022_2024
+    kind: api
+    fetch: auto
+    url: "https://data.transportation.gov/resource/amkt-4ehs.csv?$limit=50000"
+    landing: "https://www.transit.dot.gov/ntd/data-product/2024-breakdowns"
+    format: csv
+    license: "US Government work (public domain)"
+    expected_size: null
+    expected_rows: 3731
+    target_path: data/raw/ntd_breakdowns/amkt-4ehs.csv
+    used_for: "data/derived/fault_rates.yaml: miles between major failures by mode and agency"
+    notes: >
+      Socrata returns a small page unless $limit is set. Columns seen on the FTA query page: agency, ntd_id,
+      report_year, mode, mode_name, type_of_service, agency_voms, mode_voms, major_mechanical_failures,
+      other_mechanical_failures, total_mechanical_failures, vehicle_passenger_car_revenue (revenue miles),
+      plus *_1 / *_2 columns that are probably data-quality flags. Confirm all of this.
+    verified: false
+
+  - id: ntd_breakdowns_agency_totals
+    kind: api
+    fetch: auto
+    url: "https://data.transportation.gov/resource/fk8n-qvag.csv?$limit=50000"
+    format: csv
+    license: "US Government work (public domain)"
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/ntd_breakdowns/fk8n-qvag.csv
+    used_for: "agency-level sanity check of failure rates"
+    verified: false
+
+  - id: ntd_vehicle_type_count
+    kind: api
+    fetch: auto
+    url: "https://data.transportation.gov/api/v3/views/nimp-626k/export.csv?accessType=DOWNLOAD"
+    landing: "https://data.transportation.gov/Public-Transit/2022-2024-NTD-Annual-Data-Vehicles-Type-Count-by-A/nimp-626k"
+    format: csv
+    license: "https://www.usa.gov/government-works"
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/ntd_vehicles/nimp-626k.csv
+    used_for: "fleet mix per agency (bus vs cutaway vs articulated); realistic fleet sizes for agencies"
+    notes: "97 columns (for example ntd_id, agency_voms, bus). URL came from catalogue metadata. If the v3 export needs auth, fall back to /resource/nimp-626k.csv?$limit=50000."
+    verified: false
+
+  - id: ntd_vehicle_age_distribution
+    kind: api
+    fetch: auto
+    url: "https://data.transportation.gov/resource/6abt-uhgq.csv?$limit=50000"
+    landing: "https://data.transportation.gov/Public-Transit/2022-2024-NTD-Annual-Data-Vehicles-Age-Distributio/6abt-uhgq"
+    format: csv
+    license: "US Government work (public domain)"
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/ntd_vehicles/6abt-uhgq.csv
+    used_for: "fleet age mix (optional)"
+    notes: "Resource URL guessed from the Socrata pattern; the research only confirmed that the dataset exists."
+    verified: false
+
+  - id: ntd_vehicle_maintenance_2024
+    kind: landing
+    fetch: manual
+    url: "https://www.transit.dot.gov/ntd/data-product/2024-annual-database-vehicle-maintenance"
+    format: xlsx (via landing page)
+    license: "US Government work (public domain)"
+    expected_size: "about 77 KB"
+    expected_rows: null
+    target_path: data/raw/ntd_vm_2024/
+    used_for: "cross-check of the breakdowns table (optional)"
+    notes: "Direct file URL was not captured."
+    verified: false
+
+  - id: vpic_api
+    kind: api
+    fetch: reference_only
+    url: "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{VIN}?format=json"
+    landing: "https://vpic.nhtsa.dot.gov/api/"
+    format: json
+    license: "US Government work; automated rate control, no key, no published limit"
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/vpic/cache/
+    used_for: "check candidate WMIs are unrecognised; decode demo for the opt-in realistic fixture"
+    notes: "Also GetWMIsForManufacturer/{name}?format=json and DecodeVINValuesBatch (POST, about 50 VINs per call, reported not official). Call a handful of times, cache every response, never from tests."
+    verified: false
+
+  - id: ecfr_565_15
+    kind: file
+    fetch: auto
+    url: "https://www.ecfr.gov/current/title-49/subtitle-B/chapter-V/part-565/subpart-B/section-565.15"
+    format: html
+    license: "US Government work (public domain)"
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/regs/ecfr_565_15.html
+    used_for: "VIN check-digit rule and the worked example used as a unit test"
+    verified: false
+
+  - id: ecfr_395_5
+    kind: file
+    fetch: auto
+    url: "https://www.ecfr.gov/current/title-49/subtitle-B/chapter-III/subchapter-B/part-395/subpart-A/section-395.5"
+    format: html
+    license: "US Government work (public domain)"
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/regs/ecfr_395_5.html
+    used_for: "hours policy defaults (config/hours_policy)"
+    verified: false
+
+  - id: cincinnati_fleet_work_orders
+    kind: api
+    fetch: manual
+    url: "https://data.cincinnati-oh.gov/resource/2a8x-bxjm.csv?$limit=5"
+    landing: "https://data.cincinnati-oh.gov/Thriving-Neighborhoods/Fleet-Preventative-Maintenance-Repair-Work-Orders/2a8x-bxjm"
+    format: csv
+    license: null
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/cincinnati_wo/
+    used_for: "data/derived/repair_durations.yaml (optional): shape of open-to-close times"
+    notes: "Probe first. Socrata export URL, column names and licence are all unverified. General city fleet, not transit buses: use shape, not absolute values. If unusable, use config/shop_behaviour.yaml (ASSUMED) and move on."
+    verified: false
+
+  - id: samsara_openapi
+    kind: repo
+    fetch: reference_only
+    url: "https://github.com/samsarahq/api-docs"
+    format: "git repo (swagger.json, OpenAPI 2.0)"
+    license: null
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/samsara_api_docs/
+    used_for: "telematics mock response shapes. Reference only: no LICENSE seen, so do not vendor and do not generate clients from it."
+    verified: false
+
+  - id: gtfsrt_alerts_mbta
+    kind: file
+    fetch: reference_only
+    url: "https://cdn.mbta.com/realtime/Alerts.pb"
+    format: protobuf (GTFS-Realtime)
+    license: null
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/gtfsrt/mbta_alerts.pb
+    used_for: "learn alert style only (cause and effect pairing, length). Write fictional templates; commit no real text."
+    notes: "Needs no API key (reported by a third party). MBTA terms not checked. Parse with `uv add gtfs-realtime-bindings` in the data extra."
+    verified: false
+
+  - id: gtfsrt_alerts_metrolink
+    kind: file
+    fetch: reference_only
+    url: "https://cdn.simplifytransit.com/metrolink/alerts/service-alerts.pb"
+    format: protobuf (GTFS-Realtime)
+    license: null
+    expected_size: null
+    expected_rows: null
+    target_path: data/raw/gtfsrt/metrolink_alerts.pb
+    used_for: "alert cause and effect examples (commuter rail, so style only)"
+    notes: "Agency page says to use the endpoint without an API key. Terms not checked."
+    verified: false

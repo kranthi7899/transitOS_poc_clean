@@ -54,6 +54,18 @@
       ],
       "default": null,
       "title": "Ev Soc"
+    },
+    "length_ft": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Length Ft"
     }
   },
   "required": [

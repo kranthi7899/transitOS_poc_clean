@@ -21,6 +21,21 @@
           "default": 1000,
           "title": "Pm Urgent Overdue Mi",
           "type": "integer"
+        },
+        "max_operator_hours_week": {
+          "default": 70.0,
+          "title": "Max Operator Hours Week",
+          "type": "number"
+        },
+        "min_rest_hours": {
+          "default": 8.0,
+          "title": "Min Rest Hours",
+          "type": "number"
+        },
+        "max_spread_hours": {
+          "default": 15.0,
+          "title": "Max Spread Hours",
+          "type": "number"
         }
       },
       "title": "Limits",
@@ -51,6 +66,15 @@
     },
     "limits": {
       "$ref": "#/$defs/Limits"
+    },
+    "vehicle_fit": {
+      "default": "allow_larger",
+      "enum": [
+        "exact",
+        "allow_larger"
+      ],
+      "title": "Vehicle Fit",
+      "type": "string"
     }
   },
   "required": [
