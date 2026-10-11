@@ -1,0 +1,119 @@
+# Derived by transitos.data.derive. Source dataset: cincinnati_closed_2022_2024 (City of Cincinnati Fleet
+# Preventative Maintenance & Repair Work Orders, 2a8x-bxjm). Rows read: 28241. Licence: Socrata
+# licenseId PUBLIC_DOMAIN (observed in the dataset metadata). General city fleet: shape only (A124). Whole-day resolution.
+# Query: closed work orders with datetime_open in 2022-2024 (see data/EXTRA_SOURCES.yaml).
+# Date derived: 2026-10-11.
+source: Cincinnati Fleet Preventative Maintenance & Repair Work Orders (2a8x-bxjm), closed, opened 2022-2024
+source_dataset: cincinnati_closed_2022_2024
+licence: PUBLIC_DOMAIN (Socrata licenseId, observed)
+derived_on: '2026-10-11'
+rows_total: 28241
+rows_dropped_bad_dates: 2
+resolution_note: 'timestamps are whole days (all at midnight), so durations are in whole days; a general city fleet,
+  not transit buses: use the SHAPE (skew, tail), not the absolute values'
+by_job_type:
+  REPAIR:
+    n: 21355
+    open_to_closed_days:
+      p10: 1.0
+      p25: 6.0
+      p50: 17.0
+      p75: 36.0
+      p90: 69.0
+      share_zero_days: 0.045
+    lognormal_fit:
+      'on': open_to_closed_days > 0
+      n_positive: 20393
+      mu: 2.7462
+      sigma: 1.2757
+    open_to_first_labor_days:
+      p10: 0.0
+      p25: 0.0
+      p50: 0.0
+      p75: 0.0
+      p90: 3.0
+      share_zero_days: 0.7969
+    first_labor_to_finished_days:
+      p10: 0.0
+      p25: 0.0
+      p50: 3.0
+      p75: 14.0
+      p90: 39.0
+      share_zero_days: 0.2995
+    delay_hours:
+      share_positive: 0.0594
+      p10: 25.01
+      p25: 67.99
+      p50: 240.19
+      p75: 718.27
+      p90: 1388.33
+  PM:
+    n: 6884
+    open_to_closed_days:
+      p10: 1.0
+      p25: 4.0
+      p50: 10.0
+      p75: 23.0
+      p90: 41.0
+      share_zero_days: 0.0328
+    lognormal_fit:
+      'on': open_to_closed_days > 0
+      n_positive: 6658
+      mu: 2.3064
+      sigma: 1.1528
+    open_to_first_labor_days:
+      p10: 0.0
+      p25: 0.0
+      p50: 0.0
+      p75: 1.0
+      p90: 4.0
+      share_zero_days: 0.6728
+    first_labor_to_finished_days:
+      p10: 0.0
+      p25: 0.0
+      p50: 0.0
+      p75: 3.0
+      p90: 9.0
+      share_zero_days: 0.5078
+    delay_hours:
+      share_positive: 0.0407
+      p10: 3.92
+      p25: 6.61
+      p50: 21.87
+      p75: 44.25
+      p90: 126.15
+road_call_repairs:
+  n: 1461
+  open_to_closed_days:
+    p10: 1.0
+    p25: 2.0
+    p50: 8.0
+    p75: 26.0
+    p90: 51.0
+    share_zero_days: 0.0821
+  lognormal_fit:
+    'on': open_to_closed_days > 0
+    n_positive: 1341
+    mu: 2.228
+    sigma: 1.3831
+  open_to_first_labor_days:
+    p10: 0.0
+    p25: 0.0
+    p50: 0.0
+    p75: 0.0
+    p90: 0.0
+    share_zero_days: 0.9635
+  first_labor_to_finished_days:
+    p10: 0.0
+    p25: 0.0
+    p50: 2.0
+    p75: 7.0
+    p90: 25.0
+    share_zero_days: 0.3322
+  delay_hours:
+    share_positive: 0.0178
+    p10: 32.94
+    p25: 73.93
+    p50: 144.01
+    p75: 316.3
+    p90: 431.78
