@@ -68,8 +68,8 @@ def scenario_fleet(t: Tweaks):
         f.blocks.append({"id": BLOCK_ID, "vehicle_idx": 1, "vehicle": "BUS-44", "operator": "OP-1",
                          "start": iso(start), "end": iso(start + timedelta(hours=4)), "start_depot": "North",
                          "needs": needs})
-        if g("second_block", False):      # a later, non-overlapping block on the faulty vehicle (spare reuse)
-            s2 = now + timedelta(hours=6)
+        if g("second_block", False):      # a second block on the faulty vehicle (spare reuse, or overlap)
+            s2 = now + timedelta(hours=g("second_block_start_h", 6.0))
             f.blocks.append({"id": "blk-2", "vehicle_idx": 1, "vehicle": "BUS-44", "operator": "OP-2",
                              "start": iso(s2), "end": iso(s2 + timedelta(hours=2)), "start_depot": "North",
                              "needs": {**needs, "seats": 20, "wheelchair_positions": 0, "lift": False}})

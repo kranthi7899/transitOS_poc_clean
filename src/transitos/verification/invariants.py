@@ -27,53 +27,57 @@ def _effective(obs: Observation, action: str) -> list[WriteRecord]:
     return [w for w in obs.writes if w.action == action and w.ok and not w.compensation and w.key not in undone]
 
 
-# 1. Hard limits -----------------------------------------------------------------------------------
+# 1. Hard limits: an outcome tripwire on FINAL NUMBERS only ---------------------------------------
+# Phase 10 (amendment A, Q2): the rules themselves (qualification, fit, hours, spares, double-booking) live in
+# `transitos.clearance`, once. Verification keeps no second implementation; it only checks that the numbers
+# the world ended up with are sane, and the golden table (tests/verification/golden_clearance.yaml, written
+# from the policy text) checks the rules.
+def _overlap(a, b) -> bool:
+    return a.start < b.end and b.start < a.end
+
+
 def hard_limits(obs: Observation) -> list[Violation]:
-    """Every surviving reassign/assign respects vehicle needs, min spares, operator hours and quals."""
+    """Tripwire: (1) no operator ended up over the daily/weekly hours cap, (2) the minimum number of spares is
+    still left, (3) nothing a surviving write touched is double-booked."""
     name, out = "hard_limits", []
-    vehicles = {v.id: v for v in obs.vehicles}
     blocks = {b.id: b for b in obs.blocks}
     operators = {o.id: o for o in obs.operators}
     lim = obs.policy.limits
 
-    reassigned_runs: dict[str, str] = {}
-    for w in _effective(obs, "reassign_block"):
-        veh, blk = vehicles.get(w.params.get("to_vehicle_id")), blocks.get(w.params.get("block_id"))
-        if veh is None or blk is None:
-            out.append(_v(name, w.run_id, f"reassign references unknown vehicle/block: {w.params}"))
+    eff_assign = _effective(obs, "assign_operator")
+    added: dict[tuple[str, str], float] = defaultdict(float)     # (run, operator) -> hours of blocks assigned
+    for w in eff_assign:
+        op, blk = operators.get(w.params.get("operator_id")), blocks.get(w.params.get("block_id"))
+        if op is None or blk is None:
+            out.append(_v(name, w.run_id, f"assign_operator references unknown operator/block: {w.params}"))
             continue
-        reassigned_runs[w.run_id] = veh.id
-        n = blk.needs
-        if veh.seats < n.seats:
-            out.append(_v(name, w.run_id, f"{veh.id} seats {veh.seats} < needed {n.seats}"))
-        if veh.wheelchair_positions < n.wheelchair_positions:
-            out.append(_v(name, w.run_id, f"{veh.id} wheelchair positions {veh.wheelchair_positions} < needed {n.wheelchair_positions}"))
-        if n.lift and not veh.lift_ok:
-            out.append(_v(name, w.run_id, f"{veh.id} has no working lift but block {blk.id} needs one"))
-        if n.type and veh.type != n.type:
-            out.append(_v(name, w.run_id, f"{veh.id} type {veh.type} != needed {n.type}"))
+        added[(w.run_id, op.id)] += (blk.end - blk.start).total_seconds() / 3600
+    for (rid, oid), hrs in added.items():
+        op = operators[oid]
+        if op.hours_today + hrs > lim.max_operator_hours_day + 1e-9:
+            out.append(_v(name, rid, f"{oid} {op.hours_today}h + {hrs}h > max {lim.max_operator_hours_day}h"))
+        if op.hours_week + hrs > lim.max_operator_hours_week + 1e-9:
+            out.append(_v(name, rid, f"{oid} {op.hours_week}h + {hrs}h > weekly max {lim.max_operator_hours_week}h"))
 
-    if reassigned_runs:
+    reassigned = {w.run_id for w in _effective(obs, "reassign_block")}
+    if reassigned:
         assigned = {b.vehicle_id for b in obs.blocks}
         faulty = {r.vehicle_id for r in obs.runs}
         spares_left = [v for v in obs.vehicles
                        if v.status == "ready" and v.id not in assigned and v.id not in faulty]
         if len(spares_left) < lim.min_spares:
-            for rid in reassigned_runs:
+            for rid in reassigned:
                 out.append(_v(name, rid, f"{len(spares_left)} spare(s) left < min_spares {lim.min_spares}"))
 
-    for w in _effective(obs, "assign_operator"):
-        op, blk = operators.get(w.params.get("operator_id")), blocks.get(w.params.get("block_id"))
-        if op is None or blk is None:
-            out.append(_v(name, w.run_id, f"assign_operator references unknown operator/block: {w.params}"))
-            continue
-        hours = (blk.end - blk.start).total_seconds() / 3600
-        if op.hours_today + hours > lim.max_operator_hours_day:
-            out.append(_v(name, w.run_id, f"{op.id} {op.hours_today}h + {hours}h > max {lim.max_operator_hours_day}h"))
-        if blk.needs.lift and not op.lift_trained:
-            out.append(_v(name, w.run_id, f"{op.id} not lift-trained for lift block {blk.id}"))
-        if blk.needs.type and blk.needs.type not in op.qualifications:
-            out.append(_v(name, w.run_id, f"{op.id} lacks qualification {blk.needs.type}"))
+    touched_v = {w.params.get("to_vehicle_id") for w in _effective(obs, "reassign_block")}
+    touched_o = {w.params.get("operator_id") for w in eff_assign}
+    for kind, ids_, key in (("vehicle", touched_v, lambda b: b.vehicle_id), ("operator", touched_o, lambda b: b.operator_id)):
+        for rid in ids_ - {None}:
+            mine = sorted((b for b in obs.blocks if key(b) == rid), key=lambda b: b.start)
+            for i, x in enumerate(mine):
+                for y in mine[i + 1:]:
+                    if _overlap(x, y):
+                        out.append(_v(name, None, f"{kind} {rid} double-booked on {x.id} and {y.id}"))
     return out
 
 

@@ -53,7 +53,7 @@ _LENGTH_FT = {"cutaway": 24.0, "standard": 40.0, "articulated": 60.0}  # ASSUMED
 # once the licence/endorsement/training columns below are present (contract v1.2, D-1). ARTIC in the legacy
 # string became a trained vehicle type (A26 resolved): see _TRAINING.
 _OPS = [
-    (4.0, 22.0, "05:00", "14:00", False, True, "CDL-B;PAX;ARTIC"),
+    (4.0, 22.0, "05:00", "12:00", False, True, "CDL-B;PAX;ARTIC"),  # short shift: BUS-44's 11:00-13:00 block needs a swap (A67)
     (6.5, 31.0, "05:00", "15:00", False, True, "CDL-B;PAX"),
     (9.5, 44.0, "05:00", "15:00", False, True, "CDL-B;PAX"),  # near the daily limit
     (3.0, 18.0, "05:00", "13:00", False, False, "CDL-B;PAX"),

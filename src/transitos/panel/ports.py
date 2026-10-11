@@ -23,7 +23,8 @@ class RunGateway(Protocol):
     def list_pending(self, agency: str | None = None) -> list[RunState]: ...
     def get_run(self, run_id: str) -> RunState | None: ...
     def submit_decision(self, run_id: str, decision: str, plan_version: int,
-                        edits: dict[str, Any] | None, user: str) -> RunState:
+                        edits: dict[str, Any] | None, user: str,
+                        acknowledged: list[str] | None = None) -> RunState:
         """Resume the run's interrupt. May raise RunNotFound, StaleVersion, DecisionConflict."""
         ...
 

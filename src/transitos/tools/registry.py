@@ -145,13 +145,15 @@ class Registry:
     def __init__(self, config_dir: Path | str | None = None, *, clients: dict[str, httpx.Client] | None = None,
                  crosswalk: Crosswalk | None = None, idem: IdemStore | None = None,
                  killswitch: KillSwitchStore | None = None, sleep: Callable[[float], None] | None = None,
-                 extra_adapters: dict[str, AdapterFactory] | None = None):
+                 extra_adapters: dict[str, AdapterFactory] | None = None,
+                 policy_for: Callable[[str], Any] | None = None):
         self.config_dir = Path(config_dir) if config_dir else CONFIG_DIR
         self._clients = dict(clients or {})
         self.crosswalk = crosswalk or StaticCrosswalk()
         self.idem = idem or IdemStore()
         self.killswitch = killswitch or default_store()
         self._sleep = sleep
+        self._policy_for = policy_for
         self.adapters: dict[str, AdapterFactory] = {**BUILTIN_ADAPTERS, **(extra_adapters or {})}
         self._cache: dict[str, ToolSet] = {}
 
@@ -174,7 +176,7 @@ class Registry:
         if self._sleep:
             kw["sleep"] = self._sleep
         return Deps(clients=clients, crosswalk=self.crosswalk, idem=self.idem, killswitch=self.killswitch,
-                    policy_for=lambda a: load_policy(a, self.config_dir), **kw)
+                    policy_for=self._policy_for or (lambda a: load_policy(a, self.config_dir)), **kw)
 
     def toolset(self, agency: str) -> ToolSet:
         if agency in self._cache:

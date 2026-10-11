@@ -144,6 +144,7 @@ class System:
         self.db_kind = db_kind(db)
         self.config_dir = INTEGRATION_CONFIG if (INTEGRATION_CONFIG / f"{agency}.yaml").exists() else TOOLS_CONFIG_DIR
         self.reasoner = reasoner or StubReasoner()
+        self.policy_patch: dict[str, Any] = {}   # scenario overrides (e.g. vehicle_fit), merged into policy()
         self.seq = Seq()
         self.writes = WriteLog(self.seq, lambda: [r["run_id"] for r in self.store.list_runs()])
         self.on_resolved: Callable[[CloudEvent, HandleResult], None] | None = None  # narration hook
@@ -183,7 +184,8 @@ class System:
             self.idem = IdemStore(d / "idem.db")
             self.killswitch = KillSwitchStore(d / "killswitch.db")
         self.registry = Registry(self.config_dir, clients={p: c[p] for p in WRITE_PRODUCTS}, crosswalk=self.xw,
-                                 idem=self.idem, killswitch=self.killswitch, sleep=lambda s: None)
+                                 idem=self.idem, killswitch=self.killswitch, sleep=lambda s: None,
+                                 policy_for=lambda ag: self.policy() if ag == self.agency else load_policy(ag, self.config_dir))
         self.toolset = self.registry.toolset(a)
         if pg:
             from transitos.plumbing.pg_stores import PgAuditedRunsIndex
@@ -270,6 +272,8 @@ class System:
     # ------------------------------------------------------------------ policy (file + live kill switch)
     def policy(self) -> AgencyPolicy:
         p = load_policy(self.agency, self.config_dir)
+        if self.policy_patch:
+            p = p.model_copy(update=self.policy_patch)
         if self.killswitch.get(self.agency):
             p = p.model_copy(update={"kill_switch": True})
         return p

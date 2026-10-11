@@ -25,7 +25,7 @@ class FakeRunGateway:
     def get_run(self, run_id: str) -> RunState | None:
         return self.runs.get(run_id)
 
-    def submit_decision(self, run_id, decision, plan_version, edits, user):
+    def submit_decision(self, run_id, decision, plan_version, edits, user, acknowledged=None):
         run = self.runs.get(run_id)
         if run is None:
             raise RunNotFound(run_id)
@@ -36,6 +36,7 @@ class FakeRunGateway:
         if plan_version != run.plan_version:
             raise StaleVersion(run_id)
         self.resume_calls.append((run_id, decision, plan_version, edits, user))
+        run.acknowledged = sorted(set(run.acknowledged) | set(acknowledged or []))
         run.decision = decision
         run.decided_by = user
         run.decided_at = datetime.now(UTC)

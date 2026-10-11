@@ -3,7 +3,7 @@ import pytest
 
 from transitos.verification import invariants as inv
 from transitos.verification.fake_world import FakeWorld
-from transitos.verification.model import AuditEvent, WriteRecord
+from transitos.verification.model import AuditEvent
 from transitos.verification.runner import drive
 from transitos.verification.scenarios import BY_ID
 
@@ -28,14 +28,35 @@ def test_hard_limits_pass(good):
     assert inv.hard_limits(good) == []
 
 
-def test_hard_limits_violations(good):
-    spare = next(v for v in good.vehicles if v.id == _write(good, "reassign_block").params["to_vehicle_id"])
-    spare.wheelchair_positions, spare.lift_ok, spare.seats = 0, False, 10
+def test_tripwire_daily_and_weekly_hours_on_final_numbers(good):
     op = next(o for o in good.operators if o.id == _write(good, "assign_operator").params["operator_id"])
-    op.hours_today, op.lift_trained, op.qualifications = 9, False, []
+    op.hours_today = 9
+    assert any("max 10.0h" in v.detail for v in inv.hard_limits(good))
+    op.hours_today, op.hours_week = 4, 68
+    assert any("weekly max" in v.detail for v in inv.hard_limits(good))
+
+
+def test_tripwire_does_not_re_implement_qualification_or_fit(good):
+    """Phase 10 (amendment A, Q2): those rules live in clearance, verified by the golden table."""
+    spare = next(v for v in good.vehicles if v.id == _write(good, "reassign_block").params["to_vehicle_id"])
+    spare.wheelchair_positions, spare.lift_ok, spare.seats, spare.type = 0, False, 10, "van"
+    op = next(o for o in good.operators if o.id == _write(good, "assign_operator").params["operator_id"])
+    op.lift_trained, op.trained_vehicle_types, op.qualifications = False, [], []
+    assert inv.hard_limits(good) == []
+
+
+def test_tripwire_double_booking_of_a_touched_vehicle_or_operator(good):
+    blk = good.blocks[0]
+    clash = blk.model_copy(update={"id": "blk-x"})
+    good.blocks.append(clash)                       # same vehicle, same operator, same time
     msgs = " | ".join(v.detail for v in inv.hard_limits(good))
-    for frag in ("seats", "wheelchair", "no working lift", "max", "not lift-trained", "lacks qualification"):
-        assert frag in msgs
+    assert "vehicle" in msgs and "operator" in msgs and "double-booked" in msgs
+
+
+def test_tripwire_ignores_double_booking_the_run_did_not_touch(good):
+    other = good.blocks[0].model_copy(update={"id": "blk-y", "vehicle_id": "veh-77", "operator_id": "OP-77"})
+    good.blocks += [other, other.model_copy(update={"id": "blk-z"})]      # pre-existing clash elsewhere
+    assert inv.hard_limits(good) == []
 
 
 def test_hard_limits_last_spare(good):
@@ -45,11 +66,13 @@ def test_hard_limits_last_spare(good):
     assert any("min_spares" in v.detail for v in inv.hard_limits(good))
 
 
-def test_hard_limits_ignores_compensated_reassign(good):
-    good.vehicles[1].seats = 1
-    good.writes.append(WriteRecord(seq=99, run_id=good.runs[0].run_id, action="reassign_block", key="c", compensation=True,
-                                   compensates_key=_write(good, "reassign_block").key))
-    assert not [v for v in inv.hard_limits(good) if "seats" in v.detail]
+def test_tripwire_operator_hours_sum_over_several_blocks(good):
+    w = _write(good, "assign_operator")
+    good.blocks.append(good.blocks[0].model_copy(update={"id": "blk-9"}))
+    good.writes.append(w.model_copy(update={"seq": 97, "key": "k9", "params": {**w.params, "block_id": "blk-9"}}))
+    op = next(o for o in good.operators if o.id == w.params["operator_id"])
+    op.hours_today = 3                                  # 3h + 4h + 4h = 11h > 10h
+    assert any("8.0h" in v.detail and "max 10.0h" in v.detail for v in inv.hard_limits(good))
 
 
 # idempotent writes

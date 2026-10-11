@@ -118,10 +118,12 @@ def option_items(option: Option, facts: Facts, policy: AgencyPolicy) -> list[Cle
         if (oid := _eff_operator(a, facts)) is not None:
             by_op[oid].append(a)
     out.append(double_booking_item(option, facts))
-    # operators driving several blocks accumulate hours
+    # operators NEWLY assigned to several blocks accumulate hours (A71: an operator who keeps the blocks they
+    # already had is judged block by block, as before; their schedule is not ours to re-audit)
     lim = policy.limits
     for oid, group in by_op.items():
         op = facts.operators.get(oid)
+        group = [a for a in group if a.operator_id is not None and a.operator_id != facts.blocks[a.block_id].operator_id]
         if op is None or len(group) < 2:
             continue
         total_block = sum(block_hours(facts.blocks[a.block_id]) for a in group)

@@ -48,6 +48,7 @@ ACTION_PRODUCT = {"set_vehicle_unavailable": "scheduling", "set_vehicle_availabl
 class IntegrationWorld:
     def __init__(self) -> None:
         self.system: System | None = None
+        self._acks: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------------ setup
     def apply(self, scenario: Scenario) -> None:
@@ -58,6 +59,11 @@ class IntegrationWorld:
         self.mocks = Mocks.start(SimClock(T0))
         self.mocks.seed(AGENCY)
         self.system = s = System(AGENCY, self.mocks, tempfile.mkdtemp(prefix="transitos-world-"))
+        self._acks = {}
+        s.policy_patch = {"vehicle_fit": fit} if (fit := getattr(t, "vehicle_fit", "allow_larger")) != "allow_larger" else {}
+        if drop := getattr(t, "drop_operator_fields", ()):   # a product that holds only part of the operator data
+            self.mocks.clients["workforce"].post("/sim/operator-fields", json={"drop": list(drop)},
+                                                 headers=self._h).raise_for_status()
         self.chaos = dict(scenario.chaos)
         if t.human_wo_exists:
             r = self.mocks.clients["maintenance"].post(
@@ -104,14 +110,19 @@ class IntegrationWorld:
         self.system.publish_raw(event)
         self.system.run_until_idle()
 
+    def acknowledge(self, run_id: str, rules: list[str]) -> None:
+        self._acks.setdefault(run_id, []).extend(rules)
+
     def _decide(self, run_id: str, decision: str, scope: str, by: str) -> None:
         s = self.system
         run = s.gateway.get_run(run_id)
         if run is None:
             return
-        # the panel's RunGateway logs the accepted decision (ordered before any write it causes)
-        s.panel_client.post(f"/runs/{run_id}/decision", json={"decision": decision, "plan_version": run.plan_version,
-                                                              "user": by, "scope": scope})
+        # the panel's RunGateway logs the accepted decision (ordered before any write it causes); the panel
+        # itself answers 409 when a requires_ack clearance item is not acknowledged
+        s.panel_client.post(f"/runs/{run_id}/decision", json={
+            "decision": decision, "plan_version": run.plan_version, "user": by, "scope": scope,
+            "acknowledged": sorted(set(self._acks.get(run_id, [])))})
         s.run_until_idle()
 
     def approve(self, run_id: str, scope: str = "plan", by: str = "dispatcher") -> None:

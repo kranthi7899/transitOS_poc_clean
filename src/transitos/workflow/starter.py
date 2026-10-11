@@ -107,9 +107,12 @@ def handle_event(event: CloudEvent, runs_index: RunsIndex, graph, clock: Callabl
 
 
 def resume_approval(graph, runs_index: RunsIndex, run_id: str, decision: str, by: str,
-                    edits: dict[str, Any] | None = None, at: datetime | None = None) -> None:
-    """Called by the panel/API: deliver a human decision. Carries the stale flag set by update events."""
-    payload = {"decision": decision, "by": by, "edits": edits, "stale": runs_index.pop_stale(run_id)}
+                    edits: dict[str, Any] | None = None, at: datetime | None = None,
+                    acknowledged: list[str] | None = None) -> None:
+    """Called by the panel/API: deliver a human decision. Carries the stale flag set by update events and the
+    clearance rule ids the approver acknowledged (execution waits for every requires_ack item)."""
+    payload = {"decision": decision, "by": by, "edits": edits, "stale": runs_index.pop_stale(run_id),
+               "acknowledged": list(acknowledged or [])}
     if at:
         payload["at"] = at.isoformat()
     _drive(graph, run_id, Command(resume=payload))
