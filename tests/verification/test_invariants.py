@@ -75,6 +75,24 @@ def test_tripwire_operator_hours_sum_over_several_blocks(good):
     assert any("8.0h" in v.detail and "max 10.0h" in v.detail for v in inv.hard_limits(good))
 
 
+def test_tripwire_skips_unknown_hours_and_says_so_instead_of_passing_on_a_placeholder(good):
+    """R2-4: hours listed in the operator's unknown_fields hold a placeholder (0); the tripwire must not treat
+    them as checked. It skips that cap for that operator, names it as not checked, and still checks the other."""
+    op = next(o for o in good.operators if o.id == _write(good, "assign_operator").params["operator_id"])
+    op.hours_today, op.hours_week, op.unknown_fields = 0.0, 68.0, ["hours_today"]
+    found = inv.hard_limits(good)
+    assert not any("max 10.0h" in v.detail for v in found)                  # not judged on the placeholder
+    assert any("weekly max" in v.detail for v in found)                     # the known cap is still checked
+    assert inv.hard_limits_not_checked(good) == [f"{op.id}: hours_today unknown, daily cap not checked"]
+    op.unknown_fields = ["hours_week"]
+    assert inv.hard_limits_not_checked(good) == [f"{op.id}: hours_week unknown, weekly cap not checked"]
+    assert not any("weekly max" in v.detail for v in inv.hard_limits(good))
+
+
+def test_tripwire_reports_nothing_unchecked_when_hours_are_known(good):
+    assert inv.hard_limits_not_checked(good) == []
+
+
 # idempotent writes
 def test_idempotent_pass(good):
     assert inv.idempotent_writes(good) == []

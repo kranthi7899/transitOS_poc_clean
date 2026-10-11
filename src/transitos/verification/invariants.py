@@ -54,9 +54,10 @@ def hard_limits(obs: Observation) -> list[Violation]:
         added[(w.run_id, op.id)] += (blk.end - blk.start).total_seconds() / 3600
     for (rid, oid), hrs in added.items():
         op = operators[oid]
-        if op.hours_today + hrs > lim.max_operator_hours_day + 1e-9:
+        unknown = set(op.unknown_fields)        # R2-4: a placeholder is not a number; see hard_limits_not_checked
+        if "hours_today" not in unknown and op.hours_today + hrs > lim.max_operator_hours_day + 1e-9:
             out.append(_v(name, rid, f"{oid} {op.hours_today}h + {hrs}h > max {lim.max_operator_hours_day}h"))
-        if op.hours_week + hrs > lim.max_operator_hours_week + 1e-9:
+        if "hours_week" not in unknown and op.hours_week + hrs > lim.max_operator_hours_week + 1e-9:
             out.append(_v(name, rid, f"{oid} {op.hours_week}h + {hrs}h > weekly max {lim.max_operator_hours_week}h"))
 
     reassigned = {w.run_id for w in _effective(obs, "reassign_block")}
@@ -79,6 +80,19 @@ def hard_limits(obs: Observation) -> list[Violation]:
                     if _overlap(x, y):
                         out.append(_v(name, None, f"{kind} {rid} double-booked on {x.id} and {y.id}"))
     return out
+
+
+def hard_limits_not_checked(obs: Observation) -> list[str]:
+    """What the hours tripwire SKIPPED (R2-4): an operator given a block whose hours are listed unknown carries
+    only a placeholder, so that cap is reported as not checked rather than silently passed."""
+    operators = {o.id: o for o in obs.operators}
+    notes: list[str] = []
+    for oid in sorted({w.params.get("operator_id") for w in _effective(obs, "assign_operator")} - {None}):
+        op = operators.get(oid)
+        for field, cap in (("hours_today", "daily"), ("hours_week", "weekly")):
+            if op is not None and field in op.unknown_fields:
+                notes.append(f"{oid}: {field} unknown, {cap} cap not checked")
+    return notes
 
 
 # 2. Idempotent writes -----------------------------------------------------------------------------
