@@ -106,12 +106,15 @@ def test_intermittent_faults_clear_and_recur():
 
 def test_callouts_are_007_per_operator_shift_with_a_documented_sensitivity():
     assert (CALLOUT_P, CALLOUT_P_SENSITIVITY) == (0.07, 0.10)
-    shifts = 10 * 3000
     w = generate_world(cfg(days=3000))
+    shifts = (len(OPERATORS) - len(w.extra_board)) * 3000        # the extra board covers; it is not scheduled to call out
+    assert w.meta["operator_shifts"] == shifts
     n = sum(b.kind == "callout" for b in w.script.beats)
     assert abs(n - 0.07 * shifts) < 4 * (shifts * 0.07 * 0.93) ** 0.5
-    n10 = sum(b.kind == "callout" for b in generate_world(cfg(days=3000, callout_p=CALLOUT_P_SENSITIVITY)).script.beats)
-    assert abs(n10 - 0.10 * shifts) < 4 * (shifts * 0.10 * 0.90) ** 0.5
+    w10 = generate_world(cfg(days=3000, callout_p=CALLOUT_P_SENSITIVITY))
+    shifts10 = (len(OPERATORS) - len(w10.extra_board)) * 3000
+    n10 = sum(b.kind == "callout" for b in w10.script.beats)
+    assert abs(n10 - 0.10 * shifts10) < 4 * (shifts10 * 0.10 * 0.90) ** 0.5
     with pytest.raises(ValueError):
         generate_world(cfg(callout_p=1.5))
 
