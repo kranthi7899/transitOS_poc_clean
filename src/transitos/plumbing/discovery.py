@@ -7,7 +7,7 @@ products (agency-088), the vehicle crosswalk is worked out from what the product
 2. Every other product's roster record is resolved by the SAME rules resolver the event path uses, at the record's
    own time (a removed gateway just before its removal, an installed one at its install time). MATCH adds a row with
    the record's validity window; AMBIGUOUS and NO_MATCH add nothing and are reported (a human maps them in the panel
-   when an event from that id arrives and is parked).
+   when an event from that id arrives and is parked; A89: not shown in the panel before that).
 Product field names are mapped here, as an adapter would (each product spells VIN, plate and dates its own way).
 """
 from __future__ import annotations
