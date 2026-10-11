@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from transitos.clearance.evaluate import operator_items, vehicle_items
+from transitos.clearance.evaluate import Assign, Option, safe_evaluate
 from transitos.clearance.facts import CapabilityProfile, Facts
 from transitos.contracts.policy import AgencyPolicy
 
@@ -40,7 +40,8 @@ WORKFORCE = {
     "duty_start_today": ["operator_spread"],
 }
 VEHICLE = {"seats": ["vehicle_seats"], "wheelchair_positions": ["vehicle_wheelchair"], "lift_ok": ["vehicle_lift"],
-           "type": ["vehicle_fit"]}
+           "type": ["vehicle_fit", "operator_licence_class", "operator_endorsement", "operator_vehicle_training",
+                    "operator_training_expiry"]}   # R2-1: the operator rules depend on the vehicle's type
 NEEDS = {"seats": ["vehicle_seats"], "wheelchair_positions": ["vehicle_wheelchair"],
          "lift": ["vehicle_lift", "operator_lift_training", "operator_training_expiry"], "type": ["vehicle_fit"],
          "max_vehicle_length_ft": ["vehicle_length"]}
@@ -66,8 +67,8 @@ def judge(env):
     profiles = {k: CapabilityProfile.from_dict(v) for k, v in env.tools.capability_profiles(AG).value.items()}
     facts = Facts(blocks={block.id: block}, vehicles={vehicle.id: vehicle}, operators={op.id: op}, ready_count=3,
                   commitments={}, profiles=profiles)
-    pol = AgencyPolicy(agency=AG)
-    return vehicle_items(block, vehicle, facts, pol) + operator_items(block, op, vehicle.type, facts, pol)
+    # the planner's own path (R2-1): the block keeps its operator, the operator rules get the type as handed over
+    return safe_evaluate(Option((Assign(block.id, vehicle.id),)), facts, AgencyPolicy(agency=AG), T5).items
 
 
 def rules_for(kind, field):

@@ -17,6 +17,7 @@ or agency.
 | A132 | Revalidation (F1) re-judges the approved plan's own option on fresh facts and replaces its clearance. Before any write: an unacknowledged requires_ack rule or any new warn/unverifiable/violation item sends the run back to approval at the SAME plan version (same steps and idempotency keys) with acknowledgements reset; a known violation still goes through the existing stale/re-plan path. After writes have started only the assignments still ahead are re-judged and only their acknowledgement state is acted on (an unacknowledged item compensates and escalates as `stale_after_writes`); a new violation there is left to the write adapters' own re-check | `workflow/graph.py::revalidate`, `rejudge`, `execute_step` | decision | - |
 | A133 | Fail closed per candidate (F4): an exception inside a direct clearance call excludes that candidate with a `clearance_error` item. In the workflow check and FakeWorld the item is shown in the decision record and the escalation; in the write re-checks it is a hard-limit block; in the read adapters the candidate is simply not listed (the reason is not surfaced to the plan). A crash anywhere else in the check escalates the run instead of leaving it GATHERING | `clearance/rules.py::guarded`, `workflow/graph.py::do_check`/`check`, `tools/read_adapters.py`, `tools/write_adapters.py`, `verification/fake_world.py`, `workflow/limits.py`, `tools/policy.py` | open | Should a malformed product record be reported to the product owner? |
 | A134 | Medical card (F8) is a LEGAL rule: known expired = violation (expired on its expiry day, as A69), unknown or no date on record = unverifiable (acknowledgement). The verification FakeWorld and the workflow fakes now carry a valid card, as `integration/fleets.py` already did, so the 24 original scenarios keep their expectations; `half_operator_fields_missing` drops the medical column and therefore also acknowledges `operator_medical` | `clearance/rules.py::operator_items`, `verification/fake_world.py`, `workflow/fakes.py`, `verification/scenarios_step1.py` | decision | Is a medical card required for every operator at the agency? |
+| A135 | DEVIATION from the F6 ruling ("fall back to the greedy upper bound flagged unverifiable"), recorded at the supervisor's request (R2-2, not fixed): past the 200,000-node cap the last-spare PRE-check escalates the run with a `last_spare:..._upper_bound_unverified` violation instead of keeping it listed as unverifiable. Fail-closed but stricter than the ruling: a run that may be feasible goes to a human. Measured: 6 mutually overlapping blocks x 12 candidate spares hits the cap in about 0.13 s (`exact=False`). Today's fleets cannot hit it: agency-042 has 3 ready spares and the trigger vehicle's 8 blocks are sequential, so the reuse-first search finds a 1-spare cover at its first leaf and prunes everything else (under 0.1 ms, exact); the scenario fleets have at most 2 blocks and 3 spares | `workflow/graph.py::do_check`, `clearance/rules.py::count_distinct_spares` | open (deviation) | - |
 
 ## Unchanged on purpose
 
@@ -25,8 +26,13 @@ or agency.
 
 ## Known gaps (not fixed in this round)
 
-- **F11, F12**: reviewer R1's two nits, left unfixed by supervisor ruling. Their text was not given to this builder;
-  the supervisor should paste R1's wording here when merging.
+- **F11** (nit, write_adapters.py:173): The write-time last-spare check is looser than the planner's. At write time
+  ready_count is counted over the block's own window; at planning it is counted over the 24h horizon.
+- **F12** (nit, evaluate.py:98-104): Possible false double-booking. Commitments include the affected blocks
+  themselves, so an operator moved off b1 and onto an overlapping b2 is flagged as a clash. Safe direction (wrongly
+  excludes, never wrongly allows).
+- **A135 / R2-2**: past the spare-search cap the pre-check escalates instead of listing the run as unverifiable
+  (see A135).
 - A133: a candidate excluded by a clearance error inside a READ adapter is not surfaced in the plan or decision
   record (the workflow's own check surfaces errors it hits itself).
 - A132: after writes have started, revalidation acts only on acknowledgement state, not on a new violation (the

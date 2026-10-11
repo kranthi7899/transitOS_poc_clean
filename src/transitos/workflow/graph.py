@@ -38,6 +38,7 @@ from transitos.clearance.rules import (
     clearance_error,
     count_distinct_spares,
     guarded,
+    known_need_type,
     last_spare_item,
 )
 from transitos.contracts.clearance import ClearanceItem
@@ -215,7 +216,7 @@ def build_graph(deps: Deps, checkpointer):
             spares = [v for v in (Vehicle.model_validate(x) for x in it["spares"]) if v.id != run.vehicle_id
                       and eligible("spare", b, v.id, vehicle_items, b, v, probe, pol)]
             ops = [o for o in (Operator.model_validate(x) for x in it["operators"])
-                   if eligible("operator", b, o.id, operator_items, b, o, b.needs.type, probe, pol)]
+                   if eligible("operator", b, o.id, operator_items, b, o, known_need_type(b), probe, pol)]
             needs_op = b.operator_id is None or b.operator_id not in {o.id for o in ops}
             if not spares:
                 violations.append(f"no_feasible_spare:{b.id}")

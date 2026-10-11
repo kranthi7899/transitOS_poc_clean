@@ -23,9 +23,7 @@ from transitos.clearance.evaluate import (
     Assign,
     Option,
     noteworthy,
-    operator_items,
     safe_evaluate,
-    vehicle_items,
 )
 from transitos.clearance.facts import RECORD_FIELDS, Facts, native_profile
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle
@@ -81,6 +79,10 @@ CASES = [
     ("vehicle_wheelchair", "vehicle", "wheelchair_positions", "wheelchair_positions", [0, 9]),
     ("vehicle_lift", "vehicle", "lift_ok", "lift_ok", [False, True]),
     ("vehicle_fit", "vehicle", "type", "type", ["bus", "standard", "cutaway", "articulated"]),
+    # R2-1: the operator rules that depend on the vehicle's type
+    *[(r, "vehicle", "type", "type", ["bus", "standard", "cutaway", "articulated"])
+      for r in ("operator_licence_class", "operator_endorsement", "operator_vehicle_training",
+                "operator_training_expiry")],
     ("vehicle_length", "vehicle", "length_ft", "length_ft", [None, 10.0, 99.0]),          # -> assumed (Q3, A66)
     ("vehicle_seats", "needs", "seats", None, [0, 100]),
     ("vehicle_wheelchair", "needs", "wheelchair_positions", None, [0, 9]),
@@ -108,7 +110,11 @@ def facts_for(drop_profile: str | None, legacy: bool = False) -> Facts:
 
 
 def judge(rule, block, vehicle, op, facts):
-    items = vehicle_items(block, vehicle, facts, POL) + operator_items(block, op, vehicle.type, facts, POL)
+    """Through the planner's own path (R2-1): one block onto one spare, the block keeps its operator, so the
+    operator rules see the vehicle type exactly as evaluate_option hands it over."""
+    f = Facts(blocks={block.id: block}, vehicles={vehicle.id: vehicle}, operators={op.id: op},
+              ready_count=facts.ready_count, commitments=facts.commitments, profiles=facts.profiles)
+    items = safe_evaluate(Option((Assign(block.id, vehicle.id),)), f, POL, T0).items
     return [i for i in items if i.rule == rule]
 
 
@@ -213,3 +219,15 @@ def test_accumulated_hours_with_a_missing_input_are_never_a_pass_or_violation(fi
     got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == rule
            and ("op-1" in i.detail or i.status == "unverifiable")]
     assert got and all((i.status, i.basis) == ("unverifiable", "unknown") for i in got), [i.model_dump() for i in got]
+
+
+@pytest.mark.parametrize("variant,value", [("dropped", None), ("default", "bus"), ("value='bus'", "bus"),
+                                           ("value='standard'", "standard"), ("value='van'", "van")])
+def test_legacy_qualification_with_the_vehicle_type_missing_is_unverifiable(variant, value):
+    """R2-1: legacy-only product, the vehicle's type is the missing input. Operators listing 'standard' (the real
+    type) and 'bus' (the adapters' placeholder) must both be unverifiable, never a violation or a pass."""
+    vehicle = base_vehicle() if variant == "dropped" else base_vehicle(type=value, unknown_fields=["type"])
+    facts = facts_for("type" if variant == "dropped" else None, legacy=True)
+    for quals in (["standard"], ["bus"], ["van"]):
+        got = judge("operator_qualification", base_block(), vehicle, base_operator(qualifications=quals), facts)
+        assert got and all((i.status, i.basis) == ("unverifiable", "unknown") for i in got), (quals, got)

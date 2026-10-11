@@ -13,8 +13,6 @@ from transitos.clearance import Option, safe_evaluate
 from transitos.clearance.evaluate import (
     Assign,
     kill_switch_item,
-    operator_items,
-    vehicle_items,
 )
 from transitos.clearance.facts import SCHEDULING_FIELDS, Facts, native_profile
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle
@@ -105,7 +103,9 @@ def run_row(row):
                   unknown=g.get("operator_unknown"))
     f = Facts(blocks={b.id: b}, vehicles={v.id: v}, operators={op.id: op}, ready_count=3, commitments={},
               profiles=profiles(g.get("drop"), g.get("legacy")))
-    items = vehicle_items(b, v, f, pol) + operator_items(b, op, v.type, f, pol)
+    # the planner's own path: one block onto one spare, the block keeps its operator (R2-1: the operator rules
+    # must see the vehicle type exactly as the planner hands it over, not as this driver would)
+    items = safe_evaluate(Option((Assign(b.id, v.id),)), f, pol, T0).items
     return items, None
 
 

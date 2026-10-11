@@ -113,6 +113,67 @@ def test_data_lost_mid_saga_is_compensated_and_escalated(make_env):
     assert any("unacknowledged" in r and "operator_hours_week" in r for r in esc["stale_reasons"])
 
 
+def two_block_world():
+    w = world()
+    w.blocks["B1"] = w.blocks["B1"].model_copy(update={"end": T0 + timedelta(hours=3)})
+    w.blocks["B2"] = Block(id="B2", vehicle_id="veh-1", operator_id="OP-2", start=T0 + timedelta(hours=5),
+                           end=T0 + timedelta(hours=7), start_depot="north", needs=Needs(seats=20, type="standard"))
+    w.operators["OP-1"] = w.operators["OP-1"].model_copy(update={"unknown_fields": ["hours_week"]})
+    # OP-2 (7h today) can run its own 2h block but not B1 as well (7 + 2 + 2 = 11h > 10h): OP-1 keeps B1
+    w.operators["OP-2"] = w.operators["OP-2"].model_copy(update={"hours_today": 7.0})
+    return w
+
+
+def test_a_new_item_of_an_acknowledged_rule_with_the_same_status_and_basis_is_not_reshown(make_env):
+    """R2-3, pinning A74 (acknowledgement is by rule id and covers every item of that rule): the approver
+    acknowledged operator_hours_week (OP-1's weekly hours unknown); before approval OP-2's weekly hours also go
+    missing. Same rule, same status and basis, a new operator: the acknowledgement covers it, the plan runs, and
+    the refreshed clearance (shown in the plan and decision record) names OP-2 too."""
+    env = make_env(world=two_block_world())
+    rid = start(env)
+    assert ack_rules(run_of(env, rid)) == ["operator_hours_week"]
+    env.world.operators["OP-2"] = env.world.operators["OP-2"].model_copy(update={"unknown_fields": ["hours_week"]})
+    resume_approval(env.graph, env.store, rid, "approve", "alice", acknowledged=["operator_hours_week"])
+    assert env.world.effects, env.store.get_run(rid)
+    run = run_of(env, rid)
+    item = next(i for i in run["plan"]["clearance"] if i["rule"] == "operator_hours_week")
+    assert "OP-2" in item["detail"] and "OP-1" in item["detail"]
+    assert run["acknowledged"] == ["operator_hours_week"]
+
+
+def test_a_new_status_or_basis_of_an_acknowledged_rule_is_reshown(make_env):
+    """R2-3: the approver acknowledged vehicle_fit as a WARNING (larger class, native type); before approval the
+    block stops declaring its type, so vehicle_fit is now UNVERIFIABLE (a new rule/status/basis combination). The
+    acknowledgement was given for a different finding: back to approval, acknowledgements reset."""
+    w = world()
+    w.vehicles = {k: (v if k == "veh-1" else v.model_copy(update={"type": "articulated"})) for k, v in w.vehicles.items()}
+    w.operators = {k: o.model_copy(update={"qualifications": ["standard", "articulated"]}) for k, o in w.operators.items()}
+    env = make_env(world=w)
+    rid = start(env)
+    fit = [(i["status"], i["basis"]) for i in run_of(env, rid)["plan"]["clearance"] if i["rule"] == "vehicle_fit"]
+    assert fit == [("warn", "native")] and ack_rules(run_of(env, rid)) == ["vehicle_fit"]
+    env.world.blocks["B1"].needs.unknown_fields = ["type"]
+    resume_approval(env.graph, env.store, rid, "approve", "alice", acknowledged=["vehicle_fit"])
+    assert env.world.effects == []
+    run = run_of(env, rid)
+    assert env.store.get_run(rid)["status"] == "AWAITING_APPROVAL" and run["acknowledged"] == []
+    assert ("vehicle_fit", "unverifiable", "unknown") in {(i["rule"], i["status"], i["basis"])
+                                                          for i in run["plan"]["clearance"]}
+    resume_approval(env.graph, env.store, rid, "approve", "alice", acknowledged=["vehicle_fit"])
+    assert env.world.effects
+
+
+def test_an_undeclared_block_type_never_excludes_operators_in_the_prefilter(make_env):
+    """R2-1 follow-up: the block lists `type` as unknown while its record still holds a value no operator is
+    qualified for; the candidate pre-filter must not judge that value (no operator excluded, no escalation)."""
+    w = world()
+    w.blocks["B1"].needs.type = "van"
+    w.blocks["B1"].needs.unknown_fields = ["type"]
+    env = make_env(world=w)
+    rid = start(env)
+    assert env.store.get_run(rid)["status"] == "AWAITING_APPROVAL", env.store.get_escalation(rid)
+
+
 def test_execute_step_itself_refuses_an_unacknowledged_requires_ack_item(make_env):
     """Defence in depth: whatever routed the run to execute_step, an unacknowledged requires_ack item in the
     plan stops it, also after writes have started (it compensates then)."""

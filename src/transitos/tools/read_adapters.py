@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from transitos.clearance.evaluate import operator_items, vehicle_items
 from transitos.clearance.facts import CapabilityProfile, Facts
 from transitos.clearance.rules import guarded as guarded_items
+from transitos.clearance.rules import known_need_type
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrder
 from transitos.contracts.results import Result
 
@@ -323,7 +324,7 @@ class WorkforceReader:
                       profiles={"workforce": profile})
         elig = [op for op in ops  # the block's current operator is listed too when eligible; a record that breaks
                 if not any(i.status == "violation"   # a rule (F4) excludes only that operator
-                           for i in guarded_items(f"operator {op.id}", operator_items, block, op, block.needs.type,
+                           for i in guarded_items(f"operator {op.id}", operator_items, block, op, known_need_type(block),
                                                   facts, policy))]
         return Result.success(elig, note="from daily export; hours may be stale")
 

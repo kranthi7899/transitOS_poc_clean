@@ -19,7 +19,7 @@ from transitos.clearance.evaluate import (
     safe_vehicle_move,
 )
 from transitos.clearance.facts import Facts, commitments_from_blocks
-from transitos.clearance.rules import guarded
+from transitos.clearance.rules import guarded, known_vehicle_type
 from transitos.contracts.events import SYSTEM_ACTOR
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
 from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
@@ -239,7 +239,7 @@ class WorkforceWriter(_Base):
                       operators={op.id: op}, ready_count=None, commitments=commitments_from_blocks(sched.value),
                       profiles={"workforce": profile, "scheduling": self.sched.capability_profile(agency)})
         items = guarded(f"operator {op.id} for block {block.value.id}", lambda: [  # an exception blocks (F4)
-            *operator_items(block.value, op, veh.value.type, facts, policy),
+            *operator_items(block.value, op, known_vehicle_type(veh.value, facts), facts, policy),   # R2-1
             double_booking_item(Option((Assign(block.value.id, veh.value.id, op.id),)), facts)])
         v = [i.detail or i.rule for i in items if i.status == "violation"]
         if v:
