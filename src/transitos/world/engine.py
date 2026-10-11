@@ -86,8 +86,14 @@ class WorldEngine:
         due = sorted((p for p in self._pending if p.due_at <= now), key=lambda p: (p.due_at, p.order))
         self._pending = [p for p in self._pending if p.due_at > now]
         fired: list[Observation] = []
-        for p in due:
-            reason = p.actor.act(p.beat, self.ports)
+        for i, p in enumerate(due):
+            try:
+                reason = p.actor.act(p.beat, self.ports)
+            except BaseException:
+                # a port call failed: this reaction and every later due one stay pending for the next tick (the beat
+                # was already released by the truth and is never released again, so nothing else would retry them)
+                self._pending = due[i:] + self._pending
+                raise
             product = p.actor.product_of(p.beat)
             if reason is None:
                 o = Observation(product, p.beat.vehicle, p.beat.kind, p.beat.at, now)

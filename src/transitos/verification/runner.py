@@ -52,7 +52,9 @@ class ScenarioResult(BaseModel):
     mismatches: list[str] = Field(default_factory=list)
     invariants: dict[str, list[Violation]] = Field(default_factory=dict)
     not_checked: list[str] = Field(default_factory=list)   # R3-2: tripwire notes; never affect `passed`
-    latency: dict[str, float | None] | None = None   # Phase 10 Step 3.4: only worlds with a world engine; never affects `passed`
+    known_gap: str = ""                                # Step 3 fix round: a PASS that rests on a documented gap
+    skipped: str = ""                                  # Step 3 fix round: why this world did not run the scenario
+    latency: dict | None = None   # Phase 10 Step 3.4: only worlds with a world engine; never affects `passed`
     observation: Observation | None = None
 
     @property
@@ -102,6 +104,11 @@ def drive(world: World, scenario: Scenario) -> Observation:
 
 
 def run_scenario(world: World, scenario: Scenario, keep_observation: bool = False) -> ScenarioResult:
+    if scenario.real_world_only and not getattr(world, "supports_world_lag", False):
+        # a world that cannot model product lag does not get to agree with a scenario that depends on it
+        return ScenarioResult(scenario_id=scenario.id, title=scenario.title, expected=scenario.expected.value,
+                              outcome="SKIPPED", known_gap=scenario.known_gap,
+                              skipped="needs per-product lag, which this world does not model (FakeWorld has no lag)")
     obs = drive(world, scenario)
     outcome = classify(obs)
     mism: list[str] = []
@@ -113,11 +120,15 @@ def run_scenario(world: World, scenario: Scenario, keep_observation: bool = Fals
         mism.append(f"{wo_creates(obs)} WOs created != expected {scenario.expect_wo_creates}")
     if scenario.expect_plan_version is not None and obs.runs and obs.runs[0].plan_version != scenario.expect_plan_version:
         mism.append(f"plan_version {obs.runs[0].plan_version} != expected {scenario.expect_plan_version}")
+    if scenario.expect_forward_actions is not None:
+        done = {w.action for w in obs.forward_writes() if w.ok}
+        mism += [f"forward action {a!r} missing (did: {sorted(done)})" for a in scenario.expect_forward_actions
+                 if a not in done]
     attached = sum(len(v) for v in obs.attached_events.values())
     if attached != scenario.expect_attached:
         mism.append(f"{attached} attached events != expected {scenario.expect_attached}")
     return ScenarioResult(scenario_id=scenario.id, title=scenario.title, expected=scenario.expected.value,
                           outcome=outcome, mismatches=mism, invariants=check_by_invariant(obs),
                           not_checked=hard_limits_not_checked(obs),
-                          latency=world.latency() if hasattr(world, "latency") else None,
+                          known_gap=scenario.known_gap, latency=world.latency() if hasattr(world, "latency") else None,
                           observation=obs if keep_observation else None)

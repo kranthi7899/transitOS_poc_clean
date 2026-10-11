@@ -33,7 +33,8 @@ def test_scripted_coolant_day_latency_numbers_follow_the_script():
     # fault truth 09:40:00; telematics +5 s; the system starts and proposes when it processes that event (09:40:05);
     # the script approves at 09:41:00, which is when the pull write lands.
     lat = result("scripted_day_coolant").latency
-    assert lat == {"truth_to_telematics_s": 5.0, "truth_to_first_proposal_s": 5.0, "truth_to_pull_s": 60.0}
+    assert {k: lat[k] for k in ("truth_to_telematics_s", "truth_to_first_proposal_s", "truth_to_pull_s")} == {
+        "truth_to_telematics_s": 5.0, "truth_to_first_proposal_s": 5.0, "truth_to_pull_s": 60.0}
 
 
 def test_latency_is_in_the_json_report_per_scenario_and_does_not_change_pass_fail(tmp_path):

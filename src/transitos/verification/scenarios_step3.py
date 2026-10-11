@@ -77,6 +77,16 @@ def _tw(day: DayScript) -> Step3Tweaks:
     return dataclasses.replace(Step3Tweaks(), world_script=day)
 
 
+GAP_INTERMITTENT = ("A100/A101: approval at 08:12 happens while the fault is active again (it recurred at 08:10), so "
+                    "a CLEARED fault is never put in front of the orchestrator. NOT tested: that the orchestrator "
+                    "notices a fault has cleared; it cannot (the telematics mock emits no clear event, A101) and it "
+                    "never plans MONITOR for a fault event (A100). See intermittent_approved_while_clear.")
+GAP_APPROVED_WHILE_CLEAR = ("The fault cleared at 08:06 and the human approves at 08:07 while ground truth is ok; the "
+                            "system still pulls the bus and writes every forward step. The orchestrator cannot know a "
+                            "fault cleared, because the telematics mock emits no clear event (A101), and the "
+                            "orchestrator never plans MONITOR for a fault event (A100). PASS records today's "
+                            "behaviour, not a desirable one.")
+
 STEP3_SCENARIOS: tuple[Scenario, ...] = (
     _s("scripted_day_coolant", "Scripted day: coolant fault 09:40, clears 10:15, returns 11:30; products learn it "
        "after their own lag; the run pulls the vehicle at 09:41",
@@ -85,9 +95,25 @@ STEP3_SCENARIOS: tuple[Scenario, ...] = (
     _s("intermittent_fault_clears", "Intermittent warning clears at 08:06 and recurs at 08:10: one run, the "
        "recurrence attached (no clear signal reaches the orchestrator), one work order",
        Outcome.PLAN_VALID, (("world_until", "08:12"), ("approve", "plan"), *_FULL_DAY),
-       events=[fault_event(1, stop=False), fault_event(2, stop=False)], tweaks=_tw(intermittent_day()), expect_wo_creates=1, expect_attached=1),
+       events=[fault_event(1, stop=False), fault_event(2, stop=False)], tweaks=_tw(intermittent_day()), expect_wo_creates=1, expect_attached=1,
+       known_gap=GAP_INTERMITTENT),
     _s("callout_with_extra_board", "OP-1 calls out (recorded 12 min later), then veh-1 faults: the plan swaps in "
        "the extra-board operator OP-2",
        Outcome.PLAN_VALID, (("world_until", "06:41"), ("approve", "plan"), *_FULL_DAY),
-       events=[fault_event()], tweaks=_tw(callout_day()), expect_wo_creates=1),
+       events=[fault_event()], tweaks=_tw(callout_day()), expect_wo_creates=1,
+       expect_forward_actions=("assign_operator",)),     # the report row fails if the swap to OP-2 does not happen
+)
+
+# Fix round (R3). Appended after every other step's scenarios so the older ids and their order are untouched.
+STEP3B_SCENARIOS: tuple[Scenario, ...] = (
+    _s("intermittent_approved_while_clear", "Intermittent warning cleared at 08:06; the human approves at 08:07 while "
+       "ground truth is ok: the plan is still executed (the orchestrator has no clear signal)",
+       Outcome.PLAN_VALID, (("world_until", "08:07"), ("approve", "plan"), *_FULL_DAY),
+       events=[fault_event(1, stop=False), fault_event(2, stop=False)], tweaks=_tw(intermittent_day()),
+       expect_wo_creates=1, expect_attached=1, known_gap=GAP_APPROVED_WHILE_CLEAR),
+    _s("dispatcher_acts_before_approval", "The dispatcher's 12-minute flip (09:52) lands before the human approves "
+       "(09:54): the plan is invalidated, re-proposed as v2 and then executed",
+       Outcome.PLAN_VALID, (("world_until", "09:54"), ("approve", "plan"), ("approve", "plan"), *_FULL_DAY),
+       events=[fault_event()], tweaks=_tw(coolant_day()), expect_wo_creates=1, expect_plan_version=2,
+       real_world_only=True),
 )
