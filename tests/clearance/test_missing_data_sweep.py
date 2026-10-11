@@ -22,6 +22,7 @@ import pytest
 from transitos.clearance.evaluate import (
     Assign,
     Option,
+    noteworthy,
     operator_items,
     safe_evaluate,
     vehicle_items,
@@ -146,6 +147,7 @@ def test_missing_input_is_never_a_pass_and_never_a_violation(case, variant, valu
             block = base_block(unknown=[field], **{field: value})
     got = judge(rule, block, vehicle, op, facts)
     assert got, f"{rule} reported nothing when {record}.{field} was missing ({variant})"
+    assert all(noteworthy(i) for i in got)     # F3: never hidden from the plan/decision record as a clean pass
     if (rule, field) == ("vehicle_length", "length_ft"):      # documented exception: class default, ASSUMED
         assert all(i.basis == "assumed" for i in got), [i.model_dump() for i in got]
         return
