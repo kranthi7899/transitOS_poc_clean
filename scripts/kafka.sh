@@ -15,6 +15,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Kafka's own launch scripts do not quote paths, so a project path with a space breaks them.
+# Run through a space-free symlink to the project instead.
+if [[ "$ROOT" == *" "* ]]; then
+  LINK="${TMPDIR:-/tmp}/transitos-poc-link-$(id -u)"
+  ln -sfn "$ROOT" "$LINK"
+  ROOT="$LINK"
+fi
 KAFKA_VERSION="${KAFKA_VERSION:-4.3.1}"
 SCALA_VERSION="2.13"
 DIST="kafka_${SCALA_VERSION}-${KAFKA_VERSION}"

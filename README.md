@@ -1,0 +1,141 @@
+# TransitOS orchestration POC
+
+A proof of concept for **cross-product agentic orchestration** in a transit agency, built at autonomy **Level 2: act with approval**. The agent proposes, a dispatcher approves, and only then does anything get written.
+
+> **Every product in this repo is simulated.** The five mock products are modeled on the shapes of public documentation. They are not the real products, do not call them, and must never be presented as them. All data is synthetic.
+
+## The scenario
+
+A bus reports a serious engine fault. Today, a person has to notice it, open a work order in the maintenance system, pull the bus in the scheduling system, find a spare and a qualified operator, reassign the block, and tell riders. TransitOS does that as one governed workflow:
+
+```
+vehicle fault -> work order -> pull vehicle -> reassign block (+ operator if needed)
+              -> rider alert -> repair -> return to service
+```
+
+The agent never writes until a human approves a concrete plan. The rider alert is always the last write, so riders are never told about a change that did not happen.
+
+## Design principles
+
+| Principle | How it is enforced |
+|---|---|
+| Hard limits are code, never model output | Last spare, operator hours, vehicle qualification and lift needs are checked in code before the plan is shown, and again at write time against live product state. |
+| Writes are idempotent | Key = `<run_id>:<step>:<plan_version>`. A retried or duplicated write has no second effect. |
+| Every write has a compensation | A failure mid-plan runs the saga in reverse (one undo per pass), or escalates with the exact state. |
+| Rider alert is last | It is the final step of the plan, and nothing is undone after an alert attempt. |
+| No write inside an interrupt | A node that waits for a human performs no write, so a resume that re-runs the node is safe. |
+| Kill switch | Per agency, checked on every write. A blocked write is never retried. |
+| Append-only audit | Every revision of every decision is stored, with the model, the human decision and the idempotency keys. |
+| The LLM is replaceable | All reasoning goes through one interface in `workflow/reasoning.py`. The default is a stub plus a code-ranked fallback. The provider choice is still open. |
+
+## Architecture
+
+```
+ mock products (FastAPI, shared simulated clock)
+   telematics  --signed webhook--> receiver ┐
+   telematics  /faults/feed -----> poller   │  watch adapters: cursor + last-seen + outbox
+   maintenance /pm-schedules, /workorders   ├-> rows in ONE transaction
+   scheduling  /status-changes              │
+   workforce   /availability-changes        ┘
+        -> outbox -> relay -> bus            events.raw       (CloudEvents, key = <product>:<native id>)
+        -> crosswalk (native ids -> canonical veh-/op- ids)
+              resolved:  events.resolved
+              unknown:   parked + events.failed  (panel lists them, re-publishes once mapped)
+        -> workflow consumer: dedupe, start / attach / resume / signal
+        -> LangGraph run (checkpointed):
+             gather (reads) -> check (hard limits, code) -> reason (stub, validated)
+             -> policy -> propose -> await_approval (interrupt, no write)
+             -> revalidate -> execute steps (one write per pass)
+             -> wait_for_repair (interrupt) -> return_gate (interrupt)
+             -> return_to_service -> close
+             on failure: compensate in reverse, or escalate
+        -> tool layer: kill switch, idempotency store, live hard-limit re-check, product call, read-back
+ dispatcher panel (FastAPI): approvals, defects, unresolved ids, kill switch, timeline
+```
+
+### Seven building blocks ("tracks")
+
+| Track | Directory | What it is |
+|---|---|---|
+| Contracts | `src/transitos/contracts/` | Frozen pydantic models (source of truth). JSON Schema is exported to `contracts-schema/`. |
+| A | `src/transitos/mocks/` | Five simulated products, a seeded synthetic fleet, a simulated clock, and chaos modes. |
+| B | `src/transitos/plumbing/` | Watch adapters, outbox and relay, event bus, crosswalk, append-only audit. |
+| C | `src/transitos/tools/` | Per-agency tool registry, read and write adapters, idempotency, kill switch, hard-limit re-check. |
+| D | `src/transitos/workflow/` | The LangGraph workflow, plan model, saga, timers, reasoning interface. |
+| E | `src/transitos/panel/` | The dispatcher panel (approve, reject, edit, kill switch, unresolved ids). |
+| F | `src/transitos/verification/` | Scenarios, invariants, and the report. |
+
+`src/transitos/integration/` wires everything into one `System`, with a narrated demo. Design notes live in `docs/` (`ARCHITECTURE.md`, `CONTRACTS.md`, `MOCK_API.md`, `ASSUMPTIONS.md`). Handoff notes per track are in `coordination/handoffs/`.
+
+## The mock products and the mock data
+
+Five simulated products, each a FastAPI app with a `/sim` admin surface to seed data, trigger faults, advance the clock and inject failures.
+
+| Mock | Modeled on (public docs) | Role | Notable behavior |
+|---|---|---|---|
+| Telematics | Samsara-style | Fault codes (SPN/FMI, lamps), DVIR defects | Signed webhook (HMAC-SHA256) plus a REST feed. Duplicates and late delivery under chaos. |
+| Maintenance | FASTER-style | PM schedules, work orders | Polled. Accepts an idempotency key. Rate-limits (429) under chaos. |
+| Scheduling | TripShot-style | Vehicles, blocks, status | No idempotency keys, and no endpoint to cancel a block. Rejects a reassign if the spare lacks the needs. |
+| Workforce | CSV-export style | Operators, hours, qualifications | Reads come from a daily CSV. The assign write can fail. |
+| Rider alerts | GTFS-Realtime service-alert style | Rider-facing alerts | Eventually visible: an alert appears only after a delay on the simulated clock. |
+
+**Each product uses its own ids.** One bus is `BUS-44` in scheduling, `T-77` in telematics, and asset `1106` in maintenance. Operators are `OP-310`. Only the crosswalk maps these to canonical ids (`veh-1`, `op-1`), which is the cross-product identity problem the POC is built to exercise.
+
+**Synthetic fleet** (`src/transitos/mocks/seed.py`, deterministic):
+- 12 vehicles. 9 in service (standard, cutaway, articulated, some with no wheelchair positions or no lift) and 3 spares (one lift-capable standard, one small cutaway without a lift, one standard without a lift). Vehicle 3 is 100 miles from a PM becoming overdue.
+- 10 operators with hours today and this week, availability windows, lift training and licence codes. One is close to the daily hour limit, and one is on the extra board.
+- Two agencies with different id formats (`agency-042`, `agency-077`) to prove the crosswalk. Custom fleets can be registered for test scenarios.
+
+**Chaos modes** per mock: `timeout`, `http_429`, `duplicate`, `late`, `reject_write`.
+
+Full HTTP shapes are in `docs/MOCK_API.md`.
+
+## Run it
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
+```
+uv sync
+make demo      # narrated happy path through the real wiring
+make verify    # schemas + lint + tests + the 24-scenario report
+uv run python -m transitos.mocks.run   # serve the five mocks on localhost:8101-8105
+```
+
+`make demo` walks one run: the fault arrives, the plan is proposed with zero writes made, the dispatcher approves in the panel, five writes land in the mock products, the simulated clock jumps 48h and the shop closes the work order, return to service is approved separately, and the audit trail is printed.
+
+### Storage and bus profiles
+
+The same interfaces run in three profiles:
+
+| Profile | Command | Needs |
+|---|---|---|
+| Local (default) | `make verify` | Nothing. SQLite plus an in-process bus. |
+| Kafka | `make kafka-up` then `make verify-kafka` | A JDK. Kafka 4.3.1 is downloaded and checksum-verified into `.local/`. No Docker. |
+| Postgres | `make postgres-up` then `make verify-postgres` | Project-local PostgreSQL under `.local/`. No Docker. |
+
+Run `make kafka-down` / `make postgres-down` when finished. Project paths containing a space are handled by `scripts/kafka.sh`, because Kafka's own scripts do not quote paths.
+
+## Verification
+
+Track F runs 24 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure).
+
+Last run: lint clean, 24/24 scenarios on all three profiles.
+
+| Profile | Tests |
+|---|---|
+| Local | 343 passed, 83 skipped (Kafka and Postgres cases skip without a server) |
+| Kafka | 367 passed, 59 skipped |
+| Postgres | 424 passed, 2 skipped |
+
+Scenarios include: severe fault with a spare, operator swap, PM overdue (urgent and minor), DVIR defect, last spare, wheelchair and lift mismatches, operator hours exhausted, unqualified operator, duplicate trigger, human work order already exists, unresolved vehicle id (dead-letter), product down on read, approval rejected and expired, write rejected mid-plan (compensated), kill switch mid-run, and a spare taken between proposal and execution.
+
+## Known gaps
+
+- The default `agency-042` seed does not complete a run. Operator qualifications are licence codes while the hard limit expects the vehicle type, and the workflow uses one distinct spare per affected block. The demo and scenarios use a separate baseline fleet on the same mocks.
+- The undo order after a failure following `reassign_block` is an open decision, and is currently a strict expected failure.
+- No reconciliation for partial writes, no rider-alert correction, no authentication on the panel, no real LLM provider, and a single-threaded driver.
+- 34 assumptions are still open. They are listed with the question to ask each real product owner in `docs/ASSUMPTIONS.md`.
+
+## Conventions
+
+Contracts are frozen, and changes go through a request file in `coordination/requests/`. "Done" means `make verify` output, not an assertion. No client names or client documents belong in this repo.

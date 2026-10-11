@@ -13,3 +13,6 @@ verification-report-kafka.json
 verification-report-postgres.json
 .playwright-mcp/
 .local/
+
+journal/
+.DS_Store
