@@ -1,7 +1,7 @@
 """How the world engine reaches the products (Phase 10, Step 3.2).
 
 `Ports` is the seam: `MockPorts` drives the real SIMULATED products through their existing `/sim` and public
-routes (no mock was changed for Step 3: those routes are the hook points); `RecordingPorts` is an in-memory
+routes (A102: no mock was changed for Step 3; those routes are the hook points); `RecordingPorts` is an in-memory
 double for unit tests. Query methods never appear in `RecordingPorts.calls`; only actions do.
 """
 from __future__ import annotations

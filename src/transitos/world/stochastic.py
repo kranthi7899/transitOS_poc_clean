@@ -11,7 +11,7 @@ What is REAL and what is ASSUMED:
         call-out probability 0.07 per operator-shift with sensitivity 0.10 (A97; research context, NOT calibration),
         extra board 1 or 2 of every 10 operators (A98).
 
-Determinism: every draw comes from a `random.Random` seeded with a string made of the seed and the entity it is for,
+Determinism (A103): every draw comes from a `random.Random` seeded with a string made of the seed and the entity it is for,
 so the same seed gives a byte-identical timeline, the result does not depend on the order the vehicles or operators
 are listed, and adding a vehicle does not reshuffle the others. No wall clock, no global random state.
 """
@@ -148,14 +148,14 @@ def generate_world(cfg: StochasticConfig) -> StochasticWorld:
             arrivals += 1
             day_i, within = divmod(x, mpd)
             t0 = day0 + timedelta(days=int(day_i)) + _secs(cfg.service_start_h + span_h * within / mpd)
-            system = rng.choices(systems, weights)[0]
+            system = rng.choices(systems, weights)[0]      # A94: weights from config/fault_mix.yaml (ASSUMED)
             if t0 < busy_until:                        # a bus that is down accrues no revenue miles (A96): no new failure
                 dropped += 1
                 continue
             n += 1
             fid = f"{veh}-f{n}"
             rows = rows_by_system.get(system)
-            if not rows:                               # no SPN for this system in the fixture: the driver reports it
+            if not rows:                               # A94: no SPN for this system in the fixture: the driver reports it
                 repair = _secs(_lognormal_h(rng, shop.repair_hours_by_severity["service_soon"]))
                 beats.append(Beat(t0, veh, "dvir", {"fault_id": fid, "system": system,
                                                     "defect_text": f"{system.replace('_', ' ')} defect reported by operator"}))
