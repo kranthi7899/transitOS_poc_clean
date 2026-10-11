@@ -1,0 +1,102 @@
+# Derived by transitos.data.derive. Source dataset: ntd_breakdowns_2022_2024 (NTD 2022-2024 Breakdowns,
+# data.transportation.gov amkt-4ehs, report years 2022-2024). Rows read: 3731.
+# Query: select report_year, agency_voms, mode, mode_name, major_mechanical_failures, major_mechanical_failures_1, vehicle_passenger_car_revenue, vehicle_passenger_car_miles_2 from ref_ntd_breakdowns_2022_2024 where mode = ?
+# Filter: failures > 0, revenue miles > 0, failures flag and revenue-miles flag both empty (A121). Fleet-level rows (A122).
+# Date derived: 2026-10-11. Public domain (Socrata licenseId USGOV_WORKS, observed).
+source: NTD breakdowns
+source_dataset: ntd_breakdowns_2022_2024 (data.transportation.gov amkt-4ehs)
+derived_on: '2026-10-11'
+definition: miles between major failures = revenue miles / major mechanical failures, per agency-mode-type-of-service-year
+  row
+poisson_rule: model failures as a Poisson process in revenue miles with rate 1 / chosen quantile
+row_filter: failures > 0, revenue miles > 0, and neither the failures flag nor the revenue-miles flag (Q or W) set
+modes:
+  MB:
+    name: Bus
+    rows_total: 1379
+    rows_kept: 1296
+    all_agencies:
+      y2024:
+        n: 434
+        miles_between_major_failures:
+          p10: 5370
+          p25: 9352
+          p50: 18592
+          p75: 50924
+          p90: 129041
+      pooled_2022_2024:
+        n: 1296
+        miles_between_major_failures:
+          p10: 5699
+          p25: 9607
+          p50: 18576
+          p75: 47433
+          p90: 112305
+    small_fleet_voms_10_50:
+      y2024:
+        n: 168
+        miles_between_major_failures:
+          p10: 4772
+          p25: 11471
+          p50: 28373
+          p75: 63844
+          p90: 147139
+      pooled_2022_2024:
+        n: 515
+        miles_between_major_failures:
+          p10: 6128
+          p25: 11840
+          p50: 26657
+          p75: 62167
+          p90: 147940
+      note: agency_voms between 10 and 50 inclusive
+  DR:
+    name: Demand Response
+    rows_total: 1356
+    rows_kept: 1134
+    all_agencies:
+      y2024:
+        n: 393
+        miles_between_major_failures:
+          p10: 9968
+          p25: 22047
+          p50: 46401
+          p75: 105047
+          p90: 222864
+      pooled_2022_2024:
+        n: 1134
+        miles_between_major_failures:
+          p10: 9599
+          p25: 21068
+          p50: 42983
+          p75: 103318
+          p90: 208054
+    small_fleet_voms_10_50:
+      y2024:
+        n: 150
+        miles_between_major_failures:
+          p10: 6652
+          p25: 16491
+          p50: 37043
+          p75: 106264
+          p90: 233642
+      pooled_2022_2024:
+        n: 446
+        miles_between_major_failures:
+          p10: 6380
+          p25: 16252
+          p50: 39788
+          p75: 104046
+          p90: 199480
+      note: agency_voms between 10 and 50 inclusive
+exclusions:
+  MB:
+    no_major_failures: 57
+    no_revenue_miles: 0
+    questionable_failures: 3
+    questionable_revenue_miles: 23
+  DR:
+    no_major_failures: 191
+    no_revenue_miles: 0
+    questionable_failures: 3
+    questionable_revenue_miles: 28

@@ -1,0 +1,323 @@
+# Derived by transitos.data.derive. Source dataset: ntd_rvi_2024 (NTD 2024 Annual Database Revenue Vehicle
+# Inventory, xlsx, one sheet). Rows read: 35218 fleet rows. Shares weighted by Total Fleet Vehicles.
+# Query: select "Vehicle Type","Manufacturer","Model","Manufacture Year","Total Fleet Vehicles","ADA Fleet Vehicles","Fuel Type","Vehicle Length","Seating Capacity" from ref_ntd_rvi_2024
+# Date derived: 2026-10-11. No VINs or plates exist in this dataset (rows are fleets).
+# The model-year gap is NOT in the data: it is an assumption (A120). Blank/spelling/length-unit caveats: A123.
+source: NTD 2024 Revenue Vehicle Inventory
+source_dataset: ntd_rvi_2024
+derived_on: '2026-10-11'
+weighting: shares are weighted by Total Fleet Vehicles (rows are fleets, not vehicles)
+rows_total: 35218
+vehicles_total: 189561
+vehicle_type_share:
+  Bus: 0.2949
+  Cutaway: 0.2234
+  Van: 0.113
+  Minivan: 0.0834
+  Heavy Rail Passenger Car: 0.0665
+  Automobile: 0.0526
+  Articulated Bus: 0.033
+  Over-the-road Bus: 0.0311
+  Sports Utility Vehicle: 0.031
+  Commuter Rail Passenger Coach: 0.0224
+  Commuter Rail Self-Propelled Passenger Car: 0.0197
+  Light Rail Vehicle: 0.0157
+  Commuter Rail Locomotive: 0.0055
+  Trolleybus: 0.0028
+  Ferryboat: 0.0015
+  Double Decker Bus: 0.0009
+  Automated Guideway Vehicle: 0.0006
+  Vintage Trolley: 0.0005
+  Aerial Tramway: 0.0004
+  School Bus: 0.0004
+  Other: 0.0003
+  Cable Car: 0.0002
+  Monorail Vehicle: 0.0
+  Inclined Plane Vehicle: 0.0
+by_type:
+  Bus:
+    vehicles: 55895
+    fleet_rows: 7011
+    make_share:
+      Gillig Corporation: 0.4133
+      New Flyer of America: 0.2562
+      NOVA Bus Corporation: 0.0666
+      (blank): 0.0626
+      North American Bus Industries Inc. (form. Ikarus USA Inc./IKU): 0.0549
+      ElDorado National (formerly El Dorado/EBC/Nat. Coach/ NCC: 0.0393
+      Flyer Industries Ltd (aka New Flyer Industries): 0.0344
+      Orion Bus Industries Ltd. (formerly Ontario Bus Industries): 0.0175
+      Proterra Inc.: 0.0132
+      Build Your Dreams, Inc.: 0.0063
+      (other): 0.0357
+    model_share:
+      (blank): 0.0626
+      Low Floor: 0.0613
+      XDE40: 0.0489
+      LOWFLOOR: 0.048
+      XN40: 0.0446
+      XD40: 0.0439
+      G27D102N4: 0.0423
+      Lowfloor: 0.029
+      LowFloor: 0.0218
+      LFS: 0.0202
+      (other): 0.5775
+    seating_capacity_share:
+      '38': 0.1611
+      '40': 0.116
+      '39': 0.1052
+      '36': 0.0935
+      '37': 0.0842
+      '35': 0.0678
+      '32': 0.0651
+      '42': 0.0364
+      '33': 0.0332
+      '30': 0.0239
+      (other): 0.2136
+    length_share:
+      '40': 0.6736
+      '35': 0.1331
+      '41': 0.042
+      '30': 0.0388
+      '29': 0.037
+      '32': 0.0147
+      '42': 0.0142
+      '45': 0.006
+      (blank): 0.0056
+      '25': 0.0047
+      (other): 0.0302
+    length_note: unit not stated in the file; values such as 40 suggest feet (unverified)
+    name_note: make and model strings are as reported by agencies (case and spelling variants are not merged)
+    fuel_share:
+      Diesel Fuel: 0.5263
+      Compressed Natural Gas: 0.2543
+      Hybrid Diesel: 0.1323
+      Electric Battery: 0.0408
+      Gasoline: 0.0234
+      Other: 0.013
+      Liquefied Petroleum Gas (Propane): 0.0044
+      Hybrid Gasoline: 0.0025
+      Hydrogen: 0.0025
+      Liquefied Natural Gas: 0.0003
+      (other): 0.0003
+    ada_share: 0.9114
+    manufacture_year_share:
+      '1990': 0.0
+      '1991': 0.0
+      '1992': 0.0
+      '1993': 0.0
+      '1995': 0.0
+      '1996': 0.0001
+      '1997': 0.0004
+      '1998': 0.0007
+      '1999': 0.001
+      '2000': 0.0008
+      '2001': 0.0019
+      '2002': 0.0032
+      '2003': 0.0045
+      '2004': 0.0031
+      '2005': 0.0054
+      '2006': 0.0159
+      '2007': 0.0211
+      '2008': 0.0297
+      '2009': 0.0328
+      '2010': 0.0486
+      '2011': 0.0455
+      '2012': 0.0607
+      '2013': 0.0538
+      '2014': 0.0725
+      '2015': 0.0696
+      '2016': 0.0729
+      '2017': 0.065
+      '2018': 0.067
+      '2019': 0.0755
+      '2020': 0.0552
+      '2021': 0.0563
+      '2022': 0.0639
+      '2023': 0.0548
+      '2024': 0.018
+    manufacture_year_note: years 1990-2024 only (the inventory contains implausible earlier years)
+  Cutaway:
+    vehicles: 42349
+    fleet_rows: 12801
+    make_share:
+      (blank): 0.3325
+      Coach and Equipment Manufacturing Company: 0.1178
+      Starcraft: 0.0911
+      Glaval Bus: 0.0753
+      ElDorado National (formerly El Dorado/EBC/Nat. Coach/ NCC: 0.0747
+      Champion Motor Coach Inc.: 0.0585
+      Startrans (Supreme Corporation): 0.0554
+      Elkhart Coach (Division of Forest River, Inc.): 0.0338
+      Ford Motor Corporation: 0.0285
+      Goshen Coach: 0.0253
+      (other): 0.107
+    model_share:
+      (blank): 0.3326
+      Phoenix: 0.0466
+      Allstar: 0.041
+      Senator II: 0.0314
+      Universal: 0.03
+      Aerotech: 0.0246
+      PHOENIX: 0.0211
+      ECII: 0.0207
+      Challenger: 0.0207
+      Metrolite: 0.012
+      (other): 0.4193
+    seating_capacity_share:
+      '12': 0.1904
+      '14': 0.1713
+      '8': 0.0966
+      '16': 0.0789
+      '10': 0.0736
+      '15': 0.0511
+      '18': 0.0488
+      '13': 0.0347
+      '6': 0.0322
+      '11': 0.0317
+      (other): 0.1907
+    length_share:
+      '22': 0.1754
+      '23': 0.1672
+      '25': 0.1586
+      '24': 0.1394
+      '26': 0.0831
+      '20': 0.062
+      '21': 0.0583
+      '27': 0.0328
+      '28': 0.0316
+      '30': 0.0183
+      (other): 0.0733
+    length_note: unit not stated in the file; values such as 40 suggest feet (unverified)
+    name_note: make and model strings are as reported by agencies (case and spelling variants are not merged)
+    fuel_share:
+      Gasoline: 0.8385
+      Diesel Fuel: 0.0651
+      Compressed Natural Gas: 0.0441
+      Liquefied Petroleum Gas (Propane): 0.0428
+      Gasoline/Liquefied Petroleum Gas (Propane): 0.0035
+      Hybrid Gasoline: 0.0016
+      Ethanol: 0.0011
+      Liquefied Natural Gas: 0.0011
+      Electric Battery: 0.0008
+      Gasoline/Ethanol: 0.0007
+      (other): 0.0008
+    ada_share: 0.8731
+    manufacture_year_share:
+      '1998': 0.0001
+      '1999': 0.0002
+      '2000': 0.0001
+      '2001': 0.0002
+      '2002': 0.0006
+      '2003': 0.0009
+      '2004': 0.0007
+      '2005': 0.0012
+      '2006': 0.002
+      '2007': 0.0019
+      '2008': 0.0054
+      '2009': 0.0119
+      '2010': 0.0152
+      '2011': 0.0157
+      '2012': 0.0184
+      '2013': 0.0257
+      '2014': 0.0432
+      '2015': 0.0534
+      '2016': 0.0942
+      '2017': 0.1178
+      '2018': 0.1092
+      '2019': 0.1541
+      '2020': 0.0857
+      '2021': 0.0683
+      '2022': 0.0449
+      '2023': 0.0829
+      '2024': 0.046
+    manufacture_year_note: years 1990-2024 only (the inventory contains implausible earlier years)
+  Articulated Bus:
+    vehicles: 6256
+    fleet_rows: 389
+    make_share:
+      New Flyer of America: 0.7442
+      NOVA Bus Corporation: 0.169
+      North American Bus Industries Inc. (form. Ikarus USA Inc./IKU): 0.034
+      Flyer Industries Ltd (aka New Flyer Industries): 0.0245
+      Build Your Dreams, Inc.: 0.0144
+      Gillig Corporation: 0.0064
+      (blank): 0.0045
+      Van Hool N.V.: 0.0027
+      Chance Manufacturing Company: 0.0003
+    model_share:
+      XD60: 0.1523
+      XN60: 0.109
+      XDE60: 0.1081
+      60LFS: 0.0785
+      DE60LF: 0.0676
+      D60LFR: 0.0344
+      XE60: 0.0272
+      XDE60-SR19**: 0.0177
+      DE60LFA: 0.0176
+      DE60LFR: 0.0171
+      (other): 0.3705
+    seating_capacity_share:
+      '52': 0.1563
+      '49': 0.1355
+      '57': 0.1036
+      '59': 0.0954
+      '55': 0.0858
+      '56': 0.0625
+      '45': 0.0393
+      '54': 0.0377
+      '61': 0.036
+      '53': 0.0358
+      (other): 0.212
+    length_share:
+      '60': 0.9238
+      '62': 0.0334
+      '61': 0.0323
+      '40': 0.0061
+      '59': 0.004
+      (blank): 0.0002
+      '41': 0.0002
+      '63': 0.0002
+    length_note: unit not stated in the file; values such as 40 suggest feet (unverified)
+    name_note: make and model strings are as reported by agencies (case and spelling variants are not merged)
+    fuel_share:
+      Diesel Fuel: 0.4668
+      Hybrid Diesel: 0.286
+      Compressed Natural Gas: 0.1731
+      Electric Battery: 0.0484
+      Other: 0.0254
+      Hydrogen: 0.0003
+    ada_share: 0.945
+    manufacture_year_share:
+      '2001': 0.0005
+      '2002': 0.0006
+      '2005': 0.0002
+      '2006': 0.001
+      '2007': 0.0163
+      '2008': 0.0129
+      '2009': 0.0432
+      '2010': 0.0408
+      '2011': 0.0451
+      '2012': 0.0692
+      '2013': 0.0942
+      '2014': 0.0422
+      '2015': 0.0667
+      '2016': 0.0865
+      '2017': 0.0804
+      '2018': 0.0849
+      '2019': 0.1004
+      '2020': 0.0747
+      '2021': 0.042
+      '2022': 0.0333
+      '2023': 0.032
+      '2024': 0.0331
+    manufacture_year_note: years 1990-2024 only (the inventory contains implausible earlier years)
+model_year_gap:
+  source: assumption
+  id: A120
+  model_year_minus_manufacture_year:
+    '0': 0.7
+    '1': 0.3
+  note: The inventory has a 'Manufacture Year' and a 'Rebuild Year' column but NO model-year column, so the gap
+    cannot be measured from it. The NTD glossary says a model-2013 vehicle was likely made in 2012; the 0.7/0.3
+    split is an assumption.

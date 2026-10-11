@@ -1,0 +1,33 @@
+{
+ "dataset": "ntd_vehicle_maintenance_2024",
+ "file": "2024 Vehicle Maintenance_250813.xlsx",
+ "columns": [
+  "NTD ID",
+  "Agency Name",
+  "Reporter Type",
+  "Reporting Module",
+  "Mode",
+  "TOS",
+  "Major Failures",
+  "Other Failures",
+  "Total Failures"
+ ],
+ "rows": 1248,
+ "sheets": [
+  {
+   "name": "Vehicle Maintenance",
+   "header_row": 1,
+   "columns": [
+    "NTD ID",
+    "Agency Name",
+    "Reporter Type",
+    "Reporting Module",
+    "Mode",
+    "TOS",
+    "Major Failures",
+    "Other Failures",
+    "Total Failures"
+   ]
+  }
+ ]
+}

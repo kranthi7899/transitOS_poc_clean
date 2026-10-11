@@ -1,0 +1,25 @@
+# config/fault_mix.yaml
+# ASSUMED (A117, A118). No published split of bus failures by vehicle system was found (docs/RESEARCH_DATA_SOURCES.md
+# section 4: UNKNOWN). These weights are an explicit placeholder so the stochastic world engine has something to draw
+# from; they are NOT data and should be replaced if a real split is ever found (for example from an agency road-call log).
+# Category list: the FTA major-failure examples for buses (brakes, doors, engine cooling, steering, axles,
+# suspension) plus common road-call categories from one agency's report (air conditioning, body, wheelchair lift or
+# ramp, electrical, transmission, tyres) and a general engine bucket.
+# The weights must sum to 1.0 (checked by `make data-check`).
+version: 1
+assumption_ids: [A117, A118]
+source: assumption
+systems:
+  brakes:               {weight: 0.10, fta_major_example: true,  primary_spns: []}
+  doors:                {weight: 0.10, fta_major_example: true,  primary_spns: []}
+  engine_cooling:       {weight: 0.10, fta_major_example: true,  primary_spns: [110]}
+  steering:             {weight: 0.04, fta_major_example: true,  primary_spns: []}
+  axles:                {weight: 0.03, fta_major_example: true,  primary_spns: []}
+  suspension:           {weight: 0.06, fta_major_example: true,  primary_spns: []}
+  air_conditioning:     {weight: 0.12, fta_major_example: false, primary_spns: []}
+  body:                 {weight: 0.05, fta_major_example: false, primary_spns: []}
+  wheelchair_lift_ramp: {weight: 0.08, fta_major_example: false, primary_spns: []}
+  electrical:           {weight: 0.14, fta_major_example: false, primary_spns: [168, 158]}
+  transmission:         {weight: 0.06, fta_major_example: false, primary_spns: [84]}
+  tyres:                {weight: 0.06, fta_major_example: false, primary_spns: []}
+  engine:               {weight: 0.06, fta_major_example: false, primary_spns: [190, 100, 651, 1322]}

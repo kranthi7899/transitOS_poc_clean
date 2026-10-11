@@ -1,0 +1,10 @@
+{
+ "dataset": "cincinnati_status_counts",
+ "file": "status_counts.csv",
+ "columns": [
+  "work_order_status",
+  "job_type",
+  "count"
+ ],
+ "rows": 7
+}

@@ -1,0 +1,19 @@
+# config/shop_behaviour.yaml
+# ASSUMED (A119). Fallback for the maintenance-shop simulation (Step 4) in case data/derived/repair_durations.yaml
+# is not used. Hand-set; no source gives transit-bus time-to-repair or parts-delay figures (research section 5).
+# Durations are lognormal: `median` in hours, `sigma` the spread of the log (the Cincinnati city-fleet data gave
+# a sigma of about 1.3 for whole-day open-to-close times, so 0.7 to 1.2 here is a deliberately milder, still skewed, shape).
+version: 1
+assumption_ids: [A119]
+source: assumption
+statuses:
+  repair: [OPEN, IN_PROGRESS, WAITING_PARTS, PENDING, COMPLETE]
+  work_order: [OPEN, CLOSED]
+pending_to_work_order_hours: {median: 4.0, sigma: 0.8}   # foreman converts a pending repair after this delay
+parts_wait: {probability: 0.25, hours: {median: 36.0, sigma: 1.0}}
+deferral_to_pending: {probability: 0.10, hours: {median: 24.0, sigma: 0.6}}
+human_opens_work_order_first_probability: 0.05           # a person gets there before the automation
+repair_hours_by_severity:
+  monitor:      {median: 2.0, sigma: 0.7}
+  service_soon: {median: 6.0, sigma: 0.8}
+  pull_vehicle: {median: 16.0, sigma: 0.9}
