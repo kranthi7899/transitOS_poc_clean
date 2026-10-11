@@ -25,7 +25,9 @@ from transitos.clearance.rules import (
     last_spare_item,
 )
 from transitos.contracts import ids
+from transitos.contracts.crosswalk import CrosswalkEntry
 from transitos.contracts.envelope import START_TYPES, CloudEvent
+from transitos.contracts.events import PUBLISHER
 from transitos.contracts.objects import (
     Block,
     Needs,
@@ -39,11 +41,14 @@ from transitos.contracts.objects import (
 from transitos.contracts.policy import AgencyPolicy
 from transitos.contracts.tools import COMPENSATION, SAGA_ORDER
 from transitos.mocks.clock import SimClock
+from transitos.mocks.crosswalk_seed import vehicle_entries
+from transitos.plumbing.resolver import Evidence, RulesResolver, StaticRows, valid_at
 from transitos.world.script import hhmm_on
 from transitos.world.truth import GroundTruth
 
 from .model import RETURN_ACTION, AuditEvent, Observation, WriteRecord
 from .scenarios import AGENCY, NATIVE_ASSET, NATIVE_TELEMATICS, T0, Scenario
+from .scenarios_step2 import vehicle_identity
 
 BLOCK_HOURS = 4
 LENGTH_FT = {"cutaway": 24.0, "standard": 40.0, "articulated": 60.0}   # ASSUMED A66
@@ -76,6 +81,8 @@ class FakeWorld:
         self.seen: set[str] = set()
         self.attached: dict[str, list[str]] = {}
         self.dead_letters: list[dict] = []
+        self.parked: list[tuple[CloudEvent, str]] = []     # Phase 10 Step 2: (event, native id) awaiting a pick
+        self.picked: list[CrosswalkEntry] = []
         self.alerts: list[dict] = []
         self.key_effects: dict[str, str] = {}
         self.wo_n = 0
@@ -133,15 +140,65 @@ class FakeWorld:
         self.audit.append(AuditEvent(seq=self._next(), kind=kind, run_id=run_id,  # type: ignore[arg-type]
                                      plan_version=kw.pop("plan_version", None), key=kw.pop("key", None), data=kw))
 
+    # ---- identity (Phase 10 Step 2) ----
+    def _step2(self) -> bool:
+        return any(getattr(self.tweaks, k, None) not in (None, False)
+                   for k in ("identity", "tele_swap_h", "maint_renumber_h", "maint_retired"))
+
+    def _identity_rows(self) -> list:
+        """Crosswalk rows from the SAME fleet keys the integration world seeds (scenarios_step2.vehicle_identity)."""
+        rows = []
+        for n in range(1, 2 + self.tweaks.spares):
+            v = {"canonical": f"veh-{n}", "sched": f"BUS-{43 + n}", "tele": f"T-{76 + n}", "maint": str(1105 + n),
+                 **vehicle_identity(n, self.tweaks)}
+            rows += vehicle_entries(AGENCY, v)
+        return rows + self.picked
+
+    def _resolve(self, event: CloudEvent, native: str) -> tuple[str | None, str]:
+        """(canonical, failure reason): exact row valid at the event time, else the real rules resolver."""
+        product = PUBLISHER[event.type]
+        rows = self._identity_rows()
+        exact = sorted({r.canonical_id for r in rows if r.product == product and r.native_id == native
+                        and valid_at(r, event.time)})
+        if len(exact) == 1:
+            return exact[0], ""
+        d = event.data
+        try:
+            res = RulesResolver(StaticRows(rows)).resolve(AGENCY, product, Evidence(
+                native, d.get("native_vin"), d.get("native_plate"), d.get("native_name")), event.time)
+        except Exception as e:  # noqa: BLE001 - fail closed, as the crosswalk service
+            return None, f"unresolved_vehicle_id (resolver_error: {e})"
+        if res.outcome == "MATCH":
+            return res.candidates[0].canonical_id, ""
+        if res.outcome == "AMBIGUOUS":
+            return None, "ambiguous: " + ", ".join(c.canonical_id for c in res.candidates)
+        return None, "unresolved_vehicle_id"
+
+    def pick(self, canonical_id: str) -> None:
+        if not self.parked:
+            return
+        native, product = self.parked[0][1], PUBLISHER[self.parked[0][0].type]
+        self.picked.append(CrosswalkEntry(agency=AGENCY, product=product, native_id=native, entity="vehicle",
+                                          canonical_id=canonical_id))
+        again = [ev for ev, n in self.parked if n == native]
+        self.parked = [(ev, n) for ev, n in self.parked if n != native]
+        for ev in again:
+            self.seen.discard(ev.id)
+            self.deliver(ev)
+
     # ---- event handling ----
     def deliver(self, event: CloudEvent) -> None:
         if event.id in self.seen:
             return
         self.seen.add(event.id)
         refs = event.data.get("native_vehicle_id") or event.data.get("native_asset_id")
-        vid = CROSSWALK.get(refs)
+        if self._step2():
+            vid, reason = self._resolve(event, str(refs))
+        else:
+            vid, reason = CROSSWALK.get(refs), "unresolved_vehicle_id"
         if vid is None:
-            self.dead_letters.append({"event_id": event.id, "reason": "unresolved_vehicle_id", "native": refs})
+            self.dead_letters.append({"event_id": event.id, "reason": reason, "native": refs})
+            self.parked.append((event, str(refs)))
             return
         if event.type not in START_TYPES:
             return
@@ -352,6 +409,8 @@ class FakeWorld:
             return False
         calls = 2 if (self.chaos.get("maintenance") == "duplicate" and action == "create_work_order") else 1
         ok = self.chaos.get("reject_write") != action or compensation
+        if action == "create_work_order" and getattr(self.tweaks, "maint_retired", False):
+            ok = False   # Phase 10 Step 2: the maintenance product refuses a work order on a retired asset
         effect = None
         for _ in range(calls):           # a retried call with the same key must not repeat the effect
             if key in self.key_effects:

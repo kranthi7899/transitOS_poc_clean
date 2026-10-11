@@ -16,6 +16,8 @@ def classify(obs: Observation) -> str:
     `product_unavailable` mark those cases; any other violation means a hard limit blocked the plan.
     """
     if not obs.runs:
+        if any(str(d.get("reason") or "").startswith("ambiguous") for d in obs.dead_letters):
+            return Outcome.NEEDS_HUMAN_MATCH.value     # Phase 10 Step 2: parked for a human identity pick
         return Outcome.DEAD_LETTER.value if obs.dead_letters else "no-run"
     run = obs.runs[0]
     viol = run.violations
@@ -76,6 +78,8 @@ def drive(world: World, scenario: Scenario) -> Observation:
             world.deliver(scenario.events[arg])
         elif name == "world_until":      # Phase 10 Step 3: run the world engine to HH:MM on the scenario day
             world.advance_world_to(arg)
+        elif name == "pick":                  # Phase 10 Step 2: a human picks the identity of a parked event
+            world.pick(arg)
         elif rid is None:
             continue
         elif name == "approve":

@@ -350,17 +350,29 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
     @app.get("/ui/unresolved", response_class=HTMLResponse)
     def ui_unresolved(agency: str | None = None):
         items = unresolved.list_unresolved(agency) if unresolved else []
+
+        def hidden(i: dict) -> str:
+            return (f"<input type='hidden' name='agency' value='{_e(i['agency'])}'>"
+                    f"<input type='hidden' name='product' value='{_e(i['product'])}'>"
+                    f"<input type='hidden' name='native_id' value='{_e(i['native_id'])}'>"
+                    "<input type='hidden' name='entity' value='vehicle'>")
+
+        def candidates(i: dict) -> str:   # Phase 10 Step 2: the resolver's candidates and evidence, one pick each
+            out = "".join(
+                f"<form method='post' action='/ui/crosswalk'>{hidden(i)}"
+                f"<input type='hidden' name='canonical_id' value='{_e(c['canonical_id'])}'>"
+                f"<button class='ok'>Pick {_e(c['canonical_id'])}</button> {float(c['score']):.2f} "
+                f"<small>{_e('; '.join(c.get('evidence', [])))}</small></form>" for c in i.get("candidates") or [])
+            return (f"<b>{_e(i['outcome'])}</b>" if i.get("outcome") else "") + out
+
         rows = "".join(
             f"<tr><td>{_e(i['agency'])}</td><td>{_e(i['product'])}</td><td>{_e(i['native_id'])}</td>"
-            f"<td>{len(i['event_ids'])}</td><td><form method='post' action='/ui/crosswalk'>"
-            f"<input type='hidden' name='agency' value='{_e(i['agency'])}'>"
-            f"<input type='hidden' name='product' value='{_e(i['product'])}'>"
-            f"<input type='hidden' name='native_id' value='{_e(i['native_id'])}'>"
-            "<input type='hidden' name='entity' value='vehicle'>"
+            f"<td>{len(i['event_ids'])}</td><td>{candidates(i)}</td>"
+            f"<td><form method='post' action='/ui/crosswalk'>{hidden(i)}"
             "<input name='canonical_id' placeholder='veh-12' required>"
             "<button class='ok'>Map</button></form></td></tr>" for i in items)
         body = ("<div class='card'><table><tr><th>Agency</th><th>Product</th><th>Native ID</th>"
-                f"<th>Parked</th><th>Fix</th></tr>{rows}</table></div>" if rows
+                f"<th>Parked</th><th>Candidates</th><th>Fix</th></tr>{rows}</table></div>" if rows
                 else "<div class='card'>Nothing unresolved.</div>")
         return _page("Unresolved IDs", body)
 

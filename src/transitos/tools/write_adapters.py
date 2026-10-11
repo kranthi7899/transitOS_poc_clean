@@ -89,8 +89,13 @@ class MaintenanceWriter(_Base):
                 return existing  # type: ignore[return-value]
             if existing.value is not None:  # reuse (typically human-opened) WO; never duplicate
                 return Result.success(existing.value, note="already_open")
-            raw = self.http.json(agency, "POST", "/workorders", headers={"Idempotency-Key": key},
-                                 json={"asset": asset, "description": description, "opened_by": "system"})
+            try:
+                raw = self.http.json(agency, "POST", "/workorders", headers={"Idempotency-Key": key},
+                                     json={"asset": asset, "description": description, "opened_by": "system"})
+            except ProductUnavailable as e:   # Phase 10 Step 2 (A87): a retired asset is a refusal, not an outage
+                if (e.note or "").startswith("http 409") and "retired" in (e.note or ""):
+                    raise HardLimit([f"asset_retired:{asset}"]) from e
+                raise
             back = self.reader.get_work_order(agency, str(raw["id"]))  # read back
             if back.status != "ok":
                 return Result.part(map_work_order(self.deps, agency, raw), "maintenance",

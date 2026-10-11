@@ -38,6 +38,7 @@ class Outcome(str, Enum):
     COMPENSATED_ESCALATED = "compensated-escalated"  # a write failed mid-plan; undone in reverse; escalated
     HALTED_KILL_SWITCH = "halted-kill-switch"      # kill switch stopped the run; no writes afterwards
     DEAD_LETTER = "dead-letter"                    # unresolved vehicle id; no run
+    NEEDS_HUMAN_MATCH = "needs-human-match"        # Phase 10 Step 2: ambiguous identity parked for a human; no run
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,9 @@ SCENARIOS: tuple[Scenario, ...] = (
 from .scenarios_step1 import STEP1_SCENARIOS  # Phase 10 Step 1
 
 SCENARIOS = SCENARIOS + STEP1_SCENARIOS
+from .scenarios_step2 import STEP2_SCENARIOS  # Phase 10 Step 2
+
+SCENARIOS = SCENARIOS + STEP2_SCENARIOS
 from .scenarios_step3 import STEP3_SCENARIOS  # Phase 10 Step 3 (world engine)
 
 SCENARIOS = SCENARIOS + STEP3_SCENARIOS

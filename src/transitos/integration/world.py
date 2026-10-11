@@ -224,6 +224,19 @@ class IntegrationWorld:
                                               json={"vehicle": native, "status": "reserved", "changed_by": "dispatcher"})
         self.system.run_until_idle()
 
+    def pick(self, canonical_id: str) -> None:
+        """Phase 10 Step 2: the human picks an identity in the panel (GET /unresolved, POST /crosswalk); the
+        panel republishes the parked events, which then resolve."""
+        items = self.system.panel_client.get("/unresolved", params={"agency": AGENCY}).json()
+        if not items:
+            return
+        i = items[0]
+        r = self.system.panel_client.post("/crosswalk", json={
+            "agency": i["agency"], "product": i["product"], "native_id": i["native_id"], "entity": "vehicle",
+            "canonical_id": canonical_id})
+        r.raise_for_status()
+        self.system.run_until_idle()
+
     def restart(self) -> None:
         """Process restart (not in F's World Protocol): rebuild from the same SQLite files, recover."""
         self.system.restart()

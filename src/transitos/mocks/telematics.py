@@ -65,7 +65,8 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
                 continue
             st.put(a, "vehicles", v["tele"], {"id": v["tele"], "name": v.get("tele_name") or v["name"], **_ident(v)})
             if p := v.get("tele_prev"):   # a swapped-out gateway keeps its record, with the removal date
-                st.put(a, "vehicles", p["id"], {"id": p["id"], "name": p["name"], "removedAt": p["removed_at"],
+                st.put(a, "vehicles", p["id"], {"id": p["id"], "name": p.get("name") or v["name"],
+                                                "removedAt": p["removed_at"],
                                                 **({"vin": p["vin"]} if p.get("vin") else {})})
 
     app = make_app(ctx, "telematics", seeder)

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from transitos.mocks.clock import iso
 from transitos.mocks.seed import Fleet
 from transitos.verification.scenarios import AGENCY, Tweaks
+from transitos.verification.scenarios_step2 import vehicle_identity
 
 VEHICLE_TYPE = "standard"
 BLOCK_ID = "blk-1"
@@ -35,7 +36,8 @@ def scenario_fleet(t: Tweaks):
             return {"idx": n, "canonical": f"veh-{n}", "role": role, "sched": f"BUS-{43 + n}",
                     "tele": f"T-{76 + n}", "maint": str(1105 + n), "name": f"Bus {43 + n}", "type": vtype,
                     "seats": seats, "wheelchair_positions": wc, "lift_ok": lift, "depot": "North", "status": status,
-                    "length_ft": (g("spare_length_ft", None) if role == "spare" else None) or LENGTH_FT.get(vtype)}
+                    "length_ft": (g("spare_length_ft", None) if role == "spare" else None) or LENGTH_FT.get(vtype),
+                    **vehicle_identity(n, t)}   # Phase 10 Step 2 knobs (none set: nothing added)
 
         f.vehicles.append(veh(1, "line", 40, 2, True, "in_service", block_type))
         for i in range(t.spares):
