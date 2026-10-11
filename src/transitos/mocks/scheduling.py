@@ -91,7 +91,8 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         return set_status(a, vehicle(a, vid), "ready", (body or {}).get("changed_by") or "api")
 
     @app.post("/blocks/{bid}/reassign")
-    def reassign(bid: str, body: dict = Body(...), a: str = tenant):
+    def reassign(bid: str, body: dict = Body(...), a: str = tenant,
+                 x_restore: str | None = Header(default=None)):
         ctx.write_gate()
         b = st.get(a, "blocks", bid)
         if b is None:
@@ -100,20 +101,26 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         needs = b["needs"]
         if target["id"] == b["vehicle"]:
             raise HTTPException(409, "block already on that vehicle")
-        if target["status"] == "out_of_service":
-            raise HTTPException(409, "target vehicle out of service")
-        if target["seats"] < needs.get("seats", 0):
-            raise HTTPException(409, "target lacks seats")
-        if target["wheelchair_positions"] < needs.get("wheelchair_positions", 0):
-            raise HTTPException(409, "target lacks wheelchair positions")
-        if needs.get("lift") and not target["lift_ok"]:
-            raise HTTPException(409, "target lacks working lift")
-        if not type_ok(target["type"], needs.get("type")):
-            raise HTTPException(409, "target vehicle type unsuitable")
+        # A57: a RESTORE of the block's immediately previous assignment (X-Restore: true) is accepted even
+        # when that vehicle is out of service; a NEW assignment to an unavailable vehicle is still refused.
+        # The earlier assignment already satisfied needs, so only double-booking is re-checked for a restore.
+        restore = (x_restore or "").lower() == "true" and target["id"] == b.get("previous_vehicle")
+        if not restore:
+            if target["status"] == "out_of_service":
+                raise HTTPException(409, "target vehicle out of service")
+            if target["seats"] < needs.get("seats", 0):
+                raise HTTPException(409, "target lacks seats")
+            if target["wheelchair_positions"] < needs.get("wheelchair_positions", 0):
+                raise HTTPException(409, "target lacks wheelchair positions")
+            if needs.get("lift") and not target["lift_ok"]:
+                raise HTTPException(409, "target lacks working lift")
+            if not type_ok(target["type"], needs.get("type")):
+                raise HTTPException(409, "target vehicle type unsuitable")
         s, e = parse_ts(b["start"]), parse_ts(b["end"])
         for o in st.all(a, "blocks"):
             if o["id"] != bid and o["vehicle"] == target["id"] and parse_ts(o["start"]) < e and parse_ts(o["end"]) > s:
                 raise HTTPException(409, f"target vehicle already assigned to {o['id']}")
+        b["previous_vehicle"] = None if restore else b["vehicle"]
         b["vehicle"] = target["id"]
         st.put(a, "blocks", bid, b)
         return b

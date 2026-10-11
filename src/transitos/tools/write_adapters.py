@@ -147,7 +147,11 @@ class SchedulingWriter(_Base):
             native_to = self._native_vehicle(agency, to_vehicle_id, "scheduling")
             if not compensation:
                 self._recheck(agency, block_id, to_vehicle_id)
-            self.http.request(agency, "POST", f"/blocks/{block_id}/reassign", json={"vehicle": native_to})
+            # A57: compensation is a restore of the prior assignment; the product accepts it even while that
+            # vehicle is out of service (new assignments there stay refused).
+            hdr = {"X-Restore": "true"} if compensation else {}
+            self.http.request(agency, "POST", f"/blocks/{block_id}/reassign", json={"vehicle": native_to},
+                              headers=hdr)
             back = self.reader.get_block(agency, block_id)
             if back.status != "ok":
                 return Result.part(None, "scheduling", f"write sent, readback failed: {back.note}")

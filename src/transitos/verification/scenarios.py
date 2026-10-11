@@ -162,6 +162,10 @@ SCENARIOS: tuple[Scenario, ...] = (
        Outcome.EXPIRED_ESCALATED, (("deliver", 0), ("advance", 1)), expect_wo_creates=0),
     _s("write_rejected_mid_plan", "reassign_block rejected -> undo WO + unavailable in reverse, escalate",
        Outcome.COMPENSATED_ESCALATED, _DELIVER_APPROVE, chaos={"reject_write": "reassign_block"}),
+    _s("write_rejected_after_reassign", "assign_operator rejected after reassign_block -> full reverse undo "
+       "(block restored, vehicle available, WO cancelled), escalate (A57)",
+       Outcome.COMPENSATED_ESCALATED, _DELIVER_APPROVE, tweaks=Tweaks(assigned_operator_hours_today=7.0),
+       chaos={"reject_write": "assign_operator"}),
     _s("kill_switch_mid_run", "Kill switch flips after 2 writes -> no further writes, escalate",
        Outcome.HALTED_KILL_SWITCH, _DELIVER_APPROVE, chaos={"kill_after_writes": 2}),
     _s("retried_write_duplicate", "Maintenance write delivered twice (retry) -> single WO effect",

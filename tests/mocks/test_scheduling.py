@@ -64,6 +64,27 @@ def test_reassign_rejects_out_of_service_target(sched):
     assert c.post(f"/blocks/{blk['id']}/reassign", json={"vehicle": "BUS-53"}, headers=A).status_code == 409
 
 
+def test_restore_of_previous_assignment_accepted_while_out_of_service(sched):
+    """A57: X-Restore puts the block back on the previous vehicle even if it is out of service."""
+    c, _ = sched
+    blk = c.get("/blocks", params={"vehicle": "BUS-44"}, headers=A).json()[0]
+    assert c.post(f"/blocks/{blk['id']}/reassign", json={"vehicle": "BUS-53"}, headers=A).status_code == 200
+    c.post("/vehicles/BUS-44/unavailable", json={}, headers=A)
+    # a NEW assignment to the unavailable vehicle (no restore header) is still refused
+    assert c.post(f"/blocks/{blk['id']}/reassign", json={"vehicle": "BUS-44"}, headers=A).status_code == 409
+    r = c.post(f"/blocks/{blk['id']}/reassign", json={"vehicle": "BUS-44"}, headers={**A, "X-Restore": "true"})
+    assert r.status_code == 200 and r.json()["vehicle"] == "BUS-44"
+
+
+def test_restore_header_does_not_bypass_for_other_vehicles(sched):
+    """X-Restore only applies to the block's immediately previous vehicle, never to a new target."""
+    c, _ = sched
+    c.post("/vehicles/BUS-53/unavailable", json={}, headers=A)
+    blk = c.get("/blocks", params={"vehicle": "BUS-44"}, headers=A).json()[0]
+    r = c.post(f"/blocks/{blk['id']}/reassign", json={"vehicle": "BUS-53"}, headers={**A, "X-Restore": "true"})
+    assert r.status_code == 409 and "out of service" in r.json()["detail"]
+
+
 def test_chaos_reject_write(sched):
     c, _ = sched
     c.post("/sim/chaos", json={"mode": "reject_write", "on": True})

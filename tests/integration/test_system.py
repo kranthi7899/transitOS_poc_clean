@@ -182,26 +182,43 @@ def _reject_assign(world):
     world.system.writes.around = around
 
 
-def test_failure_after_reassign_escalates_with_exact_state(world):
-    """Today: compensating in strict reverse order stops at reassign_block - the scheduling product refuses
-    to put the block back on the faulted vehicle while it is out of service - and the run escalates with
-    the exact applied state (nothing silent)."""
-    _reject_assign(world)
-    rid = fault_via_mock(world)
-    world.approve(rid)
-    esc = world.system.store.get_escalation(rid)
-    assert esc["reason"] == "compensation_failed" and "out of service" in esc["comp_failed"]["note"]
-    assert esc["still_applied"] == ["create_work_order", "set_vehicle_unavailable", "reassign_block:blk-1"]
-    assert check_all(world.observe()) == []
+def _state(world):
+    docs = {d['id']: d for d in world._docs('scheduling', 'vehicles')}
+    blocks = {b['id']: b for b in world._docs('scheduling', 'blocks')}
+    return docs, blocks
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DECISION NEEDED: strict reverse compensation cannot complete against the real scheduling product - "
-    "reassigning the block back to the faulted vehicle is refused (409, vehicle out of service) because "
-    "set_vehicle_unavailable is undone only afterwards. Options in coordination/handoffs/INTEGRATION.md."))
 def test_failure_after_reassign_compensates_every_step_in_reverse(world):
+    """A57 (resolves A48): compensating reassign_block is a restore of the prior assignment, which the
+    scheduling product accepts although the faulted vehicle is out of service. assign_operator fails ->
+    full reverse undo, consistent end state, every compensation audited."""
+    before_vehicles, before_blocks = _state(world)
     _reject_assign(world)
     rid = fault_via_mock(world)
     world.approve(rid)
     comps = [w for w in world.system.writes.records if w.compensation and w.ok]
     assert [c.action for c in comps] == ["reassign_block", "set_vehicle_available", "cancel_work_order"]
+    assert all(c.compensates_key for c in comps)
+    assert world.system.store.get_escalation(rid)["reason"] != "compensation_failed"
+    vehicles, blocks = _state(world)
+    assert {b: d["vehicle"] for b, d in blocks.items()} == {b: d["vehicle"] for b, d in before_blocks.items()}
+    norm = {"in_service": "ready"}  # the product's "available" call sets ready (the mock's notion of available)
+    assert {v: norm.get(d["status"], d["status"]) for v, d in vehicles.items()} == \
+        {v: norm.get(d["status"], d["status"]) for v, d in before_vehicles.items()}
+    assert not [v for v in vehicles.values() if v["status"] == "out_of_service"]
+    # every compensation is in the append-only audit (decision store) with its key
+    audited = {a["key"] for rec in world.system.decisions.list_for_run(rid) for a in rec.actions if a.get("key")}
+    assert {c.key for c in comps} <= audited
+    assert check_all(world.observe()) == []
+
+
+def test_normal_assignment_to_unavailable_vehicle_still_refused(world):
+    """Regression: the restore exception must not let a NEW assignment onto an unavailable vehicle through."""
+    rid = fault_via_mock(world)
+    world.approve(rid)  # block now on the spare, faulted vehicle out of service
+    vehicles, blocks = _state(world)
+    (oos,) = [v for v in vehicles.values() if v["status"] == "out_of_service"]
+    (blk,) = [b for b in blocks.values() if b["vehicle"] != oos["id"]][:1]
+    c = world.mocks.clients["scheduling"]
+    r = c.post(f"/blocks/{blk['id']}/reassign", headers=H, json={"vehicle": oos["id"]})
+    assert r.status_code == 409 and "out of service" in r.text
