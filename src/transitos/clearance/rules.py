@@ -316,6 +316,12 @@ def known_vehicle_type(v: Vehicle, facts: Facts) -> str | None:
     return None if facts.record_basis("scheduling", "type", v) == "unknown" else v.type
 
 
+def known_need_type(block: Block) -> str | None:
+    """The block's required type for a candidate PRE-filter (vehicle not chosen yet): None when the block did not
+    declare it (C-2), so a placeholder is never judged (R2-1)."""
+    return None if need_unknown(block, "type") else block.needs.type
+
+
 def operator_items(block: Block, op: Operator, vehicle_type: str | None, facts: Facts,
                    policy: AgencyPolicy) -> list[ClearanceItem]:
     """All operator rules for one block. `vehicle_type` is the KNOWN type of the vehicle that will run it (use
