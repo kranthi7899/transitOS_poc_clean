@@ -18,7 +18,7 @@ def result(sid):
 
 
 def test_registered_after_the_32_older_scenarios_without_touching_them():
-    assert len(SCENARIOS) == 35 and [s.id for s in SCENARIOS[32:]] == list(IDS)
+    assert len(SCENARIOS) >= 35 and [s.id for s in SCENARIOS[32:35]] == list(IDS)   # Step 2's follow
     assert BY_ID["scripted_day_coolant"].expected.value == "plan-valid"
     assert BY_ID["callout_with_extra_board"].expected.value == "plan-valid"
 
