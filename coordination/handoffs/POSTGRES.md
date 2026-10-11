@@ -92,3 +92,5 @@
 - Single-process only; no concurrent-writer stress test; no TLS/roles; Windows/Linux fetch targets in the script are
   untested (only darwin-arm64 ran). `make demo` has no Postgres-specific target (run it with `TRANSITOS_DB=postgres`).
 - `.local/pgtry/` (a scratch extraction I made while exploring) is left behind; it is gitignored and safe to delete.
+
+Note: the assumptions listed here as A57-A61 were renumbered A60-A64 in docs/ASSUMPTIONS.md (A57-A59 are the undo rule).

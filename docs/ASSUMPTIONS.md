@@ -62,7 +62,7 @@ ids collided; every assumption now has one id (old track ids in the mapping tabl
 | A45 | Compensations are exempt from approval but not from the kill switch | F, D | confirmed |
 | A46 | `autonomy=recommend` forbids every write of that action; `act` exempts approval | F, D | open (not exercised on the real world) |
 | A47 | A failed rider alert (irreversible) is escalated without compensating earlier steps | integration, D | decision (current behaviour; forced by F's rider_alert_last invariant) |
-| A48 | After a failure that follows `reassign_block`, strict reverse undo stops: scheduling refuses to put the block back on the out-of-service vehicle; the run escalates with exact state | integration | decision (strict xfail test pins it) |
+| A48 | After a failure that follows `reassign_block`, strict reverse undo stops: scheduling refuses to put the block back on the out-of-service vehicle; the run escalates with exact state | integration | resolved by A57 |
 | A49 | Verification scenarios and the demo run on the scenario baseline fleet (agency `agency-a`, vehicle type `standard`) seeded into the real mocks; the agency-042 seed currently escalates (A26, one spare per block) | integration | decision |
 | A50 | The integration operations log (human decisions, expiries, kill-switch toggles with a global sequence) is in memory; the durable audit is the append-only DecisionStore | integration | open |
 
@@ -87,3 +87,11 @@ ids collided; every assumption now has one id (old track ids in the mapping tabl
 | A54 | Each System on Kafka uses its own topic/group namespace (stored in its data dir); canonical names only with `TRANSITOS_KAFKA_NAMESPACE=none`. Test namespaces are deleted by `scripts/kafka.sh purge` | integration/system.py | decision |
 | A55 | Kafka topics keep 7 days (retention.ms); replay from earlier than that is impossible on Kafka (SqliteBus keeps everything) | scripts/kafka.sh, kafka_bus.py | open |
 | A56 | Kafka 4.3.1 is run on the machine's JDK 24 (the brief lists 17/21 as Kafka's supported JVMs); it started and passed every test here. A deployed broker should use a JDK Kafka lists as supported | scripts/kafka.sh | open |
+| A57 | Compensating `reassign_block` is a restore of the prior assignment: the scheduling mock accepts it (via the compensation flag) even when the previous vehicle is out of service, but still refuses normal assignment to an out-of-service vehicle. Resolves A48 | mocks/scheduling.py, tools/write_adapters.py | decision (owner has not chosen a rule) |
+| A58 | The scheduling mock tracks only the single previous vehicle per block; a restore after two reassigns is not covered | mocks/scheduling.py | open |
+| A59 | "Available again" after undo means the mock's `ready` status; the test treats `in_service` and `ready` as equal | tests/integration | open |
+| A60 | The Postgres profile stores each SQLite file's content in its own schema `<namespace>_<store>`; per-System namespaces are persisted in the data dir, canonical names only with `TRANSITOS_PG_NAMESPACE=none`; test schemas are dropped by `scripts/postgres.sh purge` | integration/system.py, plumbing/pg.py | decision |
+| A61 | SQL stays written once in the SQLite dialect and is translated for Postgres by `plumbing/pg.py`; the shared contract suite (`test_storage_contract.py`) is what keeps both backends identical. New SQL in plumbing/workflow/tools must stay inside the translator's vocabulary or extend it | plumbing/pg.py | decision |
+| A62 | `PgRunsIndex` reuses `workflow.store.RunsIndex` and its private `_SCHEMA`, and `PgIdemStore` reuses `tools.idem_store._TYPES`; changes there are picked up automatically, but renaming those private names breaks the Postgres profile | plumbing/pg_stores.py | open |
+| A63 | Local Postgres is the zonky.io build of upstream PostgreSQL 17.7 (x86_64 binary under Rosetta on Apple Silicon), trust auth on 127.0.0.1 only. A deployed database needs authentication, TLS, backups and a supported PostgreSQL build | scripts/postgres.sh | open |
+| A64 | No connection pooling or reconnect: one connection per store per System; a server restart needs `System.restart()` | plumbing/pg.py | open |
