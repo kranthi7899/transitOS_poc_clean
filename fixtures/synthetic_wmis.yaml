@@ -1,0 +1,38 @@
+# WMIs that NHTSA vPIC did NOT recognise when checked once (DecodeVinValues on one probe VIN each).
+# Checked 2026-10-11 by transitos.data.vpic_wmi; responses cached under data/raw/vpic/cache/ (gitignored).
+# Synthetic VINs built on these are fictitious: never look them up in any service (D-F, A77).
+synthetic: true
+source: vPIC DecodeVinValues
+checked_on: '2026-10-11'
+wmis:
+- 0ZB
+- 0ZT
+- 0ZX
+- 0TZ
+- ZZ7
+checked:
+- wmi: 0ZB
+  probe_vin: 0ZBB1C2D0RZ000001
+  make: ''
+  manufacturer: ''
+  error_code: '7'
+- wmi: 0ZT
+  probe_vin: 0ZTB1C2D6RZ000001
+  make: ''
+  manufacturer: ''
+  error_code: '7'
+- wmi: 0ZX
+  probe_vin: 0ZXB1C2D8RZ000001
+  make: ''
+  manufacturer: ''
+  error_code: '7'
+- wmi: 0TZ
+  probe_vin: 0TZB1C2D0RZ000001
+  make: ''
+  manufacturer: ''
+  error_code: '7'
+- wmi: ZZ7
+  probe_vin: ZZ7B1C2D3RZ000001
+  make: ''
+  manufacturer: ''
+  error_code: '7'
