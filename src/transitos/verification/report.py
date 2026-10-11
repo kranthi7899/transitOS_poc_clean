@@ -64,6 +64,7 @@ def to_json(results: list[ScenarioResult]) -> dict:
             "id": r.scenario_id, "title": r.title, "expected": r.expected, "outcome": r.outcome,
             "mismatches": r.mismatches, "passed": r.passed,
             "invariants": {k: [v.model_dump() for v in vs] for k, vs in r.invariants.items()},
+            "not_checked": list(r.not_checked),
         } for r in results]}
 
 
