@@ -38,6 +38,7 @@ real products.
 | Contracts | Frozen pydantic v1, JSON Schema export | v1.1 additive (docs/CONTRACTS.md): resolved-event `refs`, `canonicalid`, `Result.blocked`, `compensation` keyword, compensation keys, `cancel_work_order` action | Committed schemas are tested against the models |
 | Mock products (A) | Five SIMULATED products, chaos, sim clock | As designed + registerable custom fleets, `changed_by` on scheduling writes, RFC3339 workforce windows | `/sim` routes drive repairs, meters, dispatcher actions |
 | Event plumbing (B) | Watch adapters, outbox/relay, bus with replay, crosswalk, audit | As designed; SqliteBus and KafkaBus both implement Producer/Consumer (per-key order, at-least-once, consumer offsets, replay); one contract suite runs on both | Kafka offsets are per-reader delivery tokens; see "Kafka profile" |
+| Clearance (C) | One pure module for every hard limit and graded rule | `src/transitos/clearance/`: facts with data provenance (native/derived/assumed/unknown), rules, option evaluation, ranking (top three); fails closed; called by planner, validator, write adapters; verification keeps an outcome tripwire + golden table | Missing data is never a violation and never a silent pass (unverifiable/not_evaluated, acknowledgement by rule id) |
 | Tools (C) | Per-agency registry, adapters, hard limits in code, idempotent writes, kill switch | As designed; blocked writes `Result.blocked`; block reads overlay the workforce assignment | Adapter re-check covers needs/spares/hours/lift, not qualification (A26) |
 | Workflow (D) | LangGraph, interrupts without writes, saga, approval, timers, reasoning interface | As designed + PM urgency rule in code, escalation outcome tags, no undo after a rider-alert attempt | One spare per block (A49); undo order decision (A48) |
 | Panel (E) | Approvals, defects, unresolved ids, kill switch, timeline | As designed + return-to-service decision scope, sim-clock injection | No auth (A42) |
@@ -114,14 +115,18 @@ test suite takes ~160 s on Kafka vs ~10 s on SQLite (topic creation and acks per
 
 ## Known gaps
 
-- The agency-042 seed (the mocks' default fleet) does not complete a run: operator qualifications are
-  licence codes (CDL-B/PAX/ARTIC) while the hard limit expects the block's vehicle type (A26), and the
-  workflow uses one distinct spare per affected block (8 sequential blocks -> last-spare violation). The
-  demo and verification use the scenario baseline fleet (agency-a) on the same mock products.
+- The agency-042 seed completes a severe-fault run (Phase 10 Step 1; the seed's OP-310 shift was shortened so the
+  run needs an operator swap, A67). Verification also runs on the scenario baseline fleet (agency-a).
 - Undo order after a failure that follows `reassign_block` (A48, strict xfail): escalates with exact state.
 - No reconcile for `partial` writes; no rider-alert correction; approval timeout does not apply to the
   return-to-service approval; edit decisions not exercised end to end on the real world.
-- Vehicle type strictness differs: product allows a larger class, adapters and workflow require equality (A14).
+- Vehicle fit is graded (A14 resolved, A68): the scheduling mock stays permissive on purpose; policy decides in `clearance`.
+- Clearance known gaps (docs/assumptions/phase10-step1.md, phase10-step1b.md): unknown is tracked per record, not per
+  product (A73, A131); an assumed-default breach (length) excludes (A70, owner question pending); rest/spread known
+  breaches warn rather than block (A72); a kept operator's other blocks are not re-audited for cumulative hours
+  (A71, A128); acknowledgement is by rule id (A74); past the spare-search cap the run escalates instead of listing
+  unverifiable (A135); write-time last-spare window is looser than the planner's (F11); a block's own commitments can
+  cause a false double-booking exclusion (F12, safe direction).
 - The operations log (approval/expiry/kill-switch ordering) is in memory; durable audit = DecisionStore.
 - No Postgres profile, no authentication, no real LLM, single-threaded driver (no concurrent resumes
   of one run). The Kafka profile has no dynamic consumer-group rebalancing (A51) and no TLS/SASL.
