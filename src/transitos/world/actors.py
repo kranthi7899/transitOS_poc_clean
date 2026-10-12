@@ -30,6 +30,10 @@ from .script import Beat
 
 _SEVERITY_OPENS_RECORD = ("service_soon", "pull_vehicle")
 
+# Bug sweep B fix round (A168, A169): what `act` returns when the actor did nothing worth a row: neither an
+# observation nor a skip (a return it is waiting on, or one that is not its business).
+QUIET = "__quiet__"
+
 
 class Actor:
     product: str = ""
@@ -210,7 +214,13 @@ class DispatcherActor(Actor):
     dispatcher lag (12 min, ASSUMED A91), to the status it had before the pull (in_service for a bus in service).
     Only when scheduling still shows out_of_service because of this world's pull: the vehicle is in this actor's own
     pull record AND the latest scheduling change is the simulated dispatcher's. If the orchestrator or a person
-    changed it since, the return is theirs (A92) and the dispatcher stands down."""
+    changed it since, the return is theirs (A92) and the dispatcher stands down.
+
+    Fix round B1 (A168): and only when maintenance holds NO open work order or pending repair for the vehicle. While
+    one is open the dispatcher waits (nothing is logged) and re-checks at every engine step (`discover`); the moment
+    it sees the record closed it acts on the same return_to_service beat, so the bus goes back at the close (never
+    earlier, and never before return_to_service + its own lag). Fix round B2 (A169): a return_to_service for a bus
+    this dispatcher never pulled is not its business and leaves no row at all."""
 
     product = "scheduling"
     kinds = ("fault_on", "callout", "return_to_service")
@@ -218,6 +228,21 @@ class DispatcherActor(Actor):
     def __init__(self, lag: ProductLag) -> None:
         super().__init__(lag)
         self._pulled: dict[str, str] = {}     # vehicle -> scheduling status before this world pulled it
+        self._waiting: dict[str, Beat] = {}   # B1: return_to_service beats waiting for maintenance to close
+
+    def discover(self, now: datetime, ports: Ports) -> list[tuple[datetime, Beat]]:
+        """B1: a waiting return is due again NOW once maintenance shows nothing open for the vehicle."""
+        out = []
+        for vehicle, beat in sorted(self._waiting.items()):
+            if not self._maintenance_open(vehicle, ports):
+                del self._waiting[vehicle]
+                out.append((now, beat))
+        return out
+
+    @staticmethod
+    def _maintenance_open(vehicle: str, ports: Ports) -> bool:
+        return bool(ports.maintenance_open_ids(vehicle)) or any(
+            p.get("vehicle") == vehicle for p in ports.maintenance_pending())
 
     def handles(self, beat: Beat) -> bool:
         if beat.kind == "fault_on":
@@ -232,7 +257,7 @@ class DispatcherActor(Actor):
             ports.workforce_callout(beat.vehicle, dict(beat.params))
             return None
         if beat.kind == "return_to_service":
-            return self._return(beat.vehicle, ports)
+            return self._return(beat, ports)
         before = ports.scheduling_status(beat.vehicle)
         if before == "out_of_service":
             return "scheduling already shows the vehicle out of service"
@@ -240,10 +265,14 @@ class DispatcherActor(Actor):
         self._pulled[beat.vehicle] = before
         return None
 
-    def _return(self, vehicle: str, ports: Ports) -> str | None:
-        before = self._pulled.pop(vehicle, None)
-        if before is None:
-            return "the dispatcher did not pull the vehicle: its return is not the dispatcher's"
+    def _return(self, beat: Beat, ports: Ports) -> str | None:
+        vehicle = beat.vehicle
+        if vehicle not in self._pulled:
+            return QUIET                      # B2 (A169): never pulled by this actor: no row
+        if self._maintenance_open(vehicle, ports):
+            self._waiting[vehicle] = beat     # B1 (A168): wait for the shop to close the record
+            return QUIET
+        before = self._pulled.pop(vehicle)
         if ports.scheduling_status(vehicle) != "out_of_service":
             return "scheduling no longer shows the vehicle out of service"
         if not ports.scheduling_changed_by_world(vehicle):

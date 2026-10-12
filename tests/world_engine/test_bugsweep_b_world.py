@@ -110,15 +110,16 @@ def test_two_stop_lamp_faults_a_day_apart_are_both_pulled_and_both_returned():
     ))
     mocks, eng = _rig(script)
     eng.run_until(at(2, 0))
+    # fix round B1 (A168), deliberately changed: back in service when the shop closes the record (+20 min), not +12
     assert _sched(mocks, "BUS-46") == [
         ("out_of_service", "2026-10-10T09:52:00Z", "dispatcher-sim"),
-        ("in_service", "2026-10-10T11:42:00Z", "dispatcher-sim"),
+        ("in_service", "2026-10-10T11:50:00Z", "dispatcher-sim"),
         ("out_of_service", "2026-10-11T09:12:00Z", "dispatcher-sim"),
-        ("in_service", "2026-10-11T11:12:00Z", "dispatcher-sim"),
+        ("in_service", "2026-10-11T11:20:00Z", "dispatcher-sim"),
     ]
     disp = [(o.kind, o.visible_at) for o in eng.observations_log if o.product == "scheduling"]
-    assert disp == [("fault_on", at(0, 9, 52)), ("return_to_service", at(0, 11, 42)),
-                    ("fault_on", at(1, 9, 12)), ("return_to_service", at(1, 11, 12))]
+    assert disp == [("fault_on", at(0, 9, 52)), ("return_to_service", at(0, 11, 50)),
+                    ("fault_on", at(1, 9, 12)), ("return_to_service", at(1, 11, 20))]
     assert not [s for s in eng.skipped if s.product == "scheduling"]
 
 
@@ -130,9 +131,9 @@ def test_the_dispatcher_does_not_return_a_bus_it_did_not_pull():
     mocks.clients["scheduling"].post("/vehicles/BUS-46/unavailable", json={"changed_by": "system:run-1:pull:1"},
                                      headers=H)
     eng.run_until(at(0, 12))
-    assert [s for _, _, s in [(0, 0, c[0]) for c in _sched(mocks, "BUS-46")]] == ["out_of_service"]
-    (skip,) = [s for s in eng.skipped if s.product == "scheduling"]
-    assert skip.kind == "return_to_service" and skip.at == at(0, 11, 42)
+    assert [c[0] for c in _sched(mocks, "BUS-46")] == ["out_of_service"]
+    # fix round B2 (A169), deliberately changed: no row at all for a bus this dispatcher never pulled (was a skip)
+    assert [s for s in eng.skipped if s.product == "scheduling"] == []
 
 
 def test_the_dispatcher_does_not_return_a_pull_made_outside_this_world():
@@ -144,7 +145,7 @@ def test_the_dispatcher_does_not_return_a_pull_made_outside_this_world():
                                                                   "changed_by": "dispatcher-sim"}, headers=H)
     eng.run_until(at(0, 12))
     assert [c[0] for c in _sched(mocks, "BUS-46")] == ["out_of_service"]
-    assert [s.kind for s in eng.skipped if s.product == "scheduling"] == ["return_to_service"]
+    assert [s for s in eng.skipped if s.product == "scheduling"] == []   # fix round B2 (A169), deliberately changed
 
 
 def test_the_dispatcher_does_not_undo_a_later_pull_by_someone_else():
@@ -171,7 +172,7 @@ def test_return_restores_the_status_the_bus_had_before_this_world_pulled_it():
     assert mocks.clients["scheduling"].get("/vehicles/BUS-53", headers=H).json()["status"] == "ready"
     eng.run_until(at(0, 12))
     assert [c[:2] for c in _sched(mocks, "BUS-53")] == [("out_of_service", "2026-10-10T09:52:00Z"),
-                                                       ("ready", "2026-10-10T11:42:00Z")]
+                                                       ("ready", "2026-10-10T11:50:00Z")]   # B1: at the close
 
 
 def test_recording_ports_follow_the_same_rule():
@@ -231,4 +232,5 @@ def test_three_day_seeded_run_a_later_stop_lamp_fault_on_the_same_bus_is_seen_ag
                         and s.kind == "fault_on" and s.truth_at == t]
         returned = [o for o in eng.observations_log
                     if o.product == "scheduling" and o.vehicle == veh and o.kind == "return_to_service"]
-        assert len(returned) >= len(starts) - 1 and all(o.visible_at - o.truth_at == lag for o in returned)
+        # fix round B1 (A168), deliberately relaxed from == lag: the return waits for the shop's close (>= lag)
+        assert len(returned) >= len(starts) - 1 and all(o.visible_at - o.truth_at >= lag for o in returned)

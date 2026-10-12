@@ -44,9 +44,9 @@ def test_example_day_lands_in_each_product_at_truth_plus_its_own_lag(rig):
     feed = mocks.clients["telematics"].get("/faults/feed", headers=H).json()["items"]
     assert [(e["fault"]["spn"], e["vehicle"]["id"], e["time"]) for e in feed] == [(110, "T-79", "2026-10-10T09:40:05Z")]
     changes = [c for c in mocks.clients["scheduling"].get("/status-changes", headers=H).json() if c["vehicle"] == "BUS-46"]
-    # bug sweep B (A156), deliberately extended: the dispatcher returns the bus it pulled, return_to_service + 12 min
+    # bug sweep B (A156) + fix round B1 (A168), deliberately: the dispatcher returns its pull when the shop closes the WO
     assert [(c["status"], c["changed_at"]) for c in changes] == [("out_of_service", "2026-10-10T09:52:00Z"),
-                                                                 ("in_service", "2026-10-10T11:42:00Z")]
+                                                                 ("in_service", "2026-10-10T11:50:00Z")]   # B1: at close
     wos = mocks.clients["maintenance"].get("/workorders", headers=H).json()
     assert [(w["asset"], w["opened_at"], w["closed_at"], w["status"]) for w in wos] == [
         ("1108", "2026-10-10T10:00:00Z", "2026-10-10T11:50:00Z", "closed")]

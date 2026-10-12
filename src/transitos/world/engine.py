@@ -18,7 +18,7 @@ from typing import Any
 
 from transitos.mocks.clock import SimClock
 
-from .actors import Actor, DispatcherActor, ShopActor, TelematicsActor
+from .actors import QUIET, Actor, DispatcherActor, ShopActor, TelematicsActor
 from .lag import ProductLag
 from .ports import Ports
 from .script import Beat
@@ -86,7 +86,10 @@ class WorldEngine:
             if callable(discover := getattr(actor, "discover", None)):
                 for due_at, job in discover(now, self.ports):
                     self._order += 1
-                    self._pending.append(_Pending(due_at, self._order, actor, None, job))
+                    if isinstance(job, Beat):   # bug sweep B fix round (A168): a truth beat the actor acts on again
+                        self._pending.append(_Pending(due_at, self._order, actor, job))
+                    else:
+                        self._pending.append(_Pending(due_at, self._order, actor, None, job))
 
     def tick(self) -> list[Observation]:
         """Release the beats due now, then perform every reaction due now, in (due time, release order)."""
@@ -122,6 +125,8 @@ class WorldEngine:
                 if reason is not None:
                     self.skipped.append(Skipped(p.actor.product, p.job.vehicle, f"foreman:{p.job.kind}", p.due_at,
                                                 now, reason))
+                continue
+            if reason is QUIET:   # bug sweep B fix round (A168, A169): waiting, or not this actor's business: no row
                 continue
             product = p.actor.product_of(p.beat)
             if reason is None:
