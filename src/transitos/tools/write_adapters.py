@@ -143,13 +143,33 @@ class MaintenanceWriter(_Base):
             raise HardLimit([why])
         if pr["status"] == "CANCELLED":
             return Result.success(self.reader.resolve_pending(agency, pr), note="already_cancelled")
-        if pr["status"] == "CONVERTED" and pr.get("work_order"):
-            wo = self.http.json(agency, "GET", f"/workorders/{pr['work_order']}")
-            if wo.get("from_pending_repair") == pr["id"]:
-                if str(wo["status"]).lower() != "closed":
-                    self.http.json(agency, "POST", f"/workorders/{wo['id']}/cancel")
-                return self.reader.get_work_order(agency, pr["id"])
-        self.http.json(agency, "POST", f"/pending-repairs/{pr['id']}/cancel")
+        if (done := self._cancel_own_work_order(agency, pr)) is not None:
+            return done
+        try:
+            self.http.json(agency, "POST", f"/pending-repairs/{pr['id']}/cancel")
+        except ProductUnavailable as e:
+            # bug sweep B (A154): read OPEN, then the foreman converted it before our cancel (409). Re-read: when it
+            # now sits on the work order it created, cancel THAT one; any other 409 (or error) still surfaces
+            if not (e.note or "").startswith("http 409"):
+                raise
+            now = self.reader._pr_raw(agency, pr["id"])
+            if now is None or (done := self._cancel_own_work_order(agency, now)) is None:
+                raise
+            return done
+        return self.reader.get_work_order(agency, pr["id"])
+
+    def _cancel_own_work_order(self, agency: str, pr: dict) -> Result[WorkOrder] | None:
+        """A system request the foreman put on a work order it CREATED: cancel that work order (idempotent: an
+        already closed one is left as it is). None when the request is not on a work order of its own."""
+        if pr.get("requested_by") != "system" or pr["status"] != "CONVERTED" or not pr.get("work_order"):
+            return None
+        wo = self.http.json(agency, "GET", f"/workorders/{pr['work_order']}")
+        if wo.get("from_pending_repair") != pr["id"]:
+            return None
+        if wo.get("opened_by") != "system":   # the work-order cancel path's hard limit (only system-opened ones)
+            raise HardLimit([f"cancel_scope: work order {wo['id']} was opened by a human; only system-created may be cancelled"])
+        if str(wo["status"]).lower() != "closed":
+            self.http.json(agency, "POST", f"/workorders/{wo['id']}/cancel")
         return self.reader.get_work_order(agency, pr["id"])
 
     def cancel_work_order(self, agency: str, wo_id: str, key: str) -> Result[WorkOrder]:
