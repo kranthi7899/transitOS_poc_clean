@@ -83,6 +83,8 @@ class Poller:
         self.name = self.name or f"{self.product}:{agency}"
         self.last_error: str | None = None
         self.before_commit: Callable[[], None] | None = None  # test seam: crash mid-poll
+        # Phase 10 Step 4.2 (A108): how to read a product time `doc[key]` (zone-less local -> UTC). None = as sent.
+        self.read_time: Callable[[dict, str], datetime] | None = None
         db.script(STATE_SCHEMA)
         outbox.ensure_schema(db)
 
@@ -95,6 +97,16 @@ class Poller:
         if r.status_code >= 400:
             raise UpstreamError(f"{path}: http {r.status_code}")
         return r.json()
+
+    def ts(self, doc: dict, key: str) -> str | datetime:
+        """The event time from a product record. A time that cannot be read (zone unknown, mixed formats) holds
+        the whole poll (UpstreamError: state kept, retried) rather than emitting an event with a guessed time."""
+        if self.read_time is None:
+            return doc[key]
+        try:
+            return self.read_time(doc, key)
+        except ValueError as e:
+            raise UpstreamError(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
 
     def evidence(self, cache: dict, path: str, vin: str = "vin", plate: str = "plate", name: str = "name") -> dict:
         """Identity evidence for one record read from the product (cached for one poll). A failed read leaves the

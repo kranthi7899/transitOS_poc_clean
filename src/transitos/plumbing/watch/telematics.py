@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -34,11 +35,27 @@ def sign(secret: str, body: bytes) -> str:
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
+def event_time(t: Any) -> str:
+    """Phase 10 Step 4.2 (A110): the vendor time as RFC 3339 UTC. Epoch milliseconds (an integer) are rendered in the
+    same `...Z` form the RFC 3339 wire uses, so one fault at one instant has ONE event id whichever format the vendor
+    sent. A zoned string passes unchanged (pre-Step-4 behaviour); a zone-less one is refused (never read as UTC)."""
+    if isinstance(t, bool):
+        raise ValueError(f"telematics time {t!r} is not a timestamp")  # noqa: TRY004 - a bad payload value
+    if isinstance(t, int):
+        dt = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=t)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S") + (f".{dt.microsecond // 1000:03d}" if dt.microsecond else "") + "Z"
+    parsed = datetime.fromisoformat(str(t))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"telematics time {t!r} carries no zone: zone unknown, not read as UTC")
+    return str(t)
+
+
 def ingest_payload(conn: sqlite3.Connection, agency: str, p: dict[str, Any]) -> bool:
     """Map one vendor payload to a raw event inside the caller's transaction. False if already seen."""
     vendor_id = p["eventId"]
     if conn.execute("SELECT 1 FROM telematics_seen WHERE agency=? AND vendor_event_id=?", (agency, vendor_id)).fetchone():
         return False
+    p = {**p, "time": event_time(p["time"])}
     veh = p["vehicle"]["id"]
     if "dvir" in p:  # DVIR on the same webhook/feed: {eventId, vehicle, dvir:{defect_text, reported_by_role}, time}
         d = p["dvir"]
@@ -117,10 +134,14 @@ class TelematicsBackfillPoller(Poller):
             return 0
         self.last_error = None
         added = 0
-        with self.db.tx() as c:
-            for item in data.get("items", []):
-                added += ingest_payload(c, self.agency, item)
-            if self.before_commit:
-                self.before_commit()
-            save_state(c, self.name, data.get("next_cursor") or cursor, {})
+        try:
+            with self.db.tx() as c:
+                for item in data.get("items", []):
+                    added += ingest_payload(c, self.agency, item)
+                if self.before_commit:
+                    self.before_commit()
+                save_state(c, self.name, data.get("next_cursor") or cursor, {})
+        except ValueError as e:   # Step 4.2: an unreadable time holds the page (rolled back), never a guessed time
+            self.last_error = repr(e)
+            return 0
         return added

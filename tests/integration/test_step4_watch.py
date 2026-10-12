@@ -131,12 +131,12 @@ def test_epoch_ms_and_rfc3339_give_the_same_event_id_and_utc_time(db, mocks):
     t.post("/sim/time-format", json={"epoch_ms": True}, headers=H)
     p_ms = t.post("/sim/fault", json={"vehicle": "T-77", "spn": 110, "fmi": 0}, headers=H).json()
     assert isinstance(p_ms["time"], int)
-    p_iso = {**p_ms, "eventId": "evt-iso", "time": mocks.clock.iso()}
+    p_iso = {**p_ms, "eventId": "evt-iso", "time": mocks.clock.iso()}   # another vendor id, RFC 3339 time
+    WebhookReceiver(db, AG)                                              # schema
     with db.tx() as c:
-        assert ingest_payload(c, AG, p_ms)
-    with db.tx() as c2:
-        assert not ingest_payload(c2, AG, p_iso)      # same fault at the same instant: same event id, deduped
-    (ev,) = raw(db)
+        ingest_payload(c, AG, p_ms)
+        ingest_payload(c, AG, p_iso)
+    (ev,) = raw(db)              # same fault at the same instant -> the same event id: the outbox keeps one
     assert ev.time == mocks.clock.now() and ev.time.tzinfo is not None
 
 
