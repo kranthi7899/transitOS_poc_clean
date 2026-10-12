@@ -67,6 +67,25 @@ class Deps:
     sleep: Callable[[float], None] = time.sleep
     retries: int = 3
     backoff_s: float = 0.2
+    # Phase 10 Step 4: the agency's registry settings (tools/config/<agency>.yaml, plus any scenario patch), read
+    # live: `timezone`, `local_time`, `maintenance.mode`. Empty = every default (A105, A108).
+    settings_for: Callable[[str], dict] = field(default=lambda agency: {})
+
+
+def settings(deps: Any, agency: str) -> dict:
+    fn = getattr(deps, "settings_for", None)
+    return (fn(agency) or {}) if callable(fn) else {}
+
+
+def maintenance_mode(deps: Any, agency: str) -> str:
+    """`work_order` (default: POST /workorders) or `pending_repair` (A105)."""
+    return str(((settings(deps, agency).get("maintenance") or {}).get("mode")) or "work_order")
+
+
+def local_time(deps: Any, agency: str) -> tuple[bool, str | None]:
+    """(products send zone-less local time?, agency timezone). Default (False, None): products send zoned UTC."""
+    s = settings(deps, agency)
+    return bool(s.get("local_time")), s.get("timezone")
 
 
 class Http:

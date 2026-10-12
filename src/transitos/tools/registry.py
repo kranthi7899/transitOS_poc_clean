@@ -149,12 +149,16 @@ class ToolSet:
         return self._call("publish_rider_alert", agency, block_id, message, key)
 
 
+SETTINGS_KEYS = ("timezone", "local_time", "maintenance")
+
+
 class Registry:
     def __init__(self, config_dir: Path | str | None = None, *, clients: dict[str, httpx.Client] | None = None,
                  crosswalk: Crosswalk | None = None, idem: IdemStore | None = None,
                  killswitch: KillSwitchStore | None = None, sleep: Callable[[float], None] | None = None,
                  extra_adapters: dict[str, AdapterFactory] | None = None,
-                 policy_for: Callable[[str], Any] | None = None):
+                 policy_for: Callable[[str], Any] | None = None,
+                 settings_patch: dict[str, dict] | None = None):
         self.config_dir = Path(config_dir) if config_dir else CONFIG_DIR
         self._clients = dict(clients or {})
         self.crosswalk = crosswalk or StaticCrosswalk()
@@ -162,8 +166,12 @@ class Registry:
         self.killswitch = killswitch or default_store()
         self._sleep = sleep
         self._policy_for = policy_for
+        # Phase 10 Step 4: per-agency overrides of the config file's settings (timezone, local_time,
+        # maintenance.mode). Held by reference and read on every call, so a caller may change it later.
+        self.settings_patch: dict[str, dict] = settings_patch if settings_patch is not None else {}
         self.adapters: dict[str, AdapterFactory] = {**BUILTIN_ADAPTERS, **(extra_adapters or {})}
         self._cache: dict[str, ToolSet] = {}
+        self._settings_file: dict[str, dict] = {}
 
     def register_adapter(self, adapter_id: str, factory: AdapterFactory) -> None:
         self.adapters[adapter_id] = factory
@@ -184,7 +192,20 @@ class Registry:
         if self._sleep:
             kw["sleep"] = self._sleep
         return Deps(clients=clients, crosswalk=self.crosswalk, idem=self.idem, killswitch=self.killswitch,
-                    policy_for=self._policy_for or (lambda a: load_policy(a, self.config_dir)), **kw)
+                    policy_for=self._policy_for or (lambda a: load_policy(a, self.config_dir)),
+                    settings_for=self.settings, **kw)
+
+    def settings(self, agency: str) -> dict:
+        """The agency's settings: `timezone`, `local_time`, `maintenance` from its config file, then the patch.
+        Absent keys keep every default (A105, A108)."""
+        if agency not in self._settings_file:
+            try:
+                cfg = self._config(agency)
+            except KeyError:
+                cfg = {}
+            self._settings_file[agency] = {k: v for k, v in (cfg or {}).items() if k in SETTINGS_KEYS}
+        base = self._settings_file[agency]
+        return {**base, **(self.settings_patch.get(agency) or {})}
 
     def toolset(self, agency: str) -> ToolSet:
         if agency in self._cache:

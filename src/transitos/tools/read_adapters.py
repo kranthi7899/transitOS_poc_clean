@@ -6,7 +6,7 @@ import csv
 import functools
 import io
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -18,14 +18,19 @@ from transitos.clearance.rules import known_need_type
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrder
 from transitos.contracts.results import Result
 
-from .common import Deps, Http, ProductUnavailable, native_of
+from .common import Deps, Http, ProductUnavailable, UnknownTimezone, local_time, maintenance_mode, native_of, to_utc
 
 _VEHICLE_STATUS = {
     "ready": "ready", "available": "ready", "in_service": "in_service", "active": "in_service",
     "out_of_service": "out_of_service", "unavailable": "out_of_service", "reserved": "reserved",
 }
 _WO_STATUS = {"open": "open", "in_progress": "in_progress", "closed": "closed",
-              "cancelled": "closed", "canceled": "closed"}
+              "cancelled": "closed", "canceled": "closed",
+              # Phase 10 Step 4 shop vocabulary (A23 extended, A107): only CLOSED is closed. Parts wait and work
+              # done but not signed off are still being worked; a repair deferred back to pending is open.
+              "OPEN": "open", "IN_PROGRESS": "in_progress", "WAITING_PARTS": "in_progress", "PENDING": "open",
+              "COMPLETE": "in_progress", "CLOSED": "closed"}
+_PR_STATUS = {"OPEN": "open", "CANCELLED": "closed"}   # a CONVERTED request takes its work order's status (A106)
 
 
 def guarded(product: str) -> Callable:
@@ -37,6 +42,8 @@ def guarded(product: str) -> Callable:
                 return fn(*a, **kw)
             except ProductUnavailable as e:
                 return Result.unavailable(e.product, e.note)
+            except UnknownTimezone as e:   # Step 4.2 (A108): zone-less time with no known zone is never read as UTC
+                return Result.unavailable(product, f"timezone_unknown: {e}"[:200])
             except (KeyError, ValueError, TypeError, ValidationError) as e:
                 return Result.unavailable(product, f"malformed response: {type(e).__name__}: {e}"[:200])
         return wrapper
@@ -49,6 +56,39 @@ def _iso(dt: datetime) -> str:
 
 def _parse_dt(s: str | None) -> datetime | None:
     return datetime.fromisoformat(s) if s else None
+
+
+def _zoned_dt(s: str | None) -> datetime | None:
+    """A product timestamp that must carry its zone. A zone-less one is never guessed as UTC (A108)."""
+    dt = _parse_dt(s)
+    if dt is not None and (dt.tzinfo is None or dt.utcoffset() is None):
+        raise ValueError(f"zone-less timestamp {s!r} and the agency has no local_time setting: zone unknown (A108)")
+    return dt
+
+
+def _time_reader(deps: Any, agency: str, *, strict: bool = True) -> Callable[..., datetime | None]:
+    """How this agency's maintenance product and workforce CSV write time (Step 4.2, A108/A109): zoned (default)
+    or zone-less local in the agency timezone. A blank value is unknown (None), never now() and never UTC.
+    Knob off: `strict` refuses a zone-less value (maintenance); `strict=False` keeps the pre-Step-4 parse for the
+    workforce CSV, whose zone-less cell already fails closed per operator inside clearance (F4; known gap A113)."""
+    local, tz = local_time(deps, agency)
+
+    def read(s: Any, utc_offset: str | None = None) -> datetime | None:
+        if _blank(s):
+            return None
+        if local:
+            return to_utc(str(s).strip(), tz, utc_offset=utc_offset)  # type: ignore[arg-type]
+        return _zoned_dt(str(s)) if strict else _parse_dt(str(s))
+    return read
+
+
+def _offsets(raw: dict) -> dict:
+    o = raw.get("utc_offset")
+    return o if isinstance(o, dict) else {}
+
+
+def _utc_str(dt: datetime | None) -> str | None:
+    return None if dt is None else dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _bool(s: str | None) -> bool:
@@ -120,10 +160,33 @@ def map_work_order(deps: Deps, agency: str, raw: dict) -> WorkOrder:
     status = _WO_STATUS.get(raw["status"])
     if status is None:
         raise ProductUnavailable("maintenance", f"unknown work order status {raw['status']!r}")
+    read, off = _time_reader(deps, agency), _offsets(raw)
     return WorkOrder(id=str(raw["id"]), native_no=str(raw["wo_no"]), asset_vehicle_id=vid, status=status,  # type: ignore[arg-type]
-                     description=raw.get("description", ""), opened_at=_parse_dt(raw.get("opened_at")),
-                     closed_at=_parse_dt(raw.get("closed_at")),
+                     description=raw.get("description", ""), opened_at=read(raw.get("opened_at"), off.get("opened_at")),
+                     closed_at=read(raw.get("closed_at"), off.get("closed_at")),
                      source="human" if raw.get("opened_by") == "human" else "system")
+
+
+def map_pending_repair(deps: Deps, agency: str, pr: dict, wo: dict | None = None) -> WorkOrder:
+    """Phase 10 Step 4.1 (A106): a pending repair as the canonical WorkOrder the workflow tracks. Its id stays the
+    REQUEST's id for life (one effect per idempotency key; compensation cancels through it). Once the foreman has
+    put it on a work order (`wo`), number, status and dates are that work order's. A cancelled request is closed."""
+    vid = deps.crosswalk.lookup(agency, "maintenance", str(pr["asset"]))
+    if vid is None:
+        raise ProductUnavailable("crosswalk", f"unmapped maintenance asset {pr['asset']}")
+    read = _time_reader(deps, agency)
+    src = "human" if pr.get("requested_by") == "human" else "system"
+    if pr["status"] == "CONVERTED" and wo is not None:
+        w = map_work_order(deps, agency, wo)
+        return w.model_copy(update={"id": str(pr["id"]), "source": src})
+    status = _PR_STATUS.get(pr["status"])
+    if status is None:
+        raise ProductUnavailable("maintenance", f"unknown pending repair status {pr['status']!r}")
+    off = _offsets(pr)
+    return WorkOrder(id=str(pr["id"]), native_no=str(pr["pr_no"]), asset_vehicle_id=vid, status=status,  # type: ignore[arg-type]
+                     description=pr.get("description", ""), opened_at=read(pr.get("created_at"), off.get("created_at")),
+                     closed_at=read(pr.get("updated_at"), off.get("updated_at")) if status == "closed" else None,
+                     source=src)  # type: ignore[arg-type]
 
 
 # ---- adapters -----------------------------------------------------------------------------------
@@ -161,8 +224,12 @@ class SchedulingReader:
         if mnative is not None:
             try:
                 wos = Http("maintenance", self.deps).json(agency, "GET", "/workorders", params={"asset": mnative})
+                local, read = local_time(self.deps, agency)[0], _time_reader(self.deps, agency)
+                # Step 4.2: a zone-less local opened_at is passed on as UTC (never naive); default: unchanged
                 hist += [{"kind": "work_order", "vehicle_id": vehicle_id, "wo_id": str(w["id"]),
-                          "status": w["status"], "at": w.get("opened_at"), "by": w.get("opened_by")} for w in wos]
+                          "status": w["status"], "by": w.get("opened_by"),
+                          "at": _utc_str(read(w.get("opened_at"), _offsets(w).get("opened_at"))) if local
+                          else w.get("opened_at")} for w in wos]
             except ProductUnavailable as e:
                 note = f"maintenance history missing: {e.note}"
         hist.sort(key=lambda h: h.get("at") or "")
@@ -260,13 +327,13 @@ def _split(s: str | None) -> list[str]:
     return [x for x in (s or "").split(";") if x]
 
 
-def _dated(s: str | None) -> dict[str, datetime]:
+def _dated(s: str | None, read: Callable[..., datetime | None] = _parse_dt) -> dict[str, datetime]:
     """'P=2027-01-01T00:00:00+00:00;lift=...' -> {code: datetime}"""
     out: dict[str, datetime] = {}
     for part in _split(s):
         k, _, v = part.partition("=")
-        if k and v:
-            out[k] = datetime.fromisoformat(v)
+        if k and v and (dt := read(v)) is not None:
+            out[k] = dt
     return out
 
 
@@ -286,6 +353,8 @@ class WorkforceReader:
         profile = CapabilityProfile("workforce", {
             f: ("native" if set(c) <= cols else "unknown") for f, c in FIELD_COLUMNS.items()})
         out: list[Operator] = []
+        # Step 4.2: the CSV may carry zone-less local time (no offsets); knob off = the pre-Step-4 parse (A113)
+        ts = _time_reader(self.deps, agency, strict=False)
         for row in reader:
             cid = self.deps.crosswalk.lookup(agency, "workforce", row["operator"])
             if cid is None:
@@ -296,22 +365,27 @@ class WorkforceReader:
             out.append(Operator(
                 id=cid, qualifications=_split(row.get("qualifications")),
                 lift_trained=_bool(row.get("lift_trained")), hours_today=float(row.get("hours_today") or 0),
-                hours_week=float(row.get("hours_week") or 0), available_from=_parse_dt(row.get("available_from")),
-                available_to=_parse_dt(row.get("available_to")), on_extra_board=_bool(row.get("on_extra_board")),
+                hours_week=float(row.get("hours_week") or 0), available_from=ts(row.get("available_from")),
+                available_to=ts(row.get("available_to")), on_extra_board=_bool(row.get("on_extra_board")),
                 licence_class=(row.get("licence_class") or None),  # type: ignore[arg-type]
                 endorsements=_split(row.get("endorsements")),
                 trained_vehicle_types=_split(row.get("trained_vehicle_types")),
-                training_valid_to=_dated(row.get("training_valid_to")),
-                medical_valid_to=_parse_dt(row.get("medical_valid_to")),
-                last_duty_end=_parse_dt(row.get("last_duty_end")),
-                duty_start_today=_parse_dt(row.get("duty_start_today")), unknown_fields=unknown))
+                training_valid_to=_dated(row.get("training_valid_to"), ts),
+                medical_valid_to=ts(row.get("medical_valid_to")),
+                last_duty_end=ts(row.get("last_duty_end")),
+                duty_start_today=ts(row.get("duty_start_today")), unknown_fields=unknown))
         return out, profile
 
     def operators(self, agency: str) -> list[Operator]:
         return self._export(agency)[0]
 
     def capability_profile(self, agency: str) -> CapabilityProfile:
-        return self._export(agency)[1]
+        # the header row alone (Step 4.2: a cell that cannot be read, e.g. local time with no known zone, makes the
+        # operator read unavailable, not the profile of what the export supplies)
+        text = self.http.request(agency, "GET", "/export/operators.csv").text
+        cols = set(csv.DictReader(io.StringIO(text)).fieldnames or [])
+        return CapabilityProfile("workforce", {
+            f: ("native" if set(c) <= cols else "unknown") for f, c in FIELD_COLUMNS.items()})
 
     @guarded("workforce")
     def list_eligible_operators(self, agency: str, block: Block) -> Result[list[Operator]]:
@@ -342,9 +416,41 @@ class MaintenanceReader:
         if asset is None:
             return Result.unavailable("crosswalk", f"no maintenance asset for {vehicle_id}")
         raw = self.http.json(agency, "GET", "/workorders", params={"asset": asset})
-        open_ = sorted((w for w in raw if w["status"] in ("open", "in_progress")),
-                       key=lambda w: w.get("opened_at") or "")
-        return Result.success(map_work_order(self.deps, agency, open_[0]) if open_ else None)
+        read = _time_reader(self.deps, agency)
+        # open = any status the map calls open or in progress (shop vocabulary: WAITING_PARTS, PENDING, COMPLETE are
+        # not closed, A107); earliest first, by the INSTANT (a local wall-clock string does not sort across DST)
+        open_ = sorted(((read(w.get("opened_at"), _offsets(w).get("opened_at")), i, w) for i, w in enumerate(raw)
+                        if _WO_STATUS.get(w["status"]) in ("open", "in_progress")),
+                       key=lambda t: (t[0] is not None, t[0] or datetime.min.replace(tzinfo=UTC), t[1]))
+        if open_:
+            return Result.success(map_work_order(self.deps, agency, open_[0][2]))
+        if maintenance_mode(self.deps, agency) == "pending_repair":   # Step 4.1: a request not yet on a WO (A106)
+            prs = self.http.json(agency, "GET", "/pending-repairs", params={"asset": asset, "status": "OPEN"})
+            if prs:
+                return Result.success(map_pending_repair(self.deps, agency, prs[0]))
+        return Result.success(None)
+
+    # ---- Phase 10 Step 4.1: pending repairs (A105, A106) -------------------------------------------------------
+    def _pr_raw(self, agency: str, pr_id: str) -> dict | None:
+        """The pending repair with this id, or None when the product has none (a work order id, say)."""
+        r = self.http.request(agency, "GET", f"/pending-repairs/{pr_id}", ok_4xx=True)
+        if r.status_code == 404:
+            return None
+        if r.status_code >= 400:
+            raise ProductUnavailable("maintenance", f"http {r.status_code}: {r.text[:120]}")
+        return r.json()
+
+    def resolve_pending(self, agency: str, pr: dict) -> WorkOrder:
+        wo = None
+        if pr.get("status") == "CONVERTED" and pr.get("work_order"):
+            wo = self.http.json(agency, "GET", f"/workorders/{pr['work_order']}")
+        return map_pending_repair(self.deps, agency, pr, wo)
+
+    @guarded("maintenance")
+    def pending_by_key(self, agency: str, key: str) -> Result[dict | None]:
+        """The pending repair created with this idempotency key (raw product record), or None."""
+        found = self.http.json(agency, "GET", "/pending-repairs", params={"idempotency_key": key})
+        return Result.success(found[0] if found else None)
 
     def asset_statuses(self, agency: str, vehicle_ids: list[str]) -> Result[dict[str, str]]:
         """S2 fix round F4 (A142), optional read: each vehicle's MAINTENANCE asset status via the crosswalk.
@@ -372,4 +478,6 @@ class MaintenanceReader:
 
     @guarded("maintenance")
     def get_work_order(self, agency: str, wo_id: str) -> Result[WorkOrder]:
+        if maintenance_mode(self.deps, agency) == "pending_repair" and (pr := self._pr_raw(agency, wo_id)) is not None:
+            return Result.success(self.resolve_pending(agency, pr))   # Step 4.1: a request id resolves through
         return Result.success(map_work_order(self.deps, agency, self.http.json(agency, "GET", f"/workorders/{wo_id}")))
