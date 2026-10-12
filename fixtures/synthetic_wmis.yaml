@@ -9,7 +9,6 @@ wmis:
 - 0ZT
 - 0ZX
 - 0TZ
-- ZZ7
 checked:
 - wmi: 0ZB
   probe_vin: 0ZBB1C2D0RZ000001

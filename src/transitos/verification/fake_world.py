@@ -162,12 +162,17 @@ class FakeWorld:
         rows = self._identity_rows()
         exact = sorted({r.canonical_id for r in rows if r.product == product and r.native_id == native
                         and valid_at(r, event.time)})
-        if len(exact) == 1:
-            return exact[0], ""
         d = event.data
+        ev = Evidence(native, d.get("native_vin"), d.get("native_plate"), d.get("native_name"))
+        resolver = RulesResolver(StaticRows(rows))
+        if len(exact) == 1:
+            if (c := resolver.contradiction(AGENCY, product, ev, event.time, exact[0])) is not None:   # F1
+                return None, "ambiguous: " + ", ".join(x.canonical_id for x in c.candidates)
+            return exact[0], ""
+        if len(exact) > 1:
+            return None, "ambiguous: " + ", ".join(exact)
         try:
-            res = RulesResolver(StaticRows(rows)).resolve(AGENCY, product, Evidence(
-                native, d.get("native_vin"), d.get("native_plate"), d.get("native_name")), event.time)
+            res = resolver.resolve(AGENCY, product, ev, event.time)
         except Exception as e:  # noqa: BLE001 - fail closed, as the crosswalk service
             return None, f"unresolved_vehicle_id (resolver_error: {e})"
         if res.outcome == "MATCH":
@@ -180,9 +185,10 @@ class FakeWorld:
         if not self.parked:
             return
         native, product = self.parked[0][1], PUBLISHER[self.parked[0][0].type]
-        self.picked.append(CrosswalkEntry(agency=AGENCY, product=product, native_id=native, entity="vehicle",
-                                          canonical_id=canonical_id))
         again = [ev for ev, n in self.parked if n == native]
+        # F2: as the real store, the pick starts at the earliest parked event's own time (history untouched)
+        self.picked.append(CrosswalkEntry(agency=AGENCY, product=product, native_id=native, entity="vehicle",
+                                          canonical_id=canonical_id, valid_from=min(e.time for e in again)))
         self.parked = [(ev, n) for ev, n in self.parked if n != native]
         for ev in again:
             self.seen.discard(ev.id)

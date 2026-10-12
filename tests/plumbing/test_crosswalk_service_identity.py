@@ -73,7 +73,7 @@ def test_resolver_match_by_vin_resolves_and_records_the_evidence(bus, svc, xw):
 def test_dirty_name_resolves_to_the_same_vehicle_not_a_second_one(bus, svc, xw):
     """Review Focus 2 through the service: every dirty spelling lands on veh-1."""
     seed(xw)
-    names = ["bus 44", "BUS-044", "BUS-44 ", "Bus O44"]
+    names = ["bus 44", "BUS-044", "BUS-44 ", "bus 0044"]   # F3: a prefix O is no longer a zero
     ok, failed = run(bus, svc, *[fault(f"n{i}", f"T-6{i}", S, native_name=n) for i, n in enumerate(names)])
     assert {ok[f"n{i}"].canonicalid for i in range(len(names))} == {"veh-1"} and not failed
 
@@ -198,6 +198,8 @@ def test_f5_f8_candidates_without_a_match_are_kept_in_failed_and_stored(bus, svc
     ok, failed = run(bus, svc, fault("f", "T-400", S, native_name="Bus 4"))
     reason = failed["f"].failurereason
     assert not ok and reason.startswith("ambiguous") and "veh-1" in reason and "veh-2" in reason
+    sent = failed["f"].data["identity"]["candidates"]
+    assert [c["canonical_id"] for c in sent] == ["veh-1", "veh-2"] and all(c["evidence"] for c in sent)
     [u] = xw.unresolved(AG)
     cands = u["resolution"]["candidates"]
     assert [c["canonical_id"] for c in cands] == ["veh-1", "veh-2"] and all(c["evidence"] for c in cands)

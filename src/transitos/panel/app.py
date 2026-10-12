@@ -201,7 +201,14 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         return {**_summary(run), "already_decided": False}
 
     def do_crosswalk(entry: CrosswalkEntry) -> dict[str, Any]:
-        released = crosswalk.resolve(entry)
+        # Phase 10 F2: a human pick never overwrites history; a store that refuses answers 409 with the row
+        pick = getattr(crosswalk, "pick", None) or crosswalk.resolve
+        try:
+            released = pick(entry)
+        except ValueError as exc:
+            if (row := getattr(exc, "conflict_row", None)) is None:
+                raise
+            raise HTTPException(409, {"error": "mapping conflicts with existing history", "conflict": row})
         for ev in released:
             events.publish(ev)
         return {"republished": [e.id for e in released]}

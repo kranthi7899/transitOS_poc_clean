@@ -1,14 +1,17 @@
-"""Normalisation of native identity evidence (Phase 10 Step 2.3). Pure functions, no I/O.
+"""Normalisation of native identity evidence (Phase 10 Step 2.3; fold rule amended in the fix round, F3, A141).
 
-Missing evidence (None, blank, separators only) normalises to None: it is UNKNOWN, never a value that could
-equal or differ from anything (Step 1 review lesson).
+Every id: upper case, separators (space - _ . /) removed (`norm_serial`). Device serials and asset ids stop there:
+SN-0012 and SN-12 are different devices. FLEET NUMBERS only (scheduling roster ids, display names, the 'bus 44'
+family; `norm_fleet`): inside a numeric run (from its first digit on) a letter O reads as zero, and leading zeros of
+a numeric run drop. A letter O before the first digit is part of the alphabetic prefix (TRO-101 is not TR-101) and
+I is never read as 1. Missing evidence (None, blank, separators only) normalises to None: UNKNOWN, never a value.
 """
 from __future__ import annotations
 
 import re
 
 _SEP = re.compile(r"[\s\-_./]+")
-_TRAILING_NUMERIC = re.compile(r"[0-9O]+$")
+_NUMERIC_RUN = re.compile(r"[0-9][0-9O]*")
 
 
 def _compact(s: str | None) -> str | None:
@@ -18,18 +21,19 @@ def _compact(s: str | None) -> str | None:
     return out or None
 
 
+def norm_serial(s: str | None) -> str | None:
+    """Device serial / asset id: case, whitespace and separators only (A141)."""
+    return _compact(s)
+
+
+def _fold_run(m: re.Match) -> str:
+    return m.group(0).replace("O", "0").lstrip("0") or "0"
+
+
 def norm_fleet(s: str | None) -> str | None:
-    """Fleet number / native id: upper case, separators removed; in the trailing numeric run (the run of digits and
-    letter O at the end that contains at least one digit) a letter O is read as zero and leading zeros are dropped
-    (A78). 'bus 044', 'BUS-44 ', 'Bus O44' -> 'BUS44'. Letters elsewhere are left alone."""
+    """Fleet number: 'bus 044', 'BUS-44 ', 'BUS-4O' (O inside the number) -> 'BUS44' / 'BUS40' (A78, A141)."""
     c = _compact(s)
-    if c is None:
-        return None
-    m = _TRAILING_NUMERIC.search(c)
-    if not m or not any(ch.isdigit() for ch in m.group(0)):
-        return c
-    digits = m.group(0).replace("O", "0").lstrip("0") or "0"
-    return c[:m.start()] + digits
+    return _NUMERIC_RUN.sub(_fold_run, c) if c else None
 
 
 def norm_vin(s: str | None) -> str | None:
@@ -42,6 +46,7 @@ def norm_vin(s: str | None) -> str | None:
 
 
 def norm_plate(s: str | None) -> str | None:
-    """Plate: upper case, separators removed, letter O read as zero (the simulated plates never use O; A76/A78)."""
+    """Plate: upper case, separators removed, letter O read as zero (the simulated plates never use O; A76/A78;
+    known gap for real plates)."""
     c = _compact(s)
     return c.replace("O", "0") if c else None

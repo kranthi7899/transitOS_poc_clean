@@ -114,7 +114,10 @@ def dirty_fleet_number(clean: str, rng: random.Random) -> str:
     if style == 2:
         return f"{prefix}-{digits} "
     if style == 3:
-        return f"{prefix}{'O' + digits if rng.random() < 0.5 else digits.replace('0', 'O') or digits}"
+        # letter O typed for a zero INSIDE the number (fix round F3: a prefix O is a letter, never a zero)
+        if "0" in digits[1:]:
+            return f"{prefix}-{digits[0]}{digits[1:].replace('0', 'O')}"
+        return f"{prefix} 0{digits}"
     if style == 4:
         return f"{prefix.capitalize()} {digits}"
     return f"{prefix}_{digits}"

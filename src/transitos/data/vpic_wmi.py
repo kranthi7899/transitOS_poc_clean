@@ -78,7 +78,8 @@ def main() -> int:
         row = (d.get("Results") or [{}])[0]
         synth_log.append({"wmi": wmi, "probe_vin": vin, "make": row.get("Make", ""),
                           "manufacturer": row.get("Manufacturer", ""), "error_code": row.get("ErrorCode", "")})
-        if not recognised(d):
+        # fix round F9: keep only 0-prefixed WMIs (a first character Z sits in a real ISO 3780 region, Europe)
+        if not recognised(d) and wmi.startswith("0"):
             synth.append(wmi)
     real, real_log = [], []
     by_maker: dict[str, list[dict]] = {}

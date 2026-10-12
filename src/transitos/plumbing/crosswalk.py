@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from transitos.contracts.crosswalk import CrosswalkEntry, Resolution
@@ -175,3 +175,58 @@ class SqliteCrosswalk:
     def resolve(self, entry: CrosswalkEntry) -> list[CloudEvent]:
         with self.db.tx() as c:
             return self.resolve_in(c, entry)
+
+    # ------------------------------------------------------------------ human picks (F2, A143)
+    def pick_in(self, conn: sqlite3.Connection, entry: CrosswalkEntry) -> list[CloudEvent]:
+        """A human mapping never overwrites or shortens history. Without a valid_from it starts at the earliest
+        parked event's own time for that native id. Refused (CrosswalkConflict, nothing written) when a row with
+        the same key exists for another vehicle or with an end, or when the new window overlaps another vehicle's
+        row for the same native id; an identical open row is left as it is."""
+        key = (entry.agency, entry.product, entry.native_id)
+        parked = [CloudEvent.model_validate_json(r["payload"]) for r in conn.execute(
+            "SELECT payload FROM xw_unresolved WHERE agency=? AND product=? AND native_id=? ORDER BY rowid",
+            key).fetchall() if r["payload"]]
+        if entry.valid_from is None and parked:
+            entry = entry.model_copy(update={"valid_from": min(utc(e.time) for e in parked)})
+        vf = _ts(entry.valid_from) or ""
+        rows = [_entry(r) for r in conn.execute(
+            f"SELECT {COLS} FROM xw_entries WHERE agency=? AND product=? AND native_id=?", key).fetchall()]
+        same = [r for r in rows if (_ts(r.valid_from) or "") == vf]
+        if same and (same[0].canonical_id != entry.canonical_id or same[0].valid_to is not None):
+            raise CrosswalkConflict(same[0])
+        for r in rows:
+            if r.canonical_id != entry.canonical_id and _overlaps(r, entry):
+                raise CrosswalkConflict(r)
+        if same:   # the same open mapping already exists: release the parked events only
+            out = self._pop(conn, entry)
+            return out
+        return self.resolve_in(conn, entry)
+
+    def pick(self, entry: CrosswalkEntry) -> list[CloudEvent]:
+        with self.db.tx() as c:
+            return self.pick_in(c, entry)
+
+    def _pop(self, conn: sqlite3.Connection, entry: CrosswalkEntry) -> list[CloudEvent]:
+        rows = conn.execute(
+            "SELECT event_id,payload FROM xw_unresolved WHERE agency=? AND product=? AND native_id=? ORDER BY rowid",
+            (entry.agency, entry.product, entry.native_id)).fetchall()
+        conn.execute("DELETE FROM xw_unresolved WHERE agency=? AND product=? AND native_id=?",
+                     (entry.agency, entry.product, entry.native_id))
+        return [CloudEvent.model_validate_json(r["payload"]) for r in rows if r["payload"]]
+
+
+class CrosswalkConflict(ValueError):
+    """A human mapping that would overwrite or overlap existing history (F2). `conflict_row` is the row in the
+    way (the panel answers 409 with it)."""
+
+    def __init__(self, row: CrosswalkEntry):
+        self.conflict_row = row.model_dump(mode="json")
+        super().__init__(f"conflicts with existing mapping {self.conflict_row}")
+
+
+def _overlaps(a: CrosswalkEntry, b: CrosswalkEntry) -> bool:
+    lo = max(utc(a.valid_from) if a.valid_from else datetime.min.replace(tzinfo=UTC),
+             utc(b.valid_from) if b.valid_from else datetime.min.replace(tzinfo=UTC))
+    hi = min(utc(a.valid_to) if a.valid_to else datetime.max.replace(tzinfo=UTC),
+             utc(b.valid_to) if b.valid_to else datetime.max.replace(tzinfo=UTC))
+    return lo < hi

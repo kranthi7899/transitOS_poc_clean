@@ -71,7 +71,14 @@ class CrosswalkService:
         valid at the event's own time. Otherwise vehicle events go to the resolver; operators stay exact-only."""
         rows = self.xw.candidates(ev.agencyid, product, native, at=ev.time)
         canon = sorted({r.canonical_id for r in rows})
+        d = ev.data
+        evidence = Evidence(native_id=native, vin=d.get("native_vin"), plate=d.get("native_plate"),
+                            name=d.get("native_name"))
         if len(canon) == 1:
+            check = getattr(self.resolver, "contradiction", None)
+            if entity == "vehicle" and check is not None and \
+                    (res := check(ev.agencyid, product, evidence, ev.time, canon[0])) is not None:
+                return None, res, ["the event's VIN or plate names a different vehicle than its id (F1)"]
             return canon[0], None, []
         if len(canon) > 1:   # overlapping validity windows for one native id: a data conflict, a human decides
             res = Resolution(outcome="AMBIGUOUS", confidence=1.0, candidates=[
@@ -113,6 +120,9 @@ class CrosswalkService:
             if row:
                 return
             failed = ev.model_copy(update={"failurereason": self._reason(entity, product, native, res, notes)})
+            if res is not None and res.candidates:   # m15: the candidates and their evidence travel with the report
+                failed = failed.model_copy(update={"data": {**ev.data, "identity": {
+                    **res.model_dump(mode="json"), "notes": notes}}})
             outbox.add(conn, failed, TOPIC_FAILED, f"{product}:{native}", dedupe_id=f"failed:{ev.id}")
             conn.execute("INSERT INTO xw_processed VALUES(?,?,'parked')", (self.group, ev.id))
             return
@@ -147,7 +157,7 @@ class CrosswalkService:
     def apply_mapping(self, entry: CrosswalkEntry) -> int:
         """Add a mapping and republish parked events to events.raw (via the outbox, atomically)."""
         with self.db.tx() as c:
-            parked = self.xw.resolve_in(c, entry)
+            parked = self.xw.pick_in(c, entry)   # F2: a human mapping never rewrites history
             for ev in parked:
                 outbox.add(c, ev, TOPIC_RAW, f"{PUBLISHER[ev.type]}:{entry.native_id}",
                            dedupe_id=f"republish:{ev.id}:{uuid.uuid4().hex[:8]}")
