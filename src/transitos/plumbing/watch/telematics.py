@@ -145,7 +145,7 @@ class TelematicsBackfillPoller(Poller):
                     # every check of ingest_payload (time, fields) runs before its first write, so a refused item
                     # leaves nothing behind in this transaction
                     added += ingest_payload(c, self.agency, item)
-                except ValueError as e:
+                except ValueError as e:   # known gap A170: a non-dict item or a missing field still raises
                     # bug sweep B (F7-R4, A155): an unreadable item (zone-less time, implausible epoch) is rejected on
                     # its own: never emitted with a guessed time, kept in poll_rejects, the rest of the page goes on
                     # fix round N1 b (A166): the feed cursor waits at the page this item came on until it is read
