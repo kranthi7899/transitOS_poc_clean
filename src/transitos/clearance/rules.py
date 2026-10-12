@@ -129,7 +129,7 @@ def vehicle_length_item(block: Block, v: Vehicle, facts: Facts) -> ClearanceItem
 
 
 def asset_active_item(v: Vehicle, facts: Facts) -> ClearanceItem:
-    """S2 fix round F4 (Review Focus 5, A145), safety class: the vehicle's MAINTENANCE asset must be active.
+    """S2 fix round F4 (Review Focus 5, A142), safety class: the vehicle's MAINTENANCE asset must be active.
     Retired = violation (never a spare); unknown (no feed, no maintenance asset, maintenance unreachable, a blank or
     unrecognised status) = unverifiable, needing acknowledgement; active = pass."""
     if facts.asset_status is None:

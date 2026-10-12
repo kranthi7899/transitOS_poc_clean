@@ -123,7 +123,7 @@ class Facts:
     profiles: dict[str, CapabilityProfile] = field(default_factory=dict)
     trigger_vehicle_id: str = ""
     tables: Tables = field(default_factory=load_tables)
-    # S2 fix round F4 (A145): maintenance asset status per vehicle id, as the maintenance product reports it
+    # S2 fix round F4 (A142): maintenance asset status per vehicle id, as the maintenance product reports it
     # ("active", "retired", ...), "missing" (no maintenance asset), "unreachable"; None = no asset-status feed
     asset_status: dict[str, str] | None = None
 

@@ -237,7 +237,7 @@ class FakeWorld:
         spares = [v for v in self.vehicles.values() if v.id != run.vehicle_id and v.status == "ready"
                   and not any(b.vehicle_id == v.id for b in self.blocks.values())]
         # S2 fix round F4: maintenance asset status (all active unless a Step 2 tweak retires one), and a KNOWN
-        # retired asset does not count towards min_spares (A146), as in the workflow
+        # retired asset does not count towards min_spares (A142), as in the workflow
         retired = getattr(self.tweaks, "retired_spare", None)
         assets = {v.id: "retired" if v.id == f"veh-{retired}" else "active" for v in spares}
         n_ready = sum(s != "retired" for s in assets.values())

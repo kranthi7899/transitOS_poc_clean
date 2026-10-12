@@ -206,7 +206,7 @@ def build_graph(deps: Deps, checkpointer):
         sched = facts.get("schedule")
         commitments = None if sched is None else commitments_from_blocks(Block.model_validate(x) for x in sched)
         asset_status = facts.get("asset_status")
-        # a vehicle KNOWN retired in maintenance is no spare, so it does not count towards min_spares (A146)
+        # a vehicle KNOWN retired in maintenance is no spare, so it does not count towards min_spares (A142)
         ready_count = len([i for i in facts["ready_ids"] if (asset_status or {}).get(i) != "retired"])
         probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=ready_count, commitments=commitments,
                       profiles=profiles, trigger_vehicle_id=run.vehicle_id, asset_status=asset_status)

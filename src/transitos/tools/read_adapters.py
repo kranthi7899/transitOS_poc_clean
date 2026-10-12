@@ -347,7 +347,7 @@ class MaintenanceReader:
         return Result.success(map_work_order(self.deps, agency, open_[0]) if open_ else None)
 
     def asset_statuses(self, agency: str, vehicle_ids: list[str]) -> Result[dict[str, str]]:
-        """S2 fix round F4 (A145), optional read: each vehicle's MAINTENANCE asset status via the crosswalk.
+        """S2 fix round F4 (A142), optional read: each vehicle's MAINTENANCE asset status via the crosswalk.
         The product's own status ("active", "retired", ...); "missing" when the crosswalk has no maintenance asset
         for the vehicle or the product has no such asset; "unreachable" when the product does not answer. Never
         raises: an unknown status is the clearance rule's to judge (unverifiable)."""

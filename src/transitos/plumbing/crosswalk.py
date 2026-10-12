@@ -88,7 +88,7 @@ class SqliteCrosswalk:
         """Test seam (F7): called before each migration statement, inside the migration's transaction."""
 
     def _recover(self) -> None:
-        """F7 (A144): an `xw_entries_v2` left behind by an interrupted migration (the pre-fix migration was not one
+        """F7 (A141): an `xw_entries_v2` left behind by an interrupted migration (the pre-fix migration was not one
         transaction). Old table still there -> the half copy is discarded and the migration redone; no table ->
         the copy is the data, renamed into place; a new-schema table -> the copy's rows are merged back."""
         if not self._has("xw_entries_v2", "vf"):
@@ -203,7 +203,7 @@ class SqliteCrosswalk:
         with self.db.tx() as c:
             return self.resolve_in(c, entry)
 
-    # ------------------------------------------------------------------ human picks (F2, A143)
+    # ------------------------------------------------------------------ human picks (F2, A141)
     def pick_in(self, conn: sqlite3.Connection, entry: CrosswalkEntry) -> list[CloudEvent]:
         """A human mapping never overwrites or shortens history. Without a valid_from it starts at the earliest
         parked event's own time for that native id. Refused (CrosswalkConflict, nothing written) when a row with

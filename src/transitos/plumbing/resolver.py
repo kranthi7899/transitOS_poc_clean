@@ -139,7 +139,7 @@ class RulesResolver:
 
     def contradiction(self, agency: str, product: str, evidence: Evidence, at: datetime,
                       canonical: str) -> Resolution | None:
-        """F1 (A142): the exact native id maps to `canonical`, but the event's VIN or plate EXACTLY matches a
+        """F1 (A141): the exact native id maps to `canonical`, but the event's VIN or plate EXACTLY matches a
         DIFFERENT vehicle's valid row and matches none of `canonical`'s rows -> AMBIGUOUS with both. Missing or
         dirty evidence is unknown (no contradiction); a name alone never overrides the id."""
         ev_plate, ev_vin, _ = _hard_evidence(evidence)

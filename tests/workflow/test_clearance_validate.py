@@ -66,7 +66,7 @@ def test_planner_never_lists_a_retired_spare(make_env):
     w.retired_assets = {"veh-2"}
     start(make_env(world=w, reasoner=spy))
     assert [s["id"] for s in spy.facts["blocks"][0]["spares"]] == ["veh-3", "veh-4"]
-    assert spy.facts["ready_count"] == 2                      # a known-retired asset is no spare (A146)
+    assert spy.facts["ready_count"] == 2                      # a known-retired asset is no spare (A142)
 
 
 def test_validator_applies_last_spare_to_distinct_spares(make_env):
