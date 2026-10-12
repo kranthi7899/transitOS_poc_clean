@@ -32,7 +32,8 @@ from .conftest import AG, H
 
 NY = "America/New_York"
 QUESTION = "Which 01:00 is meant? 01:00 on 2026-11-01 (America/New_York) occurs twice: 05:00Z and 06:00Z"
-EARLY, LATE = "2026-11-01T05:00:00Z", "2026-11-01T06:00:00Z"
+NO_OPTION = "No candidate would be feasible for blk-1 under either reading"
+EARLY, LATE ="2026-11-01T05:00:00Z", "2026-11-01T06:00:00Z"
 
 
 # ------------------------------------------------------------------ the fold, as data (tools/common.py)
@@ -159,6 +160,18 @@ def test_the_report_row_fails_when_the_payload_lacks_the_expected_text():
 def test_the_report_json_has_the_row(escalated):
     row = report.to_json([escalated[1]])["scenarios"][0]
     assert row["id"] == "dst_fallback_event" and row["passed"] and row["outcome"] == "escalate-no-safe-option"
+
+
+def test_when_no_reading_makes_anyone_feasible_the_escalation_says_so():
+    """The same day with operators that are not qualified for the vehicle: the time is still ambiguous, but neither
+    reading would make anyone feasible, and the record says that in words instead of offering nothing silently."""
+    sc = BY_ID["dst_fallback_event"]
+    sc = dataclasses.replace(sc, tweaks=dataclasses.replace(sc.tweaks, operators_qualified=False),
+                             expect_escalation_contains=(QUESTION, NO_OPTION))
+    r = run_scenario(make_world(), sc, keep_observation=True)
+    assert r.passed, r.mismatches
+    (nh,) = r.observation.escalations[r.observation.runs[0].run_id]["needs_human"]
+    assert nh["options"] == []
 
 
 # ------------------------------------------------------------------ no information, or a failure: as today
