@@ -4,6 +4,7 @@ tests/plumbing/test_resolver.py and tests/plumbing/test_crosswalk_service_identi
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
@@ -134,3 +135,25 @@ def test_retired_asset_refusal_comes_from_the_maintenance_product(real):
     assert [(w.action, w.ok) for w in res.observation.writes] == [("create_work_order", False)]
     [row] = real.system.store._q("SELECT detail FROM escalations")
     assert "hard_limit: asset_retired:1106" in row["detail"]
+
+
+def test_f2_panel_pick_keeps_history_and_answers_409_instead_of_overwriting(real):
+    """F2 through the real panel: the old unit's post-swap event parks; the human maps T-77 to veh-2. Before the
+    swap T-77 is still veh-1; after the parked event it is veh-2. A second pick that would overwrite the dated
+    history row (same key, set valid_to) is refused with 409 and the row in the way."""
+    sc = BY_ID["device_swap"]
+    real.apply(sc)
+    late = sc.events[1]
+    real.deliver(late)
+    pc, xw = real.system.panel_client, real.system.xw
+    r = pc.post("/crosswalk", json={"agency": "agency-a", "product": "telematics", "native_id": "T-77",
+                                    "entity": "vehicle", "canonical_id": "veh-2"})
+    assert r.status_code == 200 and r.json()["republished"] == [late.id]
+    swap = sc.events[0].time - timedelta(minutes=1) - timedelta(hours=24)   # T0 - 24h is the swap
+    assert xw.lookup("agency-a", "telematics", "T-77", at=swap - timedelta(minutes=1)) == "veh-1"
+    assert xw.lookup("agency-a", "telematics", "T-77", at=late.time) == "veh-2"
+    r = pc.post("/crosswalk", json={"agency": "agency-a", "product": "telematics", "native_id": "T-77",
+                                    "entity": "vehicle", "canonical_id": "veh-3"})
+    assert r.status_code == 409
+    assert r.json()["detail"]["conflict"]["canonical_id"] in ("veh-1", "veh-2")
+    assert xw.lookup("agency-a", "telematics", "T-77", at=swap - timedelta(minutes=1)) == "veh-1"

@@ -106,3 +106,57 @@ def test_a_v1_table_is_migrated_in_place(tmp_path):
     assert xw.lookup(AG, "telematics", "T-1", at=S) == "veh-2"
     xw.add_unresolved(AG, "telematics", "T-2", "x")
     assert xw.unresolved(AG)[0]["resolution"] is None
+
+
+V1 = ("CREATE TABLE xw_entries(agency TEXT NOT NULL, product TEXT NOT NULL, native_id TEXT NOT NULL, "
+      "entity TEXT NOT NULL, canonical_id TEXT NOT NULL, PRIMARY KEY(agency, product, native_id));")
+
+
+def _v1(tmp_path, name="old.db") -> Db:
+    db = Db(str(tmp_path / name))
+    db.script(V1)
+    db.execute("INSERT INTO xw_entries VALUES('ag1','telematics','T-1','vehicle','veh-1')")
+    db.execute("INSERT INTO xw_entries VALUES('ag1','maintenance','M-1','asset','veh-1')")
+    return db
+
+
+def test_f7_a_crash_inside_the_migration_loses_nothing(tmp_path, monkeypatch):
+    """F7: the migration is one transaction; a crash between DROP TABLE and the RENAME rolls everything back."""
+    db = _v1(tmp_path)
+
+    def crash(stmt: str) -> None:
+        if stmt.upper().startswith("ALTER TABLE XW_ENTRIES_V2 RENAME"):
+            raise KeyboardInterrupt("process killed between DROP and RENAME")
+
+    monkeypatch.setattr(SqliteCrosswalk, "_before_migration_statement", staticmethod(crash))
+    try:
+        SqliteCrosswalk(db)
+    except KeyboardInterrupt:
+        pass
+    monkeypatch.undo()
+    db.close()
+    xw = SqliteCrosswalk(Db(str(tmp_path / "old.db")))          # next start
+    assert xw.lookup(AG, "telematics", "T-1") == "veh-1" and xw.all_ids(AG, "veh-1") == \
+        {"telematics": "T-1", "maintenance": "M-1"}
+
+
+def test_f7_start_up_recovers_an_orphaned_v2_table(tmp_path):
+    """A store left by the old non-atomic migration after DROP but before RENAME: only xw_entries_v2 exists."""
+    db = Db(str(tmp_path / "orphan.db"))
+    from transitos.plumbing.crosswalk import _ENTRIES
+    db.script(f"CREATE TABLE xw_entries_v2{_ENTRIES};")
+    db.execute("INSERT INTO xw_entries_v2(agency,product,native_id,vf,entity,canonical_id) "
+               "VALUES('ag1','telematics','T-1','','vehicle','veh-1')")
+    xw = SqliteCrosswalk(db)
+    assert xw.lookup(AG, "telematics", "T-1") == "veh-1"
+    assert not xw._has("xw_entries_v2", "vf")
+
+
+def test_f7_start_up_discards_a_half_copied_v2_when_the_old_table_survived(tmp_path):
+    """Crash before DROP: the old table is intact, a partial v2 exists; the migration is redone from the old table."""
+    db = _v1(tmp_path)
+    from transitos.plumbing.crosswalk import _ENTRIES
+    db.script(f"CREATE TABLE xw_entries_v2{_ENTRIES};")   # empty: the copy never finished
+    xw = SqliteCrosswalk(db)
+    assert xw.all_ids(AG, "veh-1") == {"telematics": "T-1", "maintenance": "M-1"}
+    assert not xw._has("xw_entries_v2", "vf")

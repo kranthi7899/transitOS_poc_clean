@@ -79,6 +79,14 @@ class ToolSet:
             return Result.success(None, note="not_supported")
         return fns[0](agency, start, end)
 
+    def asset_statuses(self, agency: str, vehicle_ids: list[str]) -> Result[dict[str, str] | None]:
+        """S2 fix round F4: maintenance asset status per vehicle id. A None value means no configured adapter
+        offers it (the clearance rule asset_active is then unverifiable)."""
+        fns = self._optional("asset_statuses")
+        if not fns:
+            return Result.success(None, note="not_supported")
+        return fns[0](agency, vehicle_ids)
+
     def capability_profiles(self, agency: str) -> Result[dict[str, dict]]:
         """What each configured product supplies, as {product: CapabilityProfile.to_dict()}."""
         out: dict[str, dict] = {}

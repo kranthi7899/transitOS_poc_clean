@@ -181,8 +181,16 @@ def build_graph(deps: Deps, checkpointer):
             if sr.status != "ok":
                 return None, f"unavailable:schedule:{sr.product or ''}:{sr.note or sr.status}"
             schedule = None if sr.value is None else [b.model_dump(mode="json") for b in sr.value]
+        asset_status = None   # S2 fix round F4: None = no asset-status feed (asset_active is then unverifiable)
+        if (asset_fn := getattr(r, "asset_statuses", None)) is not None:
+            ids = sorted({v.id for v in res["ready"].value or []} |
+                         {x["id"] for it in items for x in it["spares"]})
+            ar = asset_fn(ag, ids)
+            # maintenance not answering is UNKNOWN for every candidate (unverifiable), never a reason to guess
+            asset_status = ar.value if ar.status == "ok" else {i: "unreachable" for i in ids}
         wo = res["work_order"].value
         facts = {"now": now.isoformat(), "window_end": end.isoformat(), "profiles": profiles, "schedule": schedule,
+                 "asset_status": asset_status,
                  "vehicle": res["vehicle"].value.model_dump(mode="json"),
                  "existing_wo": wo.model_dump(mode="json") if wo else None,
                  "ready_ids": sorted(v.id for v in res["ready"].value or [] if v.id != vid and v.status == "ready"),
@@ -197,9 +205,11 @@ def build_graph(deps: Deps, checkpointer):
         profiles = {k: CapabilityProfile.from_dict(v) for k, v in (facts.get("profiles") or {}).items()}
         sched = facts.get("schedule")
         commitments = None if sched is None else commitments_from_blocks(Block.model_validate(x) for x in sched)
-        ready_count = len(facts["ready_ids"])
+        asset_status = facts.get("asset_status")
+        # a vehicle KNOWN retired in maintenance is no spare, so it does not count towards min_spares (A142)
+        ready_count = len([i for i in facts["ready_ids"] if (asset_status or {}).get(i) != "retired"])
         probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=ready_count, commitments=commitments,
-                      profiles=profiles, trigger_vehicle_id=run.vehicle_id)
+                      profiles=profiles, trigger_vehicle_id=run.vehicle_id, asset_status=asset_status)
         violations: list[str] = []
         errors: list[dict] = []   # clearance_error items: a candidate whose record broke a rule is excluded (F4)
 
@@ -237,7 +247,8 @@ def build_graph(deps: Deps, checkpointer):
                 violations.append(f"last_spare:{ready_count}_ready_for_{need.n}_distinct_spares"
                                   + ("" if need.exact else "_upper_bound_unverified"))
         snapshot = Facts(blocks=block_objs, vehicles=vehicles, operators=operators, ready_count=ready_count,
-                         commitments=commitments, profiles=profiles, trigger_vehicle_id=run.vehicle_id)
+                         commitments=commitments, profiles=profiles, trigger_vehicle_id=run.vehicle_id,
+                         asset_status=asset_status)
         mf = {"run_id": run.run_id, "trigger_type": run.trigger_event.get("type"), "now": facts["now"],
               "window_end": facts["window_end"], "vehicle": facts["vehicle"], "min_spares": pol.limits.min_spares,
               "ready_count": ready_count, "blocks": blocks, "previous_errors": [], "clearance_errors": errors,

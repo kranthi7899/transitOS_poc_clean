@@ -128,10 +128,27 @@ def vehicle_length_item(block: Block, v: Vehicle, facts: Facts) -> ClearanceItem
                 f"{v.id}: {length.note} {length.value:g} ft vs block limit {limit:g} ft")
 
 
+def asset_active_item(v: Vehicle, facts: Facts) -> ClearanceItem:
+    """S2 fix round F4 (Review Focus 5, A142), safety class: the vehicle's MAINTENANCE asset must be active.
+    Retired = violation (never a spare); unknown (no feed, no maintenance asset, maintenance unreachable, a blank or
+    unrecognised status) = unverifiable, needing acknowledgement; active = pass."""
+    if facts.asset_status is None:
+        return unverifiable("asset_active", f"{v.id}: no maintenance asset-status feed")
+    status = (facts.asset_status.get(v.id) or "").strip().lower()
+    if status == "active":
+        return item("asset_active", "pass", "native")
+    if status == "retired":
+        return item("asset_active", "violation", "native", f"asset_retired: {v.id}'s maintenance asset is retired")
+    why = {"": "no maintenance asset status", "missing": "no maintenance asset for the vehicle",
+           "unreachable": "maintenance product unreachable"}.get(status, f"unrecognised asset status {status!r}")
+    return unverifiable("asset_active", f"{v.id}: {why}")
+
+
 def vehicle_items(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolicy) -> list[ClearanceItem]:
     n = block.needs
     out = [item("vehicle_ready", "pass" if v.status == "ready" else "violation", "native",
-                "" if v.status == "ready" else f"{v.id} is {v.status}, not ready")]
+                "" if v.status == "ready" else f"{v.id} is {v.status}, not ready"),
+           asset_active_item(v, facts)]
     if n.seats or need_unknown(block, "seats"):
         out.append(_capacity(block, v, facts, "vehicle_seats", "seats", "seats", lambda: v.seats < n.seats,
                              lambda: f"{v.id} has {v.seats} seats, needs {n.seats}", "seats"))

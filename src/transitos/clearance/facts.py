@@ -123,6 +123,9 @@ class Facts:
     profiles: dict[str, CapabilityProfile] = field(default_factory=dict)
     trigger_vehicle_id: str = ""
     tables: Tables = field(default_factory=load_tables)
+    # S2 fix round F4 (A142): maintenance asset status per vehicle id, as the maintenance product reports it
+    # ("active", "retired", ...), "missing" (no maintenance asset), "unreachable"; None = no asset-status feed
+    asset_status: dict[str, str] | None = None
 
     def basis(self, product: str, name: str) -> Basis:
         p = self.profiles.get(product)
@@ -148,6 +151,7 @@ class Facts:
                 k: [[s.isoformat(), e.isoformat(), bid] for s, e, bid in v] for k, v in self.commitments.items()},
             "profiles": {k: p.to_dict() for k, p in self.profiles.items()},
             "trigger_vehicle_id": self.trigger_vehicle_id,
+            "asset_status": None if self.asset_status is None else dict(self.asset_status),
         }
 
     @classmethod
@@ -161,7 +165,8 @@ class Facts:
                 k: [(datetime.fromisoformat(s), datetime.fromisoformat(e), bid) for s, e, bid in v]
                 for k, v in d["commitments"].items()},
             profiles={k: CapabilityProfile.from_dict(p) for k, p in d["profiles"].items()},
-            trigger_vehicle_id=d.get("trigger_vehicle_id", ""))
+            trigger_vehicle_id=d.get("trigger_vehicle_id", ""),
+            asset_status=None if d.get("asset_status") is None else dict(d["asset_status"]))
 
 
 __all__ = ["BASIS_ORDER", "PRODUCT_FIELDS", "RECORD_FIELDS", "SCHEDULING_FIELDS", "WORKFORCE_FIELDS", "Basis", "CapabilityProfile",

@@ -346,6 +346,30 @@ class MaintenanceReader:
                        key=lambda w: w.get("opened_at") or "")
         return Result.success(map_work_order(self.deps, agency, open_[0]) if open_ else None)
 
+    def asset_statuses(self, agency: str, vehicle_ids: list[str]) -> Result[dict[str, str]]:
+        """S2 fix round F4 (A142), optional read: each vehicle's MAINTENANCE asset status via the crosswalk.
+        The product's own status ("active", "retired", ...); "missing" when the crosswalk has no maintenance asset
+        for the vehicle or the product has no such asset; "unreachable" when the product does not answer. Never
+        raises: an unknown status is the clearance rule's to judge (unverifiable)."""
+        out: dict[str, str] = {}
+        for vid in sorted(set(vehicle_ids)):
+            asset = native_of(self.deps, agency, vid, "maintenance")
+            if asset is None:
+                out[vid] = "missing"
+                continue
+            try:
+                r = self.http.request(agency, "GET", f"/assets/{asset}", ok_4xx=True)
+            except ProductUnavailable:
+                out[vid] = "unreachable"
+                continue
+            if r.status_code == 404:
+                out[vid] = "missing"
+            elif r.status_code >= 400:
+                out[vid] = "unreachable"
+            else:
+                out[vid] = str((r.json() or {}).get("status") or "")
+        return Result.success(out)
+
     @guarded("maintenance")
     def get_work_order(self, agency: str, wo_id: str) -> Result[WorkOrder]:
         return Result.success(map_work_order(self.deps, agency, self.http.json(agency, "GET", f"/workorders/{wo_id}")))

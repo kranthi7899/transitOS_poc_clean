@@ -116,6 +116,7 @@ def test_synthetic_wmis_fixture_is_flagged_and_disjoint_from_real():
     assert idf.synthetic_wmis() == list(doc["wmis"])
     for w in doc["wmis"]:
         assert len(w) == 3 and not set(w) & set("IOQ")
+        assert w.startswith("0")   # fix round F9: no WMI in a real region (ZZ7 was dropped: Z is Europe)
 
 
 def test_make_plate_is_seeded_and_uses_the_fictional_jurisdiction():
