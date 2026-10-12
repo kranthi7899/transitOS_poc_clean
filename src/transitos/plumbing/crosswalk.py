@@ -17,6 +17,7 @@ from transitos.contracts.crosswalk import CrosswalkEntry, Resolution
 from transitos.contracts.envelope import CloudEvent
 
 from .db import Db
+from .pg import split_script
 from .resolver import utc, valid_at
 
 _ENTRIES = """(
@@ -43,6 +44,12 @@ ALTER TABLE xw_entries_v2 RENAME TO xw_entries;
 CREATE INDEX IF NOT EXISTS ix_xw_canon ON xw_entries(agency, canonical_id);
 """
 COLS = "agency,product,native_id,vf,entity,canonical_id,valid_to,vin,plate,display_name"
+RECOVER_V2 = {   # F7: what start-up does with an orphaned xw_entries_v2 (see SqliteCrosswalk._recover)
+    "merge": (f"INSERT OR IGNORE INTO xw_entries({COLS}) SELECT {COLS} FROM xw_entries_v2",
+              "DROP TABLE xw_entries_v2"),
+    "redo": ("DROP TABLE xw_entries_v2",),
+    "rename": ("ALTER TABLE xw_entries_v2 RENAME TO xw_entries",),
+}
 
 
 def _ts(dt: datetime | None) -> str | None:
@@ -72,8 +79,25 @@ class SqliteCrosswalk:
         add_unresolved() was called without it (the contract signature carries only the event id)."""
         self.db = Db(db) if isinstance(db, str) else db
         self.bus = bus
+        self._recover()
         self.db.script(SCHEMA)
         self._migrate()
+
+    @staticmethod
+    def _before_migration_statement(stmt: str) -> None:
+        """Test seam (F7): called before each migration statement, inside the migration's transaction."""
+
+    def _recover(self) -> None:
+        """F7 (A144): an `xw_entries_v2` left behind by an interrupted migration (the pre-fix migration was not one
+        transaction). Old table still there -> the half copy is discarded and the migration redone; no table ->
+        the copy is the data, renamed into place; a new-schema table -> the copy's rows are merged back."""
+        if not self._has("xw_entries_v2", "vf"):
+            return
+        # probe outside the transaction: on Postgres a failed probe would abort it
+        new, old = self._has("xw_entries", "vf"), self._has("xw_entries", "agency")
+        with self.db.tx() as c:
+            for stmt in RECOVER_V2["merge" if new else "redo" if old else "rename"]:
+                c.execute(stmt)
 
     def _has(self, table: str, column: str) -> bool:
         try:
@@ -84,7 +108,10 @@ class SqliteCrosswalk:
 
     def _migrate(self) -> None:
         if not self._has("xw_entries", "vf"):
-            self.db.script(MIGRATE_V1)
+            with self.db.tx() as c:   # F7: one transaction; a crash anywhere inside rolls the whole copy back
+                for stmt in split_script(MIGRATE_V1):
+                    self._before_migration_statement(stmt)
+                    c.execute(stmt)
         if not self._has("xw_unresolved", "resolution"):
             self.db.execute("ALTER TABLE xw_unresolved ADD COLUMN resolution TEXT")
 

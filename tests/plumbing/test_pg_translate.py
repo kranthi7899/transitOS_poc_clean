@@ -62,3 +62,13 @@ def test_crosswalk_v12_statements_translate_without_sqlite_only_constructs():
     assert up.count("%s") == 10 and "ON CONFLICT(agency,product,native_id,vf)" in up
     assert translate("ALTER TABLE xw_unresolved ADD COLUMN resolution TEXT") == \
         "ALTER TABLE xw_unresolved ADD COLUMN resolution TEXT"
+
+
+def test_crosswalk_fix_round_statements_translate():
+    """F7 recovery statements (run inside one transaction) are portable; the merge keeps existing rows."""
+    from transitos.plumbing import crosswalk as xw
+    merge = translate(xw.RECOVER_V2["merge"][0], with_params=False)
+    assert merge.startswith("INSERT INTO xw_entries(") and merge.endswith("FROM xw_entries_v2 ON CONFLICT DO NOTHING")
+    assert translate(xw.RECOVER_V2["rename"][0], with_params=False) == "ALTER TABLE xw_entries_v2 RENAME TO xw_entries"
+    for stmt in split_script(xw.MIGRATE_V1):
+        assert "PRAGMA" not in translate(stmt, with_params=False).upper()
