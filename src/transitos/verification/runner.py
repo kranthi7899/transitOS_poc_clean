@@ -78,7 +78,7 @@ def drive(world: World, scenario: Scenario, notes: list[str] | None = None) -> O
         name, arg = op[0], (op[1] if len(op) > 1 else None)
         runs = world.observe().runs
         rid = runs[0].run_id if runs else None
-        if name == "expect_status":       # Phase 10 Step 4: the run's status at this point of the script
+        if name == "expect_status":       # Phase 10 Step 4 (A114): the run's status at this point of the script
             got = runs[0].status if runs else "no run"
             if got != arg and notes is not None:
                 notes.append(f"at {op} the run was {got!r}")

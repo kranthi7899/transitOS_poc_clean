@@ -140,6 +140,7 @@ def native_of(deps: Deps, agency: str, canonical: str, product: str) -> str | No
 #     whatever the fold;
 #   * a string that already carries a zone is a bug (mixed formats): ValueError, never silently accepted;
 #   * a missing or unknown timezone is never guessed as UTC: UnknownTimezone (a ValueError).
+# Known gap A112: without a utc_offset the second pass of the repeated hour is read an hour early (the rule's cost).
 
 _LOCAL_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
 _LOCAL_HM = re.compile(r"^\d{2}:\d{2}$")

@@ -26,7 +26,11 @@ dst_fallback_event       PLAN_VALID. Same knob, on the 2026 US fall-back day (20
                          EST, a local wall time EARLIER than the opening. The close must still be seen (the poll cursor
                          never skips it) and stamped 06:30Z (the product's utc_offset disambiguates).
 
-Why a `clock_start` knob: every older scenario starts at T0 = 2026-10-10 06:00Z and IntegrationWorld built its
+Known gap (A112): without the product's utc_offset, the second 01:30 is read as the first (documented rule), so a
+close in the repeated hour is stamped an hour early; dst_fallback_event runs WITH offsets, and a test pins the
+without-offset consequence. The workforce CSV carries no offsets at all.
+
+Why a `clock_start` knob (A114): every older scenario starts at T0 = 2026-10-10 06:00Z and IntegrationWorld built its
 SimClock from that constant; there was no other mechanism. Default None keeps T0 for every older scenario.
 """
 from __future__ import annotations

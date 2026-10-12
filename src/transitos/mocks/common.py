@@ -75,7 +75,7 @@ class Ctx:
     def in_ts(self, agency: str, value: str) -> datetime:
         """A timestamp a client sent (e.g. updated_since). Zone-less input under the local knob is local wall time;
         the fall-back repeat is read as its FIRST occurrence (the earlier instant: a cursor may re-read, never
-        skip), a spring-forward gap time forward. Without the knob: as before (zone-less = UTC)."""
+        skip; A114), a spring-forward gap time forward. Without the knob: as before (zone-less = UTC)."""
         zi = self.local_zone(agency)
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is not None or zi is None:
