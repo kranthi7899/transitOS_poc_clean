@@ -65,6 +65,12 @@ The agent never writes until a human approves a concrete plan. The rider alert i
 | E | `src/transitos/panel/` | The dispatcher panel (approve, reject, edit, kill switch, unresolved ids). |
 | F | `src/transitos/verification/` | Scenarios, invariants, and the report. |
 
+**Added in Phase 10:**
+- `src/transitos/clearance/`: the one pure module for every hard limit and graded rule. Used by the planner, the plan validator and the write adapters, and it fails closed on any error. Vehicle fit is graded (exact type is best; a larger class is a warning that needs approver acknowledgement; a smaller class is never a candidate). Missing data is never a violation and never a silent pass: each rule reports whether its data was native, derived, assumed or unknown, and unknown safety rules are "unverifiable" and need acknowledgement. The plan shows its top three options and why the first beat the second.
+- `src/transitos/plumbing/resolver.py`: an identity resolver for messy ids (VIN with check digit, plate, fleet number) over a validity-dated crosswalk, with MATCH, AMBIGUOUS (a human picks) and NO_MATCH outcomes.
+- `src/transitos/world/`: a scripted-then-seeded ground truth that each simulated product sees after its own delay, plus a simulated shop foreman (pending repair, parts wait) and optional zone-less local timestamps.
+- `src/transitos/data/` and `make data`: an offline-testable pipeline that fetches public NTD data once, verifies it, and derives three small committed files (real bus failure rates, fleet mix, repair-duration shape). Raw data is never committed.
+
 `src/transitos/integration/` wires everything into one `System`, with a narrated demo. Design notes live in `docs/` (`ARCHITECTURE.md`, `CONTRACTS.md`, `MOCK_API.md`, `ASSUMPTIONS.md`). Handoff notes per track are in `coordination/handoffs/`.
 
 ## The mock products and the mock data
@@ -97,7 +103,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 ```
 uv sync
 make demo      # narrated happy path through the real wiring
-make verify    # schemas + lint + tests + the 24-scenario report
+make verify    # schemas + lint + tests + the 49-scenario report + offline data check
 uv run python -m transitos.mocks.run   # serve the five mocks on localhost:8101-8105
 ```
 
@@ -117,24 +123,29 @@ Run `make kafka-down` / `make postgres-down` when finished. Project paths contai
 
 ## Verification
 
-Track F runs 24 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure).
+Track F runs 49 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure). Scenarios that depend on product lag or wire formats are marked real-world-only and skipped on the stand-in world instead of faking agreement. Two scenarios are recorded as **known gaps**, not clean passes (the orchestrator cannot know a fault has cleared).
 
-Last run: lint clean, 24/24 scenarios on all three profiles.
+Last run: lint clean, 49/49 scenarios on all three profiles.
 
 | Profile | Tests |
 |---|---|
-| Local | 343 passed, 83 skipped (Kafka and Postgres cases skip without a server) |
-| Kafka | 367 passed, 59 skipped |
-| Postgres | 424 passed, 2 skipped |
+| Local | 1395 passed, 150 skipped (Kafka and Postgres cases skip without a server) |
+| Kafka | 1439 passed, 106 skipped |
+| Postgres | 1466 passed, 79 skipped |
 
-Scenarios include: severe fault with a spare, operator swap, PM overdue (urgent and minor), DVIR defect, last spare, wheelchair and lift mismatches, operator hours exhausted, unqualified operator, duplicate trigger, human work order already exists, unresolved vehicle id (dead-letter), product down on read, approval rejected and expired, write rejected mid-plan (compensated), kill switch mid-run, and a spare taken between proposal and execution.
+Scenario families:
+- **Original 24:** severe fault with a spare, operator swap, PM overdue (urgent and minor), DVIR defect, last spare, wheelchair and lift mismatches, operator hours, unqualified operator, duplicates, human work order already exists, unresolved vehicle id, product down on read, approval rejected and expired, compensation, kill switch, spare taken after proposal.
+- **Clearance (8):** expired training, missing endorsement, spare reused across blocks, weekly hours cap, larger-class fallback (needs acknowledgement), length restriction blocking a larger vehicle, fleet with half the operator fields missing, `vehicle_fit: exact`.
+- **World engine (5):** a scripted coolant-fault day, an intermittent fault, an operator call-out with the extra board, and the dispatcher acting before the human approves.
+- **Identity (8):** device swap, ambiguous match (human picks), renumbered asset, dirty ids, orphan telematics unit, retired asset blocks a work order, retired spare never proposed.
+- **Shop and time (4):** parts wait stays in wait-for-repair, a human opens the work order first, zone-less local time, the daylight-saving fall-back hour.
 
 ## Known gaps
 
-- The default `agency-042` seed does not complete a run. Operator qualifications are licence codes while the hard limit expects the vehicle type, and the workflow uses one distinct spare per affected block. The demo and scenarios use a separate baseline fleet on the same mocks.
-- The undo order after a failure following `reassign_block` is an open decision, and is currently a strict expected failure.
 - No reconciliation for partial writes, no rider-alert correction, no authentication on the panel, no real LLM provider, and a single-threaded driver.
-- 34 assumptions are still open. They are listed with the question to ask each real product owner in `docs/ASSUMPTIONS.md`.
+- The orchestrator cannot know a fault has cleared (the telematics mock sends no clear event), so it pulls a bus whose fault already cleared. The detection-latency numbers restate scripted delays; they do not measure how fast the orchestrator reacts.
+- A close stamped in the second 01:30 of a daylight-saving fall-back, with no offset in the product's data, is recorded an hour early.
+- Many assumptions are still open. They are listed with the question to ask each real product owner in `docs/ASSUMPTIONS.md` (about 140 rows).
 
 ## Conventions
 
