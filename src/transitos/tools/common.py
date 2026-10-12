@@ -158,6 +158,11 @@ class UnknownTimezone(ValueError):
     """The agency timezone is missing or not a zoneinfo key: zone-less local time cannot be read (never UTC)."""
 
 
+class ZoneConfigMismatch(ValueError):
+    """Bug sweep B fix round (N1, A165): the agency's time setting does not match what the product sends (zone-less
+    time with the local_time flag off, or a zoned string with it on). Configuration, not one bad record."""
+
+
 def zone(tz: str | None) -> ZoneInfo:
     if not isinstance(tz, str) or not tz.strip():
         raise UnknownTimezone("agency timezone is not configured: zone-less local time cannot be read")
@@ -182,7 +187,7 @@ def to_utc(naive: str, tz: str, *, fold: int = 0, utc_offset: str | None = None,
         raise ValueError("fold must be 0 or 1")
     s = naive.strip() if isinstance(naive, str) else ""
     if s and _ZONED.search(s) and not _LOCAL_HM.match(s):
-        raise ValueError(f"timestamp {naive!r} already carries a zone: mixed formats are a bug (A109)")
+        raise ZoneConfigMismatch(f"timestamp {naive!r} already carries a zone: mixed formats are a bug (A109)")
     zi = zone(tz)
     if _LOCAL_HM.match(s):
         if on is None:

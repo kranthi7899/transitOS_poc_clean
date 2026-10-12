@@ -77,3 +77,25 @@ def test_crosswalk_fix_round_statements_translate():
     # G1 'device moved' closes the old row in place
     assert translate("UPDATE xw_entries SET valid_to=? WHERE agency=? AND product=? AND native_id=? AND vf=?") == \
         "UPDATE xw_entries SET valid_to=%s WHERE agency=%s AND product=%s AND native_id=%s AND vf=%s"
+
+
+def test_poll_rejects_statements_translate():
+    """Bug sweep B fix round (N2, A167): every poll_rejects statement the watch adapters run, translated exactly."""
+    from transitos.plumbing.watch import base as wb
+    (ddl,) = [translate(s, with_params=False) for s in split_script(wb.REJECT_SCHEMA)]
+    assert ddl.startswith("CREATE TABLE IF NOT EXISTS poll_rejects(") and ddl.endswith(
+        "PRIMARY KEY(poller, record_key), rowid BIGSERIAL)")
+    for col in ("poller TEXT NOT NULL", "record_key TEXT NOT NULL", "native_id TEXT", "first_seen TEXT",
+                "resolved INTEGER NOT NULL DEFAULT 0", "resolved_at TEXT"):
+        assert col in ddl
+    assert translate(wb.REJECT_UPSERT) == (
+        "INSERT INTO poll_rejects(poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,"
+        "resolved,resolved_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,NULL) ON CONFLICT(poller,record_key) DO UPDATE "
+        "SET native_id=excluded.native_id,reason=excluded.reason,digest=excluded.digest,last_seen=excluded.last_seen,"
+        "resolved=0,resolved_at=NULL")
+    assert translate(wb.REJECT_RESOLVE) == \
+        "UPDATE poll_rejects SET resolved=1,resolved_at=%s WHERE poller=%s AND record_key=%s AND resolved=0"
+    assert translate(wb.REJECT_OPEN_KEYS) == "SELECT record_key FROM poll_rejects WHERE poller=%s AND resolved=0"
+    assert translate(wb.REJECT_LIST) == (
+        "SELECT poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,resolved,resolved_at "
+        "FROM poll_rejects WHERE resolved<=%s ORDER BY poller,record_key")

@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from transitos.contracts.envelope import CloudEvent
-from transitos.tools.common import UnknownTimezone
+from transitos.tools.common import UnknownTimezone, ZoneConfigMismatch
 
 from .. import outbox
 from ..db import Db
@@ -99,8 +99,43 @@ def zoned(value: Any) -> Any:
     does; a zone-less value raises ValueError and is never read as UTC (A108, fix round F1)."""
     dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
     if dt.tzinfo is None or dt.utcoffset() is None:
-        raise ValueError(f"zone-less timestamp {value!r} and the agency has no local_time setting: zone unknown (A108)")
+        # bug sweep B fix round (N1, A165): configuration (the product sends local time, the flag is off), so the
+        # watch adapters HOLD the poll on it; it is still a ValueError for every other caller
+        raise ZoneConfigMismatch(
+            f"zone-less timestamp {value!r} and the agency has no local_time setting: zone unknown (A108)")
     return value
+
+
+# ---- bug sweep B fix round (N1 b, A166): cursors are INSTANTS, stored as RFC 3339 UTC ------------------------
+def cursor_instant(value: Any) -> datetime | None:
+    """A stored time cursor as an aware instant. None (from the beginning) for no cursor, and for a legacy cursor
+    that carries no zone: re-reading is safe (events are de-duplicated), skipping is not."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None and dt.utcoffset() is not None else None
+
+
+def cursor_str(dt: datetime) -> str:
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def later(cursor: str | None, dt: datetime) -> str:
+    """The later of a stored cursor and an instant, compared as instants (never as strings)."""
+    cur = cursor_instant(cursor)
+    return cursor_str(dt if cur is None or dt > cur else cur)
+
+
+def nul_free(value: Any) -> tuple[str | None, bool]:
+    """(value with every NUL written as the two characters '\\0', whether one was there). Postgres refuses NUL in
+    TEXT; a vendor id that carries one must not abort the poll's transaction (N2, A167)."""
+    if value is None:
+        return None, False
+    s = str(value)
+    return s.replace("\x00", "\\0"), "\x00" in s
 
 
 def identity_evidence(vin: Any, plate: Any, name: Any) -> dict[str, str]:
@@ -160,35 +195,78 @@ class Poller:
         return r.json()
 
     def ts(self, doc: dict, key: str) -> str | datetime:
-        """The event time from a product record, never guessed. An unknown agency timezone is configuration, not a
-        record: it holds the whole poll (UpstreamError: state kept, retried; A108, A157). Any other unreadable time
-        rejects THIS record only (RecordUnreadable; A155)."""
+        """The event time from a product record, never guessed. A CONFIGURATION problem holds the whole poll
+        (UpstreamError: state kept, retried, nothing lost once fixed): an unknown agency timezone (A108, A157), a
+        zone-less time with the local_time flag off or a zoned one with it on (bug sweep B fix round N1, A165). Only
+        a genuinely per-record fault (a utc_offset that disagrees with the zone, a malformed value) rejects THIS
+        record (RecordUnreadable; A155)."""
         try:
             return zoned(doc[key]) if self.read_time is None else self.read_time(doc, key)
-        except UnknownTimezone as e:
+        except (UnknownTimezone, ZoneConfigMismatch) as e:
             raise UpstreamError(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
         except ValueError as e:
             raise RecordUnreadable(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
+
+    def instant(self, doc: dict, key: str) -> datetime:
+        """`doc[key]` read exactly as `ts` reads it, as an aware instant (for cursors; A166)."""
+        v = self.ts(doc, key)
+        try:
+            dt = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+        except ValueError as e:
+            raise RecordUnreadable(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
+        if dt.tzinfo is None or dt.utcoffset() is None:   # unreachable: ts never returns a zone-less time
+            raise RecordUnreadable(f"{self.product} timestamp {key}={doc.get(key)!r} has no zone")
+        return dt
 
     # ---- bug sweep B (F7-R4, A155): per-record rejects, written in the poll's own transaction -----------------
     def _seen_at(self) -> str | None:
         return self.clock().isoformat() if self.clock is not None else None
 
-    def _begin_records(self) -> None:
+    def _begin_records(self, floors: dict | None = None) -> None:
         self._rejects: list[tuple] = []
         self._resolved: list[str] = []
         self._open = {r["record_key"] for r in self.db.execute(REJECT_OPEN_KEYS, (self.name,)).fetchall()}
+        # fix round N1 b (A166): per stream, the cursor each OPEN reject was read at; a cursor never passes them
+        self._floors: dict[str, dict[str, str | None]] = {s: dict(v) for s, v in (floors or {}).items()}
 
-    def reject(self, record_key: str, native_id: Any, doc: Any, err: BaseException) -> None:
-        """This record is not emitted; it is kept in poll_rejects and re-evaluated whenever it is seen again."""
+    def reject(self, record_key: str, native_id: Any, doc: Any, err: BaseException, *, stream: str | None = None,
+               floor: str | None = None) -> None:
+        """This record is not emitted; it is kept in poll_rejects and re-evaluated whenever it is seen again. With
+        `stream`, that stream's cursor stays at `floor` (the cursor the record was read at) until it is read."""
         now = self._seen_at()
-        self._rejects.append((self.name, record_key, self.agency, self.product,
-                              None if native_id is None else str(native_id), str(err)[:300], digest(doc), now, now))
+        key, k_nul = nul_free(record_key)
+        nid, n_nul = nul_free(native_id)
+        reason, _ = nul_free(str(err)[:300])
+        if k_nul or n_nul:
+            reason = f"{reason} [NUL in the vendor id written as \\0]"
+        self._rejects.append((self.name, key, self.agency, self.product, nid, reason, digest(doc), now, now))
+        if stream is not None:
+            self._floors.setdefault(stream, {}).setdefault(key, floor)   # type: ignore[arg-type]
 
     def accept(self, record_key: str) -> None:
-        """This record was read: a reject row it had is resolved."""
-        if record_key in self._open:
-            self._resolved.append(record_key)
+        """This record was read: a reject row it had is resolved, and it no longer holds its stream's cursor."""
+        key, _ = nul_free(record_key)
+        if key in self._open:
+            self._resolved.append(key)   # type: ignore[arg-type]
+        for f in self._floors.values():
+            f.pop(key, None)   # type: ignore[arg-type]
+
+    def capped(self, stream: str, cursor: str | None, order: Callable[[str], Any] | None = None) -> str | None:
+        """`cursor`, but never past the earliest open reject of `stream` (A166). `order` ranks two cursor values
+        (default: as instants); a None floor (read from the beginning) keeps the cursor at the beginning."""
+        floors = list((self._floors.get(stream) or {}).values())
+        if not floors:
+            return cursor
+        if cursor is None or any(f is None for f in floors):
+            return None
+        rank = order or (lambda c: cursor_instant(c) or datetime.min.replace(tzinfo=UTC))
+        return min([cursor, *floors], key=rank)   # type: ignore[list-item]
+
+    def with_floors(self, last_seen: dict) -> dict:
+        """`last_seen` carrying the open rejects' floors (absent when there are none)."""
+        out = {k: v for k, v in last_seen.items() if k != "reject_floors"}
+        floors = {s: f for s, f in self._floors.items() if f}
+        return {**out, "reject_floors": floors} if floors else out
 
     def _write_records(self, conn: Any) -> None:
         for row in self._rejects:
@@ -219,9 +297,10 @@ class Poller:
     def poll(self) -> int:
         """Returns number of NEW outbox rows written (0 on repeat or on upstream failure)."""
         cursor, last_seen = load_state(self.db, self.name)
-        self._begin_records()
+        self._begin_records(last_seen.get("reject_floors"))
         try:
             events, new_cursor, new_seen = self.build(cursor, last_seen)
+            new_seen = self.with_floors(new_seen)
         except UpstreamError as e:  # timeout / 429 / 5xx: keep state, try again next tick
             self.last_error = repr(e)
             return 0

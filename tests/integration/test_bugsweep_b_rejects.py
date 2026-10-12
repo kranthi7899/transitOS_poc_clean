@@ -65,7 +65,9 @@ def test_a_page_with_one_bad_item_emits_the_two_good_ones_and_one_reject(db, moc
     assert why in row["reason"] and DIGEST.match(row["digest"])
     assert row["first_seen"] == row["last_seen"] == mocks.clock.now().isoformat()
     cursor, _ = load_state(db, p.name)
-    assert cursor == mocks.c("telematics").get("/faults/feed", headers=H).json()["next_cursor"]   # moved past it
+    # fix round N1 b (A166), deliberately changed: the cursor waits at the page the open reject came on (was: moved
+    # past it), so the item is read again until it is corrected
+    assert cursor is None
     st = p.status()
     assert st["last_error"] is None and st["rejects"]["open"] == 1 and why in st["rejects"]["reasons"][0]
     assert {good1["eventId"], good2["eventId"]} == {r["vendor_event_id"] for r in
@@ -106,11 +108,17 @@ def _store(mocks):
     return mocks.apps["maintenance"].state.ctx.store
 
 
-def test_maintenance_one_zone_less_record_with_the_flag_off_is_rejected_the_rest_emitted(db, mocks):
+# Fix round N1 (A165) deliberately changed the bad record in the three maintenance tests below: a zone-less time with
+# the flag off is now configuration (the poll holds, test_step4_fix_f1), so the per-record fault is a malformed time.
+BAD = "not a time"
+
+
+def test_maintenance_one_malformed_record_is_rejected_the_rest_emitted(db, mocks):
     w1, w2, w3 = _three_work_orders(mocks)
     st = _store(mocks)
     doc = st.get(AG, "wo", w2["id"])
-    doc["opened_at"] = doc["opened_at"].rstrip("Z")                   # this record alone comes without a zone
+    good_opened = doc["opened_at"]
+    doc["opened_at"] = BAD                                            # this record alone carries a broken time
     st.put(AG, "wo", w2["id"], doc)
     p = MaintenancePoller(db, mocks.c("maintenance"), AG)
     p.clock = mocks.clock.now
@@ -118,7 +126,7 @@ def test_maintenance_one_zone_less_record_with_the_flag_off_is_rejected_the_rest
     assert sorted(e.data["wo_no"] for e in raw(db)) == sorted([w1["wo_no"], w3["wo_no"]])
     (row,) = list_rejects(db)
     assert (row["product"], row["native_id"], row["resolved"]) == ("maintenance", w2["id"], 0)
-    assert "zone" in row["reason"] and DIGEST.match(row["digest"])
+    assert BAD in row["reason"] and DIGEST.match(row["digest"])
 
     # still broken when seen again: no event, still one row, re-evaluated (last_seen moves)
     mocks.clock.advance(minutes=1)
@@ -128,7 +136,7 @@ def test_maintenance_one_zone_less_record_with_the_flag_off_is_rejected_the_rest
     # the product corrects the record (its update bumps updated_at): it flows normally, the row is resolved
     mocks.clock.advance(minutes=1)
     doc = st.get(AG, "wo", w2["id"])
-    doc.update(opened_at=doc["opened_at"] + "Z", updated_at=mocks.clock.iso())
+    doc.update(opened_at=good_opened, updated_at=mocks.clock.iso())
     st.put(AG, "wo", w2["id"], doc)
     assert p.poll() == 1
     assert sorted(e.data["wo_no"] for e in raw(db)) == sorted([w1["wo_no"], w2["wo_no"], w3["wo_no"]])
@@ -139,7 +147,7 @@ def test_maintenance_one_zone_less_record_with_the_flag_off_is_rejected_the_rest
 
 
 def test_maintenance_close_of_an_open_work_order_with_a_bad_close_time_waits_for_the_correction(db, mocks):
-    """The open was emitted earlier; the close comes with a zone-less time: no WorkOrderClosed, a reject row, and the
+    """The open was emitted earlier; the close comes with a malformed time: no WorkOrderClosed, a reject row, and the
     per-record seen state is NOT advanced, so the corrected close is still emitted (nothing lost)."""
     (w1, _, _) = _three_work_orders(mocks)
     p = MaintenancePoller(db, mocks.c("maintenance"), AG)
@@ -149,30 +157,45 @@ def test_maintenance_close_of_an_open_work_order_with_a_bad_close_time_waits_for
     mocks.c("maintenance").post(f"/sim/workorders/{w1['id']}/close", headers=H)
     st = _store(mocks)
     doc = st.get(AG, "wo", w1["id"])
-    doc["closed_at"] = doc["closed_at"].rstrip("Z")
+    good_closed = doc["closed_at"]
+    doc["closed_at"] = BAD
     st.put(AG, "wo", w1["id"], doc)
     assert p.poll() == 0
     assert [r["native_id"] for r in list_rejects(db)] == [w1["id"]]
     mocks.clock.advance(minutes=1)
-    doc.update(closed_at=doc["closed_at"] + "Z", updated_at=mocks.clock.iso())
+    doc.update(closed_at=good_closed, updated_at=mocks.clock.iso())
     st.put(AG, "wo", w1["id"], doc)
     assert p.poll() == 1
     assert [e.type for e in raw(db)].count("WorkOrderClosed") == 1 and list_rejects(db) == []
 
 
-def test_maintenance_cursor_moves_past_a_rejected_record(db, mocks):
+def test_maintenance_cursor_waits_at_an_open_reject(db, mocks):
+    """Fix round N1 b (A166), deliberately reversed (was: the cursor moves past the rejected record): the cursor never
+    passes the earliest open reject, so a correction that does not bump updated_at is still read."""
     m = mocks.c("maintenance")
-    m.post("/workorders", json={"asset": "1106", "opened_by": "human"}, headers=H)
-    mocks.clock.advance(minutes=5)
-    late = m.post("/workorders", json={"asset": "1107", "opened_by": "human"}, headers=H).json()   # newest, and bad
-    st = _store(mocks)
-    doc = st.get(AG, "wo", late["id"])
-    doc["opened_at"] = doc["opened_at"].rstrip("Z")
-    st.put(AG, "wo", late["id"], doc)
+    first = m.post("/workorders", json={"asset": "1106", "opened_by": "human"}, headers=H).json()
     p = MaintenancePoller(db, m, AG)
     assert p.poll() == 1
     _, seen = load_state(db, p.name)
-    assert seen["wo_cursor"] == late["updated_at"] and late["id"] not in seen["wo"]
+    assert seen["wo_cursor"] == first["updated_at"]                   # an instant, RFC 3339 UTC
+    mocks.clock.advance(minutes=5)
+    late = m.post("/workorders", json={"asset": "1107", "opened_by": "human"}, headers=H).json()   # newest, and bad
+    mocks.clock.advance(minutes=5)
+    newer = m.post("/workorders", json={"asset": "1108", "opened_by": "human"}, headers=H).json()
+    st = _store(mocks)
+    doc = st.get(AG, "wo", late["id"])
+    good_opened = doc["opened_at"]
+    doc["opened_at"] = BAD
+    st.put(AG, "wo", late["id"], doc)
+    assert p.poll() == 1                                              # `newer` flows
+    _, seen = load_state(db, p.name)
+    assert seen["wo_cursor"] == first["updated_at"] and late["id"] not in seen["wo"]   # held at the floor
+    assert seen["reject_floors"] == {"wo": {f"wo:{late['id']}": first["updated_at"]}}
+    doc["opened_at"] = good_opened                                    # corrected in place, updated_at unchanged
+    st.put(AG, "wo", late["id"], doc)
+    assert p.poll() == 1 and list_rejects(db) == []
+    _, seen = load_state(db, p.name)
+    assert seen["wo_cursor"] == newer["updated_at"] and "reject_floors" not in seen
 
 
 def test_an_unknown_agency_timezone_still_holds_the_whole_poll(db, mocks):
@@ -214,19 +237,24 @@ def test_rejects_do_not_touch_the_ordinary_path(db, mocks):
 
 # ------------------------------------------------------------------ the integrated system: status + panel
 def test_system_exposes_rejects_on_the_poller_status_and_in_the_panel():
-    """End to end (the F1 reviewer repro): the products send zone-less local time, the agency flag is off. Every such
-    maintenance record is rejected with sim seen times; the panel lists them (JSON and the unresolved page)."""
+    """End to end: the maintenance product's per-field utc_offset disagrees with the agency zone on every record (a
+    per-record fault; fix round N1 deliberately replaced the flag-off repro, which now holds the poll). Every such
+    record is rejected with sim seen times; the panel lists them (JSON and the unresolved page)."""
     from transitos.integration.world import make_world
     from transitos.verification.scenarios import BY_ID
+
+    from .test_bugsweep_b2_watch import TamperOffsets
     w = make_world()
     w.apply(BY_ID["local_time_normalised"])
-    w.system.registry_settings["agency-a"]["local_time"] = False
+    proxy = TamperOffsets(w.system.pollers[0].client)
+    proxy.bad.add("*")
+    w.system.pollers[0].client = proxy
     w.advance_world_to("12:00")
     st = w.system.pollers[0].status()
     assert st["last_error"] is None and st["rejects"]["open"] >= 1
     items = w.system.panel_client.get("/poll-rejects", params={"agency": "agency-a"}).json()
     assert len(items) == st["rejects"]["open"] and {i["product"] for i in items} == {"maintenance"}
-    assert all(i["first_seen"] and "zone" in i["reason"] for i in items)
+    assert all(i["first_seen"] and "disagree" in i["reason"] for i in items)
     page = w.system.panel_client.get("/ui/unresolved").text
     assert "Unreadable product records" in page and items[0]["native_id"] in page
     assert w.system.panel_client.get("/poll-rejects", params={"agency": "agency-zz"}).json() == []

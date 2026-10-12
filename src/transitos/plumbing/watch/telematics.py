@@ -128,14 +128,14 @@ class TelematicsBackfillPoller(Poller):
         db.script(SEEN_SCHEMA)
 
     def poll(self) -> int:
-        cursor, _ = load_state(self.db, self.name)
+        cursor, seen = load_state(self.db, self.name)
         try:
             data = self.get("/faults/feed", cursor=cursor)
         except UpstreamError as e:
             self.last_error = repr(e)
             return 0
         self.last_error = None
-        self._begin_records()
+        self._begin_records(seen.get("reject_floors"))
         added = 0
         with self.db.tx() as c:
             for item in data.get("items", []):
@@ -148,11 +148,14 @@ class TelematicsBackfillPoller(Poller):
                 except ValueError as e:
                     # bug sweep B (F7-R4, A155): an unreadable item (zone-less time, implausible epoch) is rejected on
                     # its own: never emitted with a guessed time, kept in poll_rejects, the rest of the page goes on
-                    self.reject(rk, item.get("eventId") if isinstance(item, dict) else None, item, e)
+                    # fix round N1 b (A166): the feed cursor waits at the page this item came on until it is read
+                    self.reject(rk, item.get("eventId") if isinstance(item, dict) else None, item, e,
+                                stream="feed", floor=cursor)
                     continue
                 self.accept(rk)
             self._write_records(c)
             if self.before_commit:
                 self.before_commit()
-            save_state(c, self.name, data.get("next_cursor") or cursor, {})
+            nxt = self.capped("feed", data.get("next_cursor") or cursor, order=lambda v: int(v))
+            save_state(c, self.name, nxt, self.with_floors({}))
         return added

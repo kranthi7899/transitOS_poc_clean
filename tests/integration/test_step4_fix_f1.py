@@ -2,10 +2,10 @@
 adapters too (same rule as the read adapters' _zoned_dt): it never emits a naive CloudEvent.time that a later stage
 reads as UTC. And no event on events.raw or events.resolved is ever naive.
 
-Bug sweep B (F7-R4, A155) DELIBERATELY changed the expectation of the first, second and last tests here: the poll no
-longer HOLDS on such a record. That record is REJECTED (a poll_rejects row naming the zone problem, never emitted)
-and the rest of the page is emitted; last_error keeps its meaning (the poll itself failed or is held), so it stays
-None. An unknown agency TIMEZONE still holds the poll (test_step4_watch, A157)."""
+Bug sweep B (A155) changed the first, second and last tests here to "rejected, the rest emitted". The bug sweep B fix
+round (N1, A165) DELIBERATELY changed them BACK to the F1 expectation: a zone-less time with the flag off is
+CONFIGURATION (the whole product sends local time), so the poll HOLDS with last_error, nothing is rejected and
+nothing is lost once the flag is set (test_bugsweep_b2_watch). Per-record rejects remain for per-record faults only."""
 from __future__ import annotations
 
 import pytest
@@ -40,21 +40,20 @@ def raw(db):
 
 
 @pytest.mark.parametrize("reader", ["none", "flag_off"])
-def test_reviewer_repro_zone_less_maintenance_time_with_the_flag_off_is_rejected_not_emitted(db, mocks, reader):
+def test_reviewer_repro_zone_less_maintenance_time_with_the_flag_off_holds_the_poll(db, mocks, reader):
     m = mocks.c("maintenance")
     m.post("/sim/time-format", json={"local_tz": NY}, headers=H)          # the product sends local time ...
     p = MaintenancePoller(db, m, AG)
     if reader == "flag_off":                                              # ... the agency config does not say so
         p.read_time = payload_time_reader({"local_time": False, "timezone": NY})
-    wo = m.post("/workorders", json={"asset": "1106", "opened_by": "human"}, headers=H).json()
+    m.post("/workorders", json={"asset": "1106", "opened_by": "human"}, headers=H)
     assert p.poll() == 0
     assert raw(db) == []                                                  # never a naive (= UTC-guessed) event
-    # bug sweep B (A155): the record is rejected, not held: one reject row, last_error untouched
-    (row,) = list_rejects(db)
-    assert row["native_id"] == wo["id"] and "zone" in row["reason"] and p.last_error is None
+    # fix round N1 (A165): configuration -> held with the reason, no reject row
+    assert "zone" in (p.last_error or "") and list_rejects(db, include_resolved=True) == []
 
 
-def test_scheduling_and_workforce_pollers_reject_a_zone_less_change_time_and_emit_the_rest(db, mocks):
+def test_scheduling_and_workforce_pollers_hold_on_a_zone_less_change_time(db, mocks):
     st = mocks.apps["scheduling"].state.ctx.store
     wf = mocks.apps["workforce"].state.ctx.store
     st.put(AG, "changes", "zz", {"vehicle": "BUS-44", "status": "out_of_service", "changed_at": "2026-01-05T07:00:00",
@@ -65,12 +64,9 @@ def test_scheduling_and_workforce_pollers_reject_a_zone_less_change_time_and_emi
     wf.put(AG, "changes", "zzz", {"operator": "OP-311", "status": "unavailable", "changed_at": "2026-01-05T07:00:00Z"})
     for P, product in ((SchedulingPoller, "scheduling"), (WorkforcePoller, "workforce")):
         p = P(db, mocks.c(product), AG)
-        assert p.poll() == 1 and p.last_error is None, product           # the good change only
-        (row,) = list_rejects(db, poller=p.name)
-        assert row["native_id"] in ("BUS-44", "OP-310") and "zone" in row["reason"], product
-    evs = raw(db)
-    assert sorted(e.data.get("native_vehicle_id") or e.data["native_operator_id"] for e in evs) == ["BUS-45", "OP-311"]
-    assert all(e.time.tzinfo is not None for e in evs)
+        assert p.poll() == 0 and "zone" in (p.last_error or ""), product  # held (A165): configuration
+        assert list_rejects(db, poller=p.name, include_resolved=True) == [], product
+    assert raw(db) == []
 
 
 def test_the_default_utc_wire_is_unchanged(db, mocks):
@@ -98,7 +94,7 @@ def test_no_event_on_either_bus_topic_is_naive(sid):
 
 def test_products_on_local_time_with_the_agency_flag_off_never_reach_the_bus():
     """End to end: the products send zone-less local time, the agency's flag is off. Nothing from maintenance is
-    published with a guessed time; each such record is rejected with a clear reason (bug sweep B, A155)."""
+    published with a guessed time; the poll holds with a clear error (fix round N1, A165)."""
     sc = BY_ID["local_time_normalised"]
     w = make_world()
     w.apply(sc)
@@ -107,5 +103,4 @@ def test_products_on_local_time_with_the_agency_flag_off_never_reach_the_bus():
     maint = [e for _, _, e in w.system.bus.messages(TOPIC_RAW) if e.source.startswith("adapter/maintenance")]
     assert maint == []
     st = w.system.pollers[0].status()
-    assert st["last_error"] is None and st["rejects"]["open"] >= 1
-    assert all("zone" in r for r in st["rejects"]["reasons"])
+    assert "zone" in (st["last_error"] or "") and st["rejects"]["open"] == 0
