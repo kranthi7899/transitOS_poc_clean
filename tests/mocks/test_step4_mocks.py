@@ -148,9 +148,10 @@ def test_default_off_workforce_csv_and_telematics_unchanged(make):
 
 
 def test_local_time_knob_renders_zone_less_local_time_with_offsets(make, fallback_clock):
+    from fastapi.testclient import TestClient
+
     from transitos.mocks import maintenance
     from transitos.mocks.chaos import Chaos
-    from fastapi.testclient import TestClient
     c = TestClient(maintenance.create_app(fallback_clock, Chaos(), None))
     c.post("/sim/seed", headers=A)
     assert c.post("/sim/time-format", json=LOCAL, headers=A).status_code == 200

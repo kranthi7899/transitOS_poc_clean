@@ -116,7 +116,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
             "fault": {"spn": spn, "fmi": fmi,
                       "lamps": {"stop": bool(lamps.get("stop")), "warn": bool(lamps.get("warn")), "protect": bool(lamps.get("protect"))},
                       "occurrenceCount": count},
-            "time": clock.iso(),
+            "time": ctx.wire_time(a),   # RFC 3339 UTC; epoch milliseconds under the Step 4.2 knob (A110)
         }
 
     @app.post("/sim/webhook")
@@ -174,7 +174,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None, sender: Sende
         payload = {
             "eventId": f"evt-{n}", "vehicle": _payload_vehicle(veh),
             "dvir": {"defect_text": body.get("defect_text", ""), "reported_by_role": body.get("reported_by_role", "operator")},
-            "time": clock.iso(),
+            "time": ctx.wire_time(a),   # A110
         }
         emit(a, payload)
         return {"eventId": payload["eventId"]}

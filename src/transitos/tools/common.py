@@ -181,5 +181,5 @@ def to_utc(naive: str, tz: str, *, fold: int = 0, utc_offset: str | None = None,
 def epoch_ms_to_utc(ms: int) -> datetime:
     """Epoch milliseconds (telematics wire format under the local-time knob, A110) -> aware UTC datetime."""
     if isinstance(ms, bool) or not isinstance(ms, int):
-        raise ValueError(f"epoch milliseconds must be an integer, got {ms!r}")
+        raise ValueError(f"epoch milliseconds must be an integer, got {ms!r}")  # noqa: TRY004 - a bad payload value
     return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=ms)

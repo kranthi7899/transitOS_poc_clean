@@ -25,6 +25,7 @@ NEW_COLUMNS = COLUMNS[8:]
 # "not recorded" (Phase 10 F3: a blank cell is unknown, never "none held"; A129).
 LIST_COLUMNS = ("qualifications", "endorsements", "trained_vehicle_types", "training_valid_to")
 NONE_TOKEN = "none"
+TIME_COLUMNS = ("available_from", "available_to", "medical_valid_to", "last_duty_end", "duty_start_today")
 
 
 def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
@@ -64,6 +65,19 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
                 out[k] = f"{day}T{v}:00Z"
         return out
 
+    def local_csv(a: str, row: dict) -> dict:
+        """Phase 10 Step 4.2 (A108): under the agency's local-time knob the daily CSV export carries zone-less local
+        wall time (no offset column). Render-only; the JSON API keeps UTC. Off by default."""
+        if ctx.local_zone(a) is None:
+            return row
+        out = dict(row)
+        for k in TIME_COLUMNS:
+            out[k] = ctx.out_ts(a, row.get(k))
+        if isinstance(row.get("training_valid_to"), str) and row["training_valid_to"]:
+            parts = [p.partition("=") for p in row["training_valid_to"].split(";") if p]
+            out["training_valid_to"] = ";".join(f"{c}={ctx.out_ts(a, v)}" if s else c for c, s, v in parts)
+        return out
+
     def field_cfg(a: str) -> dict:
         return st.get(a, "config", "operator_fields") or {}
 
@@ -79,7 +93,7 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
         w = csv.DictWriter(buf, fieldnames=cols, lineterminator="\n", extrasaction="ignore")
         w.writeheader()
         for o in st.all(a, "operators"):
-            row = rendered(o)
+            row = local_csv(a, rendered(o))
             row["lift_trained"] = str(row["lift_trained"]).lower()
             row["on_extra_board"] = str(row["on_extra_board"]).lower()
             for c in LIST_COLUMNS:
