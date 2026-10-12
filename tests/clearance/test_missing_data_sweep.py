@@ -114,13 +114,30 @@ def facts_for(drop_profile: str | None, legacy: bool = False) -> Facts:
                            "workforce": native_profile("workforce", drop=wf_drop)})
 
 
-def judge(rule, block, vehicle, op, facts):
+def judge(rule, block, vehicle, op, facts, asset_status="ACTIVE"):
     """Through the planner's own path (R2-1): one block onto one spare, the block keeps its operator, so the
     operator rules see the vehicle type exactly as evaluate_option hands it over."""
     f = Facts(blocks={block.id: block}, vehicles={vehicle.id: vehicle}, operators={op.id: op},
-              ready_count=facts.ready_count, commitments=facts.commitments, profiles=facts.profiles)
+              ready_count=facts.ready_count, commitments=facts.commitments, profiles=facts.profiles,
+              asset_status={vehicle.id: "active"} if asset_status == "ACTIVE" else asset_status)
     items = safe_evaluate(Option((Assign(block.id, vehicle.id),)), f, POL, T0).items
     return [i for i in items if i.rule == rule]
+
+
+# S2 F4: judge() gives rows that do not care about the asset feed an active asset ("ACTIVE")
+
+
+@pytest.mark.parametrize("variant,feed", [("dropped (no asset-status feed)", None),
+                                          ("missing (no maintenance asset)", {}),
+                                          ("unreachable (maintenance did not answer)", {"veh-2": "unreachable"}),
+                                          ("blank status", {"veh-2": ""}),
+                                          ("unrecognised status", {"veh-2": "in_shop?"})])
+def test_asset_status_missing_is_unverifiable_never_pass_or_violation(variant, feed):
+    """S2 F4: 'maintenance asset status' as a dropped / blank input of the safety rule asset_active."""
+    assert judge("asset_active", base_block(), base_vehicle(), base_operator(), facts_for(None))[0].status == "pass"
+    got = judge("asset_active", base_block(), base_vehicle(), base_operator(), facts_for(None), asset_status=feed)
+    assert got and all((i.status, i.basis, i.requires_ack) == ("unverifiable", "unknown", True) for i in got), \
+        [i.model_dump() for i in got]
 
 
 def variants(case):

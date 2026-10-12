@@ -720,3 +720,37 @@
   given: {vehicle: {type: standard}, vehicle_unknown: [type]}
   rule: operator_training_expiry
   expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- S2 fix round F4 (Review Focus 5): the spare's maintenance asset must be active (safety class) ----------
+# `given.asset_status`: the maintenance status of the spare's asset (default active), `missing` = no maintenance
+# asset for the vehicle, `unreachable` = maintenance did not answer, `no_feed` = no asset-status read at all.
+- id: asset_retired_is_violation
+  source: "F4 ruling: retired = violation (option excluded, basis native); P Review Focus 5: never a spare"
+  given: {asset_status: retired}
+  rule: asset_active
+  expect: {status: violation, basis: native}
+- id: asset_retired_excludes_the_option
+  source: "F4 ruling: retired = violation (option excluded)"
+  given: {asset_status: retired}
+  rule: asset_active
+  expect: {excluded_single: true}
+- id: asset_active_is_pass
+  source: "F4 ruling: active = pass"
+  given: {asset_status: active}
+  rule: asset_active
+  expect: {status: pass, basis: native}
+- id: asset_maintenance_unreachable_is_unverifiable
+  source: "F4 ruling: status unknown (maintenance unreachable) = UNVERIFIABLE (requires_ack, basis unknown)"
+  given: {asset_status: unreachable}
+  rule: asset_active
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: asset_missing_from_maintenance_is_unverifiable
+  source: "F4 ruling: no maintenance asset for the vehicle = UNVERIFIABLE"
+  given: {asset_status: missing}
+  rule: asset_active
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: asset_no_feed_is_unverifiable
+  source: "F4 ruling: no feed = UNVERIFIABLE"
+  given: {asset_status: no_feed}
+  rule: asset_active
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}

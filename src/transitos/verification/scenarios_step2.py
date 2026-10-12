@@ -35,6 +35,7 @@ class Step2Tweaks(Step1Tweaks):
     tele_swap_h: float | None = None        # veh-1's gateway T-77 is replaced by T-90 at T0 + h
     maint_renumber_h: float | None = None   # veh-1's asset 1106 is renumbered M-1106 at T0 + h
     maint_retired: bool = False             # veh-1's maintenance asset is marked retired (stale record)
+    retired_spare: int | None = None        # veh-n is READY in scheduling but RETIRED in maintenance (fix round F4)
 
 
 def _iso(t: datetime) -> str:
@@ -48,6 +49,8 @@ def vehicle_identity(n: int, t: Any) -> dict[str, Any]:
     if g("identity", False):
         out.update(sched_vin=make_vin(synthetic_wmis()[0], "B4D0F", 2022, "Z", 4400 + n),
                    sched_plate=f"ZZ {n}KTR{200 + n}", sched_name=f"Bus {43 + n}")
+    if n == g("retired_spare"):
+        out["maint_status"] = "retired"
     if n != 1:
         return out
     if (h := g("tele_swap_h")) is not None:
@@ -113,4 +116,10 @@ STEP2_SCENARIOS: tuple[Scenario, ...] = (
     _s("retired_asset_blocks_wo", "veh-1's maintenance asset is marked retired: the maintenance product refuses the "
        "work order (409) -> nothing else is written, escalate", Outcome.ESCALATE_NO_SAFE_OPTION,
        (("deliver", 0), ("approve", "plan")), tweaks=Step2Tweaks(maint_retired=True), expect_wo_creates=0),
+    # fix round F4 (Review Focus 5). PLAN_VALID chosen: with three spares, veh-2 (the FIRST spare, the one a naive
+    # planner takes) is ready in scheduling but retired in maintenance; the plan must use an active spare and
+    # still leave min_spares. The only-spare case (escalate) is tests/integration/test_asset_status.py.
+    _s("retired_spare_never_proposed", "veh-2 is READY in scheduling but RETIRED in maintenance: it is never "
+       "proposed; the plan uses an active spare", Outcome.PLAN_VALID, _FULL,
+       tweaks=Step2Tweaks(spares=3, retired_spare=2), expect_wo_creates=1),
 )

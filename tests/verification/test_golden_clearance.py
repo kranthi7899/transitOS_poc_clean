@@ -93,7 +93,8 @@ def run_row(row):
         commitments = None if com is None else {
             k: [(T0 + timedelta(hours=s), T0 + timedelta(hours=e), bid) for s, e, bid in v] for k, v in com.items()}
         f = Facts(blocks=blocks, vehicles={v: vehicle(None, v) for v in o["spares"]}, operators=ops,
-                  ready_count=o["ready"], commitments=commitments, profiles=profiles(None, False))
+                  ready_count=o["ready"], commitments=commitments, profiles=profiles(None, False),
+                  asset_status={v: "active" for v in o["spares"]})   # S2 F4: rows that do not care: active
         opt = Option(tuple(Assign(a[0], a[1], a[2] if len(a) > 2 else None) for a in o["assign"]))
         c = safe_evaluate(opt, f, pol, T0)        # the entry point every caller uses (fails closed)
         return c.items, c
@@ -102,17 +103,28 @@ def run_row(row):
     op = operator(g.get("operator"), expires=g.get("expires"), window=g.get("operator_window_h"),
                   unknown=g.get("operator_unknown"))
     f = Facts(blocks={b.id: b}, vehicles={v.id: v}, operators={op.id: op}, ready_count=3, commitments={},
-              profiles=profiles(g.get("drop"), g.get("legacy")))
+              profiles=profiles(g.get("drop"), g.get("legacy")), asset_status=asset_feed(g.get("asset_status"), v.id))
     # the planner's own path: one block onto one spare, the block keeps its operator (R2-1: the operator rules
     # must see the vehicle type exactly as the planner hands it over, not as this driver would)
-    items = safe_evaluate(Option((Assign(b.id, v.id),)), f, pol, T0).items
-    return items, None
+    c = safe_evaluate(Option((Assign(b.id, v.id),)), f, pol, T0)
+    return c.items, c
+
+
+def asset_feed(status: str | None, vid: str) -> dict[str, str] | None:
+    """S2 F4 DSL: default active; `missing` = no entry for the vehicle; `no_feed` = no asset-status read."""
+    status = status or "active"
+    if status == "no_feed":
+        return None
+    return {} if status == "missing" else {vid: status}
 
 
 @pytest.mark.parametrize("row", ROWS, ids=[r["id"] for r in ROWS])
 def test_golden_table_matches_policy_text(row):
     items, c = run_row(row)
     exp = row["expect"]
+    if "excluded_single" in exp:
+        assert c.excluded == exp["excluded_single"], [i.model_dump() for i in c.items]
+        return
     if "excluded" in exp:
         assert c is not None and c.excluded == exp["excluded"], [i.model_dump() for i in c.items]
         return
