@@ -184,9 +184,12 @@ class SchedulingWriter(_Base):
             if r.status != "ok":  # cannot verify -> cannot act (partial counts: conflicts unchecked)
                 raise ProductUnavailable(r.product or "scheduling", f"cannot verify hard limits: {r.note}")
         assert block.value and veh.value and ready.value is not None and sched.value is not None
+        # S2 fix round F4: the spare's maintenance asset status, read live (a KNOWN retired asset blocks; an
+        # unknown one was the approver's to acknowledge)
+        assets = MaintenanceReader(self.deps).asset_statuses(agency, [to_vehicle_id]).value
         facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value}, operators={},
                       ready_count=len(ready.value), commitments=commitments_from_blocks(sched.value),
-                      profiles={"scheduling": self.reader.capability_profile(agency)})
+                      profiles={"scheduling": self.reader.capability_profile(agency)}, asset_status=assets)
         c = safe_vehicle_move(block.value.id, veh.value.id, facts, policy)   # an exception blocks (fail closed)
         v = [i.detail or i.rule for i in c.violations if i.rule != "last_spare"]
         if to_vehicle_id not in {x.id for x in ready.value}:

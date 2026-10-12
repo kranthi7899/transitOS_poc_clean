@@ -236,8 +236,14 @@ class FakeWorld:
                           key=lambda b: (b.start, b.id))
         spares = [v for v in self.vehicles.values() if v.id != run.vehicle_id and v.status == "ready"
                   and not any(b.vehicle_id == v.id for b in self.blocks.values())]
-        probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=len(spares), profiles=self.profiles,
-                      commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id)
+        # S2 fix round F4: maintenance asset status (all active unless a Step 2 tweak retires one), and a KNOWN
+        # retired asset does not count towards min_spares (A146), as in the workflow
+        retired = getattr(self.tweaks, "retired_spare", None)
+        assets = {v.id: "retired" if v.id == f"veh-{retired}" else "active" for v in spares}
+        n_ready = sum(s != "retired" for s in assets.values())
+        probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=n_ready, profiles=self.profiles,
+                      commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id,
+                      asset_status=assets)
         viol: list[str] = []
         spare_ok: dict[str, list[str]] = {}
         op_ok: dict[str, list[str]] = {}
@@ -254,13 +260,14 @@ class FakeWorld:
                 viol.append(f"no_feasible_operator:{b.id}")
         need = count_distinct_spares(affected, spare_ok).n if affected else 0   # same function as the workflow
         if not viol and need is not None and \
-                last_spare_item(len(spares), need, self.policy.limits.min_spares).status == "violation":
+                last_spare_item(n_ready, need, self.policy.limits.min_spares).status == "violation":
             viol.append("last_spare")
         ranked = None
         if not viol:
             snap = Facts(blocks={b.id: b for b in affected}, vehicles={v.id: v for v in spares},
-                         operators=dict(self.operators), ready_count=len(spares), profiles=self.profiles,
-                         commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id)
+                         operators=dict(self.operators), ready_count=n_ready, profiles=self.profiles,
+                         commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id,
+                         asset_status=assets)
             ranked = rank_plans([], affected, spare_ok, {b.id: op_ok[b.id] for b in affected}, snap, self.policy, self.now)
             if not ranked.options:
                 viol.append("no_safe_option")

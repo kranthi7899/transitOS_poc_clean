@@ -144,7 +144,8 @@ STATUSES = ("pass", "warn", "unverifiable", "not_evaluated", "violation")
 BASES = ("native", "derived", "assumed", "unknown")
 SAFETY = ("vehicle_seats", "vehicle_wheelchair", "vehicle_lift", "operator_hours_day", "operator_licence_class",
           "operator_endorsement", "operator_vehicle_training", "operator_lift_training", "operator_training_expiry",
-          "operator_qualification", "operator_availability", "operator_medical", "last_spare")
+          "operator_qualification", "operator_availability", "operator_medical", "last_spare",
+          "asset_active")   # S2 fix round F4: safety class
 OPTIONAL = ("operator_rest", "operator_spread")
 _KNOWN = (("pass", "native"), ("violation", "native"))
 _UNV = (("unverifiable", "unknown"),)

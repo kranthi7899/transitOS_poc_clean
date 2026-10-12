@@ -42,7 +42,8 @@ def opr(id="op-1", **kw) -> Operator:
 
 
 def facts(blocks=(), vehicles=(), operators=(), ready_count=3, commitments=None, drop_workforce=(),
-          drop_sched=(), no_workforce_profile=False, legacy=False) -> Facts:
+          drop_sched=(), no_workforce_profile=False, legacy=False, asset_status="ACTIVE") -> Facts:
+    asset_status = _all_active() if asset_status == "ACTIVE" else asset_status
     profs = {"scheduling": native_profile("scheduling", drop=drop_sched)}
     if not no_workforce_profile:
         drop = tuple(drop_workforce)
@@ -52,7 +53,19 @@ def facts(blocks=(), vehicles=(), operators=(), ready_count=3, commitments=None,
     return Facts(blocks={b.id: b for b in blocks}, vehicles={v.id: v for v in vehicles},
                  operators={o.id: o for o in operators}, ready_count=ready_count,
                  commitments={} if commitments is None else commitments, profiles=profs,
-                 trigger_vehicle_id="veh-1")
+                 trigger_vehicle_id="veh-1",
+                 asset_status=asset_status)   # S2 F4: the default sees every vehicle's asset as active
+
+
+class _AllActive(dict):
+    """S2 F4: an asset-status feed in which every vehicle's maintenance asset is active (tests that do not care)."""
+
+    def get(self, key, default=None):
+        return "active"
+
+
+def _all_active():
+    return _AllActive()
 
 
 POL = AgencyPolicy(agency="a")
