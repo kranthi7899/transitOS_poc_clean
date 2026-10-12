@@ -1,6 +1,8 @@
-"""Shared adapter machinery. Every poll writes cursor + last-seen + outbox rows in ONE DB transaction."""
+"""Shared adapter machinery. Every poll writes cursor + last-seen + outbox rows + record rejects in ONE DB
+transaction."""
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from datetime import datetime
@@ -9,6 +11,7 @@ from typing import Any
 import httpx
 
 from transitos.contracts.envelope import CloudEvent
+from transitos.tools.common import UnknownTimezone
 
 from .. import outbox
 from ..db import Db
@@ -19,6 +22,51 @@ CREATE TABLE IF NOT EXISTS adapter_state(
 """
 
 Emitted = tuple[CloudEvent, str]  # (event, partition key)
+
+# Bug sweep B (F7-R4, A155): per-record isolation. One product record whose time cannot be read is not emitted, not
+# silently dropped and does not hold the other records: it is kept here, one row per (poller, record), until the
+# product sends it again readable (then the row is marked resolved). Portable SQL (SQLite and Postgres, plumbing.pg).
+# first_seen / last_seen / resolved_at are SIM time from the poller's clock; without a clock they stay NULL (unknown,
+# never the wall clock).
+REJECT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS poll_rejects(
+  poller TEXT NOT NULL, record_key TEXT NOT NULL, agency TEXT NOT NULL, product TEXT NOT NULL, native_id TEXT,
+  reason TEXT NOT NULL, digest TEXT NOT NULL, first_seen TEXT, last_seen TEXT,
+  resolved INTEGER NOT NULL DEFAULT 0, resolved_at TEXT,
+  PRIMARY KEY(poller, record_key));
+"""
+REJECT_COLS = ("poller", "record_key", "agency", "product", "native_id", "reason", "digest", "first_seen",
+               "last_seen", "resolved", "resolved_at")
+REJECT_UPSERT = (
+    "INSERT INTO poll_rejects(poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,"
+    "resolved,resolved_at) VALUES(?,?,?,?,?,?,?,?,?,0,NULL) ON CONFLICT(poller,record_key) DO UPDATE SET "
+    "native_id=excluded.native_id,reason=excluded.reason,digest=excluded.digest,last_seen=excluded.last_seen,"
+    "resolved=0,resolved_at=NULL")
+REJECT_RESOLVE = "UPDATE poll_rejects SET resolved=1,resolved_at=? WHERE poller=? AND record_key=? AND resolved=0"
+REJECT_OPEN_KEYS = "SELECT record_key FROM poll_rejects WHERE poller=? AND resolved=0"
+REJECT_LIST = f"SELECT {','.join(REJECT_COLS)} FROM poll_rejects WHERE resolved<=? ORDER BY poller,record_key"
+
+
+class RecordUnreadable(Exception):
+    """One product record whose time cannot be read (zone-less with the flag off, an offset that disagrees with the
+    agency zone, an implausible epoch): rejected, never emitted with a guessed time (A155)."""
+
+
+def digest(doc: Any) -> str:
+    """A short digest of the record as the product sent it (tells a corrected record from the same bad one)."""
+    return hashlib.sha1(json.dumps(doc, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+def ensure_reject_schema(db: Any) -> None:
+    db.script(REJECT_SCHEMA)
+
+
+def list_rejects(conn_or_db: Any, poller: str | None = None, agency: str | None = None,
+                 include_resolved: bool = False) -> list[dict]:
+    """Reject rows (open ones only unless include_resolved), ordered by poller and record."""
+    rows = conn_or_db.execute(REJECT_LIST, (1 if include_resolved else 0,)).fetchall()
+    out = [{k: r[k] for k in REJECT_COLS} for r in rows]
+    return [r for r in out if poller in (None, r["poller"]) and agency in (None, r["agency"])]
 
 
 class UpstreamError(Exception):
@@ -94,8 +142,12 @@ class Poller:
         self.before_commit: Callable[[], None] | None = None  # test seam: crash mid-poll
         # Phase 10 Step 4.2 (A108): how to read a product time `doc[key]` (zone-less local -> UTC). None = as sent.
         self.read_time: Callable[[dict, str], datetime] | None = None
+        # bug sweep B (A155): the sim clock for the reject rows' seen times (System sets it); None = unknown
+        self.clock: Callable[[], datetime] | None = None
         db.script(STATE_SCHEMA)
+        ensure_reject_schema(db)
         outbox.ensure_schema(db)
+        self._begin_records()
 
     def get(self, path: str, **params: Any) -> Any:
         try:
@@ -108,12 +160,47 @@ class Poller:
         return r.json()
 
     def ts(self, doc: dict, key: str) -> str | datetime:
-        """The event time from a product record. A time that cannot be read (zone unknown, mixed formats) holds
-        the whole poll (UpstreamError: state kept, retried) rather than emitting an event with a guessed time."""
+        """The event time from a product record, never guessed. An unknown agency timezone is configuration, not a
+        record: it holds the whole poll (UpstreamError: state kept, retried; A108, A157). Any other unreadable time
+        rejects THIS record only (RecordUnreadable; A155)."""
         try:
             return zoned(doc[key]) if self.read_time is None else self.read_time(doc, key)
-        except ValueError as e:
+        except UnknownTimezone as e:
             raise UpstreamError(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
+        except ValueError as e:
+            raise RecordUnreadable(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
+
+    # ---- bug sweep B (F7-R4, A155): per-record rejects, written in the poll's own transaction -----------------
+    def _seen_at(self) -> str | None:
+        return self.clock().isoformat() if self.clock is not None else None
+
+    def _begin_records(self) -> None:
+        self._rejects: list[tuple] = []
+        self._resolved: list[str] = []
+        self._open = {r["record_key"] for r in self.db.execute(REJECT_OPEN_KEYS, (self.name,)).fetchall()}
+
+    def reject(self, record_key: str, native_id: Any, doc: Any, err: BaseException) -> None:
+        """This record is not emitted; it is kept in poll_rejects and re-evaluated whenever it is seen again."""
+        now = self._seen_at()
+        self._rejects.append((self.name, record_key, self.agency, self.product,
+                              None if native_id is None else str(native_id), str(err)[:300], digest(doc), now, now))
+
+    def accept(self, record_key: str) -> None:
+        """This record was read: a reject row it had is resolved."""
+        if record_key in self._open:
+            self._resolved.append(record_key)
+
+    def _write_records(self, conn: Any) -> None:
+        for row in self._rejects:
+            conn.execute(REJECT_UPSERT, row)
+        for key in self._resolved:
+            conn.execute(REJECT_RESOLVE, (self._seen_at(), self.name, key))
+
+    def status(self) -> dict:
+        """The poller's health: last_error (the poll itself failed or is held) and its open record rejects."""
+        rows = list_rejects(self.db, poller=self.name)
+        return {"name": self.name, "last_error": self.last_error,
+                "rejects": {"open": len(rows), "reasons": [r["reason"] for r in rows]}}
 
     def evidence(self, cache: dict, path: str, vin: str = "vin", plate: str = "plate", name: str = "name") -> dict:
         """Identity evidence for one record read from the product (cached for one poll). A failed read leaves the
@@ -132,6 +219,7 @@ class Poller:
     def poll(self) -> int:
         """Returns number of NEW outbox rows written (0 on repeat or on upstream failure)."""
         cursor, last_seen = load_state(self.db, self.name)
+        self._begin_records()
         try:
             events, new_cursor, new_seen = self.build(cursor, last_seen)
         except UpstreamError as e:  # timeout / 429 / 5xx: keep state, try again next tick
@@ -142,6 +230,7 @@ class Poller:
         with self.db.tx() as c:
             for ev, key in events:
                 added += outbox.add(c, ev, "events.raw", key)
+            self._write_records(c)
             if self.before_commit:
                 self.before_commit()
             save_state(c, self.name, new_cursor, new_seen)
