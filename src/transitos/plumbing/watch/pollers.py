@@ -74,7 +74,7 @@ class SchedulingPoller(Poller):
         for ch in self.get("/status-changes", since=cursor):
             out.append((make_event(
                 self.agency, self.product, ids.vstatus_id(self.agency, ch["vehicle"], ch["status"], ch["changed_at"]),
-                "VehicleStatusChanged", ch["changed_at"],
+                "VehicleStatusChanged", self.ts(ch, "changed_at"),
                 {"native_vehicle_id": ch["vehicle"], "status": ch["status"], "changed_by": ch.get("changed_by", ""),
                  **self.evidence(ident, f"/vehicles/{ch['vehicle']}")}),
                 raw_key(self.product, ch["vehicle"])))
@@ -94,7 +94,7 @@ class WorkforcePoller(Poller):
         for ch in self.get("/availability-changes", since=cursor):
             out.append((make_event(
                 self.agency, self.product, ids.operator_avail_id(self.agency, ch["operator"], ch["status"], ch["changed_at"]),
-                "OperatorAvailabilityChanged", ch["changed_at"],
+                "OperatorAvailabilityChanged", self.ts(ch, "changed_at"),
                 {"native_operator_id": ch["operator"], "status": ch["status"]}),
                 raw_key(self.product, ch["operator"])))
             new_cursor = _max(new_cursor, ch["changed_at"])

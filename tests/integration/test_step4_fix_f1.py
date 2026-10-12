@@ -8,7 +8,11 @@ import pytest
 from transitos.contracts.envelope import TOPIC_RAW, TOPIC_RESOLVED
 from transitos.integration.world import make_world
 from transitos.plumbing import Db, Relay, SqliteBus
-from transitos.plumbing.watch import MaintenancePoller, SchedulingPoller, WorkforcePoller
+from transitos.plumbing.watch import (
+    MaintenancePoller,
+    SchedulingPoller,
+    WorkforcePoller,
+)
 from transitos.tools.common import payload_time_reader
 from transitos.verification.runner import drive
 from transitos.verification.scenarios import BY_ID, SCENARIOS

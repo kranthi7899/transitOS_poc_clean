@@ -66,6 +66,7 @@ from transitos.plumbing.watch import (
     WebhookReceiver,
     WorkforcePoller,
 )
+from transitos.plumbing.watch.base import zoned
 from transitos.tools.common import payload_time_reader
 from transitos.tools.idem_store import IdemStore
 from transitos.tools.policy import CONFIG_DIR as TOOLS_CONFIG_DIR
@@ -219,9 +220,10 @@ class System:
 
     def _maintenance_time(self, doc: dict, key: str) -> Any:
         """The maintenance poller's time reader, from the agency's live registry settings: as sent (default) or
-        zone-less local time in the agency timezone (A108). Raises ValueError when it cannot be read."""
+        zone-less local time in the agency timezone (A108). Raises ValueError when it cannot be read, including a
+        zone-less value while the agency's local_time flag is off (fix round F1: never read as UTC)."""
         read = payload_time_reader(self.registry.settings(self.agency))
-        return doc[key] if read is None else read(doc, key)
+        return zoned(doc[key]) if read is None else read(doc, key)
 
     def kafka_namespace(self) -> str:
         env = os.environ.get("TRANSITOS_KAFKA_NAMESPACE")
