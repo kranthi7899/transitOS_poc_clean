@@ -1,4 +1,4 @@
-.PHONY: setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
+.PHONY: llm-spend llm-smoke llm-report setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
 setup:
 	uv sync
 test:
@@ -70,3 +70,14 @@ verify-postgres:
 	$(PG_ENV) TRANSITOS_PG_ADMIN=1 uv run --extra postgres pytest -q
 	$(PG_ENV) uv run --extra postgres python -m transitos.verification.report --world transitos.integration.world:make_world --out verification-report-postgres.json
 	scripts/postgres.sh purge
+
+# ---- Claude Haiku as the reasoner (optional; owner cap: never above $10, default $3; see docs/LLM.md) ----
+# The key comes from ANTHROPIC_API_KEY or the git-ignored .env.local. Nothing here runs in `make verify`.
+llm-spend:
+	uv run python -m transitos.workflow.reasoning_anthropic spend
+# 2 live checks, a few thousandths of a dollar
+llm-smoke:
+	TRANSITOS_LIVE_LLM=1 uv run --extra llm pytest -q -m llm_live tests/llm
+# the whole scenario report with Haiku as the reasoner (about 50 calls, a few cents)
+llm-report:
+	TRANSITOS_REASONER=anthropic uv run --extra llm python -m transitos.verification.report --world transitos.integration.world:make_world --out verification-report-llm.json

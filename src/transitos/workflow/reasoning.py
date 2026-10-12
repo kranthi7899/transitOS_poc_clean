@@ -111,6 +111,17 @@ class StubReasoner:
         }
 
 
+def reasoner_from_env(env: dict | None = None, **kw):
+    """TRANSITOS_REASONER=stub (default) | anthropic. The stub costs nothing and never touches the network; the model
+    module (and the optional SDK) is imported only when it is asked for."""
+    import os
+    env = os.environ if env is None else env
+    if (env.get("TRANSITOS_REASONER") or "stub").strip().lower() == "stub":
+        return StubReasoner()
+    from transitos.workflow import reasoning_anthropic
+    return reasoning_anthropic.reasoner_from_env(env, **kw)
+
+
 def code_ranked_fallback(facts: dict) -> dict:
     """Always pull now; rank spares by depot match then id, operators by fewest hours then id."""
     now = _parse(facts["now"])

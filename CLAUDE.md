@@ -15,6 +15,6 @@ Simulated-products proof of concept of cross-product agentic orchestration (vehi
 4. Writes are idempotent (key = `<run_id>:<step>:<plan_version>`); every write has a compensation; rider alert is last.
 5. No node containing an interrupt performs a write.
 6. "Done" means `make verify` output pasted, not asserted.
-7. LLM access only through `workflow/reasoning.py` client interface; default is a stub plus code-ranked fallback (provider decision is open).
+7. LLM access only through `workflow/reasoning.py` client interface; default is a stub plus code-ranked fallback; the optional model is Claude Haiku only, via `workflow/reasoning_anthropic.py` (see `docs/LLM.md`).
 8. Local profile = zero infra (SQLite + in-process bus). Kafka/Postgres compose profile is later; keep interfaces identical.
 9. Keep client names and client documents out of this repo.

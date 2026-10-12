@@ -23,3 +23,10 @@ journal/
 .claude/
 CLAUDE.local.md
 docs/JOURNAL.md
+
+# Secrets and local model output: never committed
+.env
+.env.*
+!.env.example
+verification-report-llm.json
+

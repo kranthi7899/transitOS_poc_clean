@@ -77,7 +77,7 @@ from transitos.tools.registry import Registry
 from transitos.verification.model import AuditEvent
 from transitos.workflow.graph import Deps, build_graph, make_checkpointer, run_config
 from transitos.workflow.limits import HardLimits
-from transitos.workflow.reasoning import Reasoner, StubReasoner
+from transitos.workflow.reasoning import Reasoner, reasoner_from_env
 from transitos.workflow.starter import HandleResult, handle_event
 from transitos.workflow.timers import expire_approvals
 
@@ -151,7 +151,7 @@ class System:
         self.bus_kind = bus_kind(bus)
         self.db_kind = db_kind(db)
         self.config_dir = INTEGRATION_CONFIG if (INTEGRATION_CONFIG / f"{agency}.yaml").exists() else TOOLS_CONFIG_DIR
-        self.reasoner = reasoner or StubReasoner()
+        self.reasoner = reasoner or reasoner_from_env()   # stub unless TRANSITOS_REASONER=anthropic
         self.policy_patch: dict[str, Any] = {}   # scenario overrides (e.g. vehicle_fit), merged into policy()
         # Phase 10 Step 4: registry settings overrides per agency (local_time, timezone, maintenance.mode), read live
         self.registry_settings: dict[str, dict] = {agency: {}}

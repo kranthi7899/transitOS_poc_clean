@@ -121,6 +121,13 @@ The same interfaces run in three profiles:
 
 Run `make kafka-down` / `make postgres-down` when finished. Project paths containing a space are handled by `scripts/kafka.sh`, because Kafka's own scripts do not quote paths.
 
+## Optional: Claude Haiku as the reasoner
+
+The reasoning step can use **Claude Haiku** instead of the stub (off by default; `make verify` never calls it). It picks
+among options the hard rules already allow and explains the choice; every answer is re-checked and any failure falls
+back to the code-ranked plan. A hard spend cap (default $3, never above $10) is checked before every call. See
+[docs/LLM.md](docs/LLM.md).
+
 ## Verification
 
 Track F runs 49 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure). Scenarios that depend on product lag or wire formats are marked real-world-only and skipped on the stand-in world instead of faking agreement. Two scenarios are recorded as **known gaps**, not clean passes (the orchestrator cannot know a fault has cleared).
