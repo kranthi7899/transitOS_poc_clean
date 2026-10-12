@@ -68,7 +68,9 @@ def C(*scores):
     ((0.95, 0.8501), "AMBIGUOUS"),
     ((0.9, 0.9), "AMBIGUOUS"),
     ((0.85, 0.8), "AMBIGUOUS"),             # two within 0.1, both below the threshold
-    ((0.85, 0.7), "NO_MATCH"),              # not lone, below threshold, clear lead: "otherwise"
+    ((0.85, 0.7), "AMBIGUOUS"),             # F5 (A140): any candidate without a MATCH goes to a human
+    ((0.89999999999,), "AMBIGUOUS"),        # F10: never rounded up into a MATCH
+    ((0.95, 0.85000000001), "AMBIGUOUS"),   # F10: lead just under 0.1
     ((0.95, 0.6, 0.6), "MATCH"),
 ])
 def test_decide_table(scores, outcome):
@@ -114,7 +116,7 @@ def test_rule_plate_partial_is_not_a_plate_match():
 
 
 # ---- rule 3: fleet number ---------------------------------------------------------------------------------
-@pytest.mark.parametrize("name", ["Bus 44", "BUS-044", "bus 44", "BUS-44 ", "Bus O44", "BUSO44", "bus_044"])
+@pytest.mark.parametrize("name", ["Bus 44", "BUS-044", "bus 44", "BUS-44 ", "bus_044", "BUS 0044"])
 def test_rule_fleet_number_dirty_names_resolve_to_the_same_vehicle(name):
     """Review Focus 2: every dirty spelling resolves to veh-44, never a second vehicle."""
     r = res(name=name)
@@ -124,7 +126,24 @@ def test_rule_fleet_number_dirty_names_resolve_to_the_same_vehicle(name):
 
 def test_rule_fleet_number_dirty_native_id_in_the_same_product():
     assert top(res(product="scheduling", native="bus-044")) == ("MATCH", "veh-44", 0.9)
-    assert top(res(product="maintenance", native="01106")) == ("MATCH", "veh-44", 0.9)
+    # F3: an asset id is not a fleet number: "01106" is not "1106" (zeros kept), so a human decides
+    assert res(product="maintenance", native="01106").outcome == "AMBIGUOUS"
+    assert top(res(product="maintenance", native="1106 ")) == ("MATCH", "veh-44", 0.9)
+
+
+@pytest.mark.parametrize("product,event,row", [
+    ("scheduling", "TRO-101", "TR-101"), ("scheduling", "BO-12", "B-12"), ("scheduling", "BUS-I2", "BUS-12"),
+    ("telematics", "SN-0012", "SN-12"), ("telematics", "SN-12", "SN-0012"), ("maintenance", "A-O12", "A-012"),
+])
+def test_folded_or_padded_lookalikes_never_auto_match(product, event, row):
+    """F3: a prefix letter O, an I, or a zero-padded device serial never makes two ids equal."""
+    rows = [CrosswalkEntry(agency=AG, product=product, native_id=row, entity="vehicle", canonical_id="veh-9")]
+    assert res(product=product, native=event, rows=rows).outcome != "MATCH"
+
+
+def test_a_prefix_o_in_a_name_is_not_the_number():
+    r = res(name="Bus O44")
+    assert r.outcome == "AMBIGUOUS" and r.candidates[0].score < 0.9
 
 
 def test_rule_fleet_number_other_products_native_ids_are_not_fleet_numbers():
@@ -197,11 +216,11 @@ def test_operator_rows_are_never_vehicle_candidates():
 
 # ---- validity (Review Focus 4): valid_from inclusive, valid_to exclusive ---------------------------------
 def test_dirty_old_unit_id_before_the_swap_resolves_to_the_old_vehicle():
-    assert top(res(native="T-077", at=S - timedelta(seconds=1))) == ("MATCH", "veh-44", 0.9)
+    assert top(res(native="t-77 ", at=S - timedelta(seconds=1))) == ("MATCH", "veh-44", 0.9)
 
 
 def test_old_unit_exactly_at_valid_to_is_not_the_old_vehicle():
-    assert res(native="T-077", at=S).outcome == "NO_MATCH"
+    assert res(native="t-77 ", at=S).outcome == "NO_MATCH"
 
 
 def test_new_unit_exactly_at_valid_from_is_the_new_vehicle():
@@ -224,7 +243,7 @@ def test_rows_outside_their_validity_are_not_evidence():
 
 
 def test_naive_timestamps_are_read_as_utc():
-    assert top(res(native="T-077", at=(S - timedelta(seconds=1)).replace(tzinfo=None))) == ("MATCH", "veh-44", 0.9)
+    assert top(res(native="t-77 ", at=(S - timedelta(seconds=1)).replace(tzinfo=None))) == ("MATCH", "veh-44", 0.9)
 
 
 # ---- determinism -----------------------------------------------------------------------------------------

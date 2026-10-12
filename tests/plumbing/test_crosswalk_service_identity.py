@@ -146,3 +146,73 @@ def test_operator_events_stay_exact_only(bus, svc, xw):
                    agencyid=AG, data={"native_operator_id": "OP-0310", "status": "sick"})
     ok, failed = run(bus, svc, e)
     assert not ok and failed["o"].failurereason == "unresolved operator workforce:OP-0310"
+
+
+# ---------------------------------------------------------------- fix round (R2)
+def test_f1_fast_path_with_contradicting_vin_and_plate_is_parked_as_ambiguous(bus, svc, xw):
+    """F1: T-90 maps to veh-1, but the event carries veh-2's VIN and plate: a human decides, never veh-1."""
+    seed(xw)
+    ok, failed = run(bus, svc, fault("c", "T-90", S + timedelta(hours=1), native_vin=VIN_2,
+                                     native_plate="ZZ 5ABC103", native_name="Bus 45"))
+    assert not ok and failed["c"].failurereason.startswith("ambiguous")
+    [u] = xw.unresolved(AG)
+    assert sorted(c["canonical_id"] for c in u["resolution"]["candidates"]) == ["veh-1", "veh-2"]
+    assert any("vin" in " ".join(c["evidence"]) for c in u["resolution"]["candidates"])
+
+
+def test_f1_a_contradicting_vin_alone_is_enough(bus, svc, xw):
+    seed(xw)
+    ok, failed = run(bus, svc, fault("v", "T-90", S + timedelta(hours=1), native_vin=VIN_2))
+    assert not ok and failed["v"].failurereason.startswith("ambiguous")
+
+
+def test_f1_agreeing_missing_dirty_or_name_only_evidence_keeps_the_fast_path(bus, svc, xw):
+    seed(xw)
+    bad_vin2 = VIN_2[:8] + ("1" if VIN_2[8] != "1" else "2") + VIN_2[9:]
+    at = S + timedelta(hours=1)
+    ok, failed = run(bus, svc, fault("agree", "T-90", at, native_vin=VIN_1, native_plate="zz 4ktr219"),
+                     fault("none", "T-90", at, native_vin="", native_plate=" "),
+                     fault("dirty", "T-90", at, native_vin=bad_vin2),
+                     fault("name", "T-90", at, native_name="Bus 45"))   # a stale name never overrides the id
+    assert {k: e.canonicalid for k, e in ok.items()} == {"agree": "veh-1", "none": "veh-1", "dirty": "veh-1",
+                                                         "name": "veh-1"} and not failed
+
+
+def test_f8_overlapping_valid_rows_for_one_native_id_are_ambiguous_in_the_service(bus, svc, xw):
+    """m9: two rows for T-77 valid at the same time: never 'the first vehicle'."""
+    xw.resolve(CrosswalkEntry(agency=AG, product="telematics", native_id="T-77", entity="vehicle",
+                              canonical_id="veh-1"))
+    xw.resolve(CrosswalkEntry(agency=AG, product="telematics", native_id="T-77", entity="vehicle",
+                              canonical_id="veh-5", valid_from=S))
+    ok, failed = run(bus, svc, fault("o", "T-77", S + timedelta(hours=1)))
+    assert not ok and "veh-1" in failed["o"].failurereason and "veh-5" in failed["o"].failurereason
+    assert failed["o"].failurereason.startswith("ambiguous")
+
+
+def test_f5_f8_candidates_without_a_match_are_kept_in_failed_and_stored(bus, svc, xw):
+    """F5: top 0.73 with a 0.6 runner-up (lead > 0.1, below 0.9) is AMBIGUOUS, not NO_MATCH; m15: events.failed
+    and the stored resolution keep every candidate with its evidence."""
+    for n, name in ((1, "Bus 44"), (2, "Bus 47X")):
+        xw.resolve(CrosswalkEntry(agency=AG, product="scheduling", native_id=f"B-{n}", entity="vehicle",
+                                  canonical_id=f"veh-{n}", display_name=name))
+    ok, failed = run(bus, svc, fault("f", "T-400", S, native_name="Bus 4"))
+    reason = failed["f"].failurereason
+    assert not ok and reason.startswith("ambiguous") and "veh-1" in reason and "veh-2" in reason
+    [u] = xw.unresolved(AG)
+    cands = u["resolution"]["candidates"]
+    assert [c["canonical_id"] for c in cands] == ["veh-1", "veh-2"] and all(c["evidence"] for c in cands)
+
+
+def test_f2_a_pick_never_rewrites_history(bus, svc, xw):
+    """F2 repro: the old unit's event after the swap parks; the human picks veh-2. Events dated before the swap
+    still belong to veh-1; events after the parked event's time belong to veh-2."""
+    seed(xw)
+    run(bus, svc, fault("late", "T-77", S + timedelta(hours=1)))
+    assert svc.apply_mapping(CrosswalkEntry(agency=AG, product="telematics", native_id="T-77", entity="vehicle",
+                                            canonical_id="veh-2")) == 1
+    ok, _ = run(bus, svc, fault("old", "T-77", S - timedelta(days=2)), fault("new", "T-77", S + timedelta(hours=2)))
+    assert ok["late"].canonicalid == "veh-2" and ok["new"].canonicalid == "veh-2"
+    assert ok["old"].canonicalid == "veh-1"
+    rows = sorted((r.valid_from or S - timedelta(days=99), r.canonical_id, r.valid_to)
+                  for r in xw.rows(AG) if r.native_id == "T-77")
+    assert rows == [(S - timedelta(days=99), "veh-1", S), (S + timedelta(hours=1), "veh-2", None)]
