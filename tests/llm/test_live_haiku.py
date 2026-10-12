@@ -22,23 +22,30 @@ def live_env(monkeypatch, tmp_path):
     if not _key_available():
         pytest.skip("no ANTHROPIC_API_KEY (environment or .env.local)")
     monkeypatch.setenv("TRANSITOS_REASONER", "anthropic")
-    monkeypatch.setenv("TRANSITOS_LLM_SPEND_FILE", str(tmp_path / "spend.json"))
-    monkeypatch.setenv("TRANSITOS_LLM_CAP_USD", "0.25")           # this test can never spend more than a quarter
-    return tmp_path / "spend.json"
+    monkeypatch.delenv("TRANSITOS_LLM_SPEND_FILE", raising=False)   # the REAL persistent total: every cent is counted
+    monkeypatch.setenv("TRANSITOS_LLM_CAP_USD", "1.0")              # and these checks stop at $1 cumulative, well under the cap
 
 
 def test_one_real_call_returns_a_proposal_the_validator_accepts(live_env):
-    from test_reasoning_anthropic import small_facts
-
     from transitos.workflow.reasoning import reasoner_from_env, validate_output
-    facts = small_facts()
-    facts.pop("clearance"), facts.pop("clearance_policy")
+    facts = {
+        "run_id": "r1", "trigger_type": "VehicleFaultDetected", "now": "2026-10-10T06:00:00+00:00",
+        "window_end": "2026-10-11T06:00:00+00:00", "min_spares": 1, "ready_count": 3,
+        "vehicle": {"id": "veh-1", "type": "standard", "status": "in_service"},
+        "blocks": [{"block_id": "B1", "vehicle_id": "veh-1", "start": "2026-10-10T07:00:00+00:00",
+                    "end": "2026-10-10T11:00:00+00:00", "start_depot": "north", "needs": {"seats": 20, "type": "standard"},
+                    "current_operator": "OP-1", "needs_operator": False,
+                    "spares": [{"id": "veh-2", "type": "standard", "depot": "north", "seats": 40, "status": "ready"},
+                               {"id": "veh-3", "type": "standard", "depot": "south", "seats": 40, "status": "ready"}],
+                    "operators": []}],
+        "previous_errors": [],
+    }
     r = reasoner_from_env()
     assert r.name == "claude-haiku-5-5"
     raw = r.propose(facts)
     out, errs = validate_output(raw, facts)
     assert out is not None and errs == [], (raw, errs)
-    assert r.budget.total_usd < 0.01                                # one small call costs a fraction of a cent
+    assert r.budget.total_usd < 0.5                                 # cumulative total across all runs, far below the cap
 
 
 def test_three_scenarios_pass_end_to_end_with_haiku_as_the_reasoner(live_env):
