@@ -243,7 +243,7 @@ class FakeWorld:
         n_ready = sum(s != "retired" for s in assets.values())
         probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=n_ready, profiles=self.profiles,
                       commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id,
-                      asset_status=assets)
+                      asset_status=assets, ready_unknown=0)   # every counted spare's status is known here (R5-2)
         viol: list[str] = []
         spare_ok: dict[str, list[str]] = {}
         op_ok: dict[str, list[str]] = {}
@@ -267,7 +267,7 @@ class FakeWorld:
             snap = Facts(blocks={b.id: b for b in affected}, vehicles={v.id: v for v in spares},
                          operators=dict(self.operators), ready_count=n_ready, profiles=self.profiles,
                          commitments=commitments_from_blocks(self.blocks.values()), trigger_vehicle_id=run.vehicle_id,
-                         asset_status=assets)
+                         asset_status=assets, ready_unknown=0)
             ranked = rank_plans([], affected, spare_ok, {b.id: op_ok[b.id] for b in affected}, snap, self.policy, self.now)
             if not ranked.options:
                 viol.append("no_safe_option")

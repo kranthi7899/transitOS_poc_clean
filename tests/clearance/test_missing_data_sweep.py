@@ -109,7 +109,7 @@ def contract_default(record: str, field: str):
 
 def facts_for(drop_profile: str | None, legacy: bool = False) -> Facts:
     wf_drop = (LEGACY_DROP if legacy else ()) + ((drop_profile,) if drop_profile else ())
-    return Facts(blocks={}, vehicles={}, operators={}, ready_count=3, commitments={},
+    return Facts(blocks={}, vehicles={}, operators={}, ready_count=3, commitments={}, ready_unknown=0,
                  profiles={"scheduling": native_profile("scheduling", drop=(drop_profile,) if drop_profile else ()),
                            "workforce": native_profile("workforce", drop=wf_drop)})
 
@@ -119,6 +119,7 @@ def judge(rule, block, vehicle, op, facts, asset_status="ACTIVE"):
     operator rules see the vehicle type exactly as evaluate_option hands it over."""
     f = Facts(blocks={block.id: block}, vehicles={vehicle.id: vehicle}, operators={op.id: op},
               ready_count=facts.ready_count, commitments=facts.commitments, profiles=facts.profiles,
+              ready_unknown=facts.ready_unknown,
               asset_status={vehicle.id: "active"} if asset_status == "ACTIVE" else asset_status)
     items = safe_evaluate(Option((Assign(block.id, vehicle.id),)), f, POL, T0).items
     return [i for i in items if i.rule == rule]
@@ -214,7 +215,7 @@ def _option_facts(**kw) -> tuple[Facts, Option]:
                end=T0 + timedelta(hours=10), start_depot="North", needs=b1.needs)
     f = Facts(blocks={"b1": b1, "b2": b2}, vehicles={"veh-2": base_vehicle()},
               operators={"op-1": kw.pop("op1", base_operator()), "op-2": base_operator(id="op-2")},
-              ready_count=kw.pop("ready", 3), commitments=kw.pop("commitments", {}),
+              ready_count=kw.pop("ready", 3), commitments=kw.pop("commitments", {}), ready_unknown=0,
               profiles={"scheduling": native_profile("scheduling"), "workforce": native_profile("workforce")})
     return f, Option((Assign("b1", "veh-2"), Assign("b2", "veh-2", "op-1")))
 
@@ -255,7 +256,7 @@ def test_f12_option_that_moves_an_operator_off_a_block_still_fails_closed_withou
                end=b1.end + timedelta(hours=1), start_depot="North", needs=b1.needs)
     f = Facts(blocks={"b1": b1, "b2": b2}, vehicles={"veh-2": base_vehicle(), "veh-3": base_vehicle(id="veh-3")},
               operators={"op-1": base_operator(), "op-2": base_operator(id="op-2"), "op-3": base_operator(id="op-3")},
-              ready_count=4, commitments=None,
+              ready_count=4, commitments=None, ready_unknown=0,
               profiles={"scheduling": native_profile("scheduling"), "workforce": native_profile("workforce")})
     opt = Option((Assign("b1", "veh-2", "op-3"), Assign("b2", "veh-3", "op-1")))
     got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == "double_booking"]
@@ -297,7 +298,7 @@ def _type_unknown(variant, value, **op):
     vehicle = base_vehicle() if variant == "dropped" else base_vehicle(type=value, unknown_fields=["type"])
     facts = facts_for("type" if variant == "dropped" else None)
     f = Facts(blocks={"b1": base_block()}, vehicles={vehicle.id: vehicle}, operators={"op-1": base_operator(**op)},
-              ready_count=3, commitments={}, profiles=facts.profiles)
+              ready_count=3, commitments={}, profiles=facts.profiles, ready_unknown=0)
     items = safe_evaluate(Option((Assign("b1", vehicle.id),)), f, POL, T0).items
     return {r: [(i.status, i.basis) for i in items if i.rule == r] for r in {i.rule for i in items}}
 
@@ -337,6 +338,6 @@ def test_type_unknown_endorsement_follows_the_configured_types_not_a_constant():
     vehicle = base_vehicle(type="bus", unknown_fields=["type"])
     f = Facts(blocks={"b1": base_block()}, vehicles={vehicle.id: vehicle},
               operators={"op-1": base_operator(endorsements=[])}, ready_count=3, commitments={},
-              profiles=facts_for(None).profiles, tables=mixed)
+              profiles=facts_for(None).profiles, tables=mixed, ready_unknown=0)
     items = safe_evaluate(Option((Assign("b1", vehicle.id),)), f, POL, T0).items
     assert [(i.status, i.basis) for i in items if i.rule == "operator_endorsement"] == [("unverifiable", "unknown")]

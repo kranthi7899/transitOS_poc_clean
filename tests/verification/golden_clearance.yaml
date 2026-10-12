@@ -841,3 +841,41 @@
            assign: [[b1, veh-2, op-3], [b2, veh-3, op-1]], commitments: null}
   rule: double_booking
   expect: {status: violation, basis: unknown}
+
+# ---- Bug sweep A2, R5-1 (A162): the schedule feed and the block data DISAGREE (or the feed's time is stale) ----------------
+# Written from A150 before re-reading the code: "a commitment is ignored only when the option re-plans that block and
+# puts a DIFFERENT resource of that kind on it ... a block that keeps its operator keeps every operator commitment.
+# Every other commitment counts." Here the option's own pairwise check cannot see the clash (it reads the block data),
+# so only the kept commitment can.
+- id: r5_feed_operator_on_a_kept_operator_block_is_double_booking
+  source: "A150: b2 keeps its operator, so the feed's op-9 on b2 is kept (block data says op-2); op-9 newly given the overlapping b1"
+  option: {blocks: [[b1, 1, 3, op-1, veh-1], [b2, 2, 3, op-2, veh-5]], spares: [veh-2, veh-3], ready: 4,
+           assign: [[b1, veh-2, op-9], [b2, veh-3]],
+           commitments: {"vehicle:veh-1": [[1, 4, b1]], "vehicle:veh-5": [[2, 5, b2]],
+                         "operator:op-1": [[1, 4, b1]], "operator:op-9": [[2, 5, b2]]}}
+  rule: double_booking
+  expect: {status: violation, basis: native}
+- id: r5_feed_operator_on_a_block_given_a_new_operator_is_replaced
+  source: "A150 (converse): b2 is given a NEW operator op-3, so the feed's op-9 on b2 is replaced"
+  option: {blocks: [[b1, 1, 3, op-1, veh-1], [b2, 2, 3, op-2, veh-5]], spares: [veh-2, veh-3], ready: 4,
+           assign: [[b1, veh-2, op-9], [b2, veh-3, op-3]],
+           commitments: {"vehicle:veh-1": [[1, 4, b1]], "vehicle:veh-5": [[2, 5, b2]],
+                         "operator:op-1": [[1, 4, b1]], "operator:op-9": [[2, 5, b2]]}}
+  rule: double_booking
+  expect: {status: pass, basis: native}
+- id: r5_stale_feed_time_with_the_same_spare_kept_is_double_booking
+  source: "A150: the option puts the SAME vehicle veh-2 on b2 that the feed already has there, so that commitment is kept; its (stale) time overlaps b1, which veh-2 also takes"
+  option: {blocks: [[b1, 1, 2, op-1, veh-1], [b2, 5, 2, op-2, veh-2]], spares: [veh-2], ready: 4,
+           assign: [[b1, veh-2], [b2, veh-2]],
+           commitments: {"vehicle:veh-1": [[1, 3, b1]], "vehicle:veh-2": [[1.5, 3, b2]],
+                         "operator:op-1": [[1, 3, b1]], "operator:op-2": [[5, 7, b2]]}}
+  rule: double_booking
+  expect: {status: violation, basis: native}
+- id: r5_stale_feed_time_with_a_different_spare_is_replaced
+  source: "A150 (converse): b2 gets a DIFFERENT vehicle veh-3, so veh-2's (stale) commitment on b2 is replaced"
+  option: {blocks: [[b1, 1, 2, op-1, veh-1], [b2, 5, 2, op-2, veh-2]], spares: [veh-2, veh-3], ready: 4,
+           assign: [[b1, veh-2], [b2, veh-3]],
+           commitments: {"vehicle:veh-1": [[1, 3, b1]], "vehicle:veh-2": [[1.5, 3, b2]],
+                         "operator:op-1": [[1, 3, b1]], "operator:op-2": [[5, 7, b2]]}}
+  rule: double_booking
+  expect: {status: pass, basis: native}

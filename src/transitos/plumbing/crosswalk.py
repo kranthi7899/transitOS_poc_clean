@@ -133,15 +133,22 @@ class SqliteCrosswalk:
 
     def candidates(self, agency: str, product: str, native_id: str,
                    at: datetime | None = None) -> list[CrosswalkEntry]:
-        """Rows for this exact native id valid at `at`; without `at`, the current (open-ended) rows."""
+        """Rows for this exact native id valid at `at`; `at` None = now on the store's clock (H1, A159); a store with
+        no clock (A147) keeps the old rule: the open-ended rows. Several vehicles may come back (a data conflict)."""
         rows = self._rows(agency, product, native_id)
+        at = self._at(at)
         if at is None:
             return [r for r in rows if r.valid_to is None]
         return [r for r in rows if valid_at(r, at)]
 
     def lookup(self, agency: str, product: str, native_id: str, at: datetime | None = None) -> str | None:
-        c = self.candidates(agency, product, native_id, at)
-        return c[0].canonical_id if c else None
+        """The ONE vehicle this native id names at `at` (now by default, H1). None when it names none, or more than
+        one (H2, A160: ambiguous, never a silent pick; the resolver's AMBIGUOUS covers events)."""
+        canon = {r.canonical_id for r in self.candidates(agency, product, native_id, at)}
+        return canon.pop() if len(canon) == 1 else None
+
+    def _at(self, at: datetime | None) -> datetime | None:
+        return at if at is not None or self.clock is None else self.clock()
 
     def all_ids(self, agency: str, canonical_id: str, at: datetime | None = None,
                 entities: tuple[str, ...] = VEHICLE_ENTITIES) -> dict[str, str]:
@@ -149,17 +156,29 @@ class SqliteCrosswalk:
         `entities` count (default: a vehicle's vehicle/asset rows; operators pass ("operator",)). `at` None = now on
         this store's clock; a store built without a clock keeps the pre-G3 rule (open-ended row first, else the
         latest one: only stores no System owns, i.e. tests and tools, A147). A product with no valid row is left out
-        (unknown), never filled from an ended or future-dated row. Several rows valid at once (a data conflict):
-        the latest-starting one, deterministic."""
+        (unknown), never filled from an ended or future-dated row. H2 (A160), with a time: a product is also left
+        out when the vehicle has more than one valid native id there, or when its one native id is valid for another
+        vehicle too (a data conflict is unknown, never the newest row)."""
         rows = self.db.execute(ALL_IDS_SQL, (agency, canonical_id)).fetchall()
         ens = [en for en in (_entry(r) for r in rows) if en.entity in entities]
-        if at is None and self.clock is not None:
-            at = self.clock()
-        if at is not None:
-            ens = [en for en in ens if valid_at(en, at)]
+        at = self._at(at)
         out: dict[str, str] = {}
-        for en in sorted(ens, key=_current_first):
-            out.setdefault(en.product, en.native_id)
+        if at is None:   # A147: no clock and no time, the pre-G3 rule
+            for en in sorted(ens, key=_current_first):
+                out.setdefault(en.product, en.native_id)
+            return out
+        natives: dict[str, set[str]] = {}
+        for en in ens:
+            if valid_at(en, at):
+                natives.setdefault(en.product, set()).add(en.native_id)
+        for product, ids in natives.items():
+            if len(ids) != 1:
+                continue                                        # several valid ids of one product: unknown
+            native = next(iter(ids))
+            holders = {r.canonical_id for r in self._rows(agency, product, native)
+                       if r.entity in entities and valid_at(r, at)}
+            if holders == {canonical_id}:                       # the id is valid for this vehicle only
+                out[product] = native
         return out
 
     # ------------------------------------------------------------------ parked events

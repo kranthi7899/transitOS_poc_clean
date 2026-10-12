@@ -320,6 +320,7 @@ class WorkforceWriter(_Base):
             raise HardLimit([f"operator_unknown: {operator_id} not in workforce export"])
         facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value},
                       operators={op.id: op}, ready_count=None, commitments=commitments_from_blocks(sched.value),
+                      ready_unknown=0,   # R5-2: no spare count in an operator re-check (ready_count None)
                       profiles={"workforce": profile, "scheduling": self.sched.capability_profile(agency)})
         items = guarded(f"operator {op.id} for block {block.value.id}", lambda: [  # an exception blocks (F4)
             *operator_items(block.value, op, known_vehicle_type(veh.value, facts), facts, policy),   # R2-1

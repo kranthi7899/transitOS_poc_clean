@@ -103,7 +103,10 @@ def test_a_v1_table_is_migrated_in_place(tmp_path):
     xw = SqliteCrosswalk(db)
     assert xw.lookup(AG, "telematics", "T-1") == "veh-1"
     xw.resolve(e("telematics", "T-1", "veh-2", valid_from=S))
-    assert xw.lookup(AG, "telematics", "T-1", at=S) == "veh-2"
+    # bug sweep A2, H2 (A160): the migrated open row still holds at S, so T-1 names two vehicles there: no single one
+    # (before H2 the newer row silently won)
+    assert xw.lookup(AG, "telematics", "T-1", at=S) is None
+    assert {c.canonical_id for c in xw.candidates(AG, "telematics", "T-1", at=S)} == {"veh-1", "veh-2"}
     xw.add_unresolved(AG, "telematics", "T-2", "x")
     assert xw.unresolved(AG)[0]["resolution"] is None
 
@@ -226,3 +229,52 @@ def test_g3_reused_asset_id_ended_vehicle_is_missing_the_new_owner_reads_its_row
     xw.resolve(e("maintenance", "1108", "veh-3", valid_to=S))
     assert "maintenance" not in xw.all_ids(AG, "veh-2")
     assert xw.all_ids(AG, "veh-3") == {"maintenance": "1107"}
+
+
+# ---- bug sweep A2 (A159-A160). Written from the rulings before the code -----------------------------------------
+# H1: lookup/candidates without `at` use the store's clock (same rule as all_ids). H2: more than one valid native id
+# of a product for the vehicle, or a native id valid for more than one vehicle -> UNKNOWN (missing key) in all_ids and
+# no single vehicle from lookup.
+
+def _reused_1106(xw) -> None:
+    xw.resolve(e("maintenance", "1106", "veh-1", valid_to=S))       # A: [-inf, S)
+    xw.resolve(e("maintenance", "1106", "veh-2", valid_from=S))     # B: [S, inf)
+
+
+def test_h1_lookup_without_at_uses_the_stores_clock(db):
+    now = [S - timedelta(hours=1)]
+    xw = SqliteCrosswalk(db, clock=lambda: now[0])
+    _reused_1106(xw)
+    assert xw.lookup(AG, "maintenance", "1106") == "veh-1"                         # before the swap
+    assert [c.canonical_id for c in xw.candidates(AG, "maintenance", "1106")] == ["veh-1"]
+    now[0] = S
+    assert xw.lookup(AG, "maintenance", "1106") == "veh-2"                         # at the swap (inclusive)
+    now[0] = S + timedelta(hours=1)
+    assert xw.lookup(AG, "maintenance", "1106") == "veh-2"
+    assert xw.lookup(AG, "maintenance", "1106", at=S - timedelta(seconds=1)) == "veh-1"   # explicit `at` wins
+
+
+def test_h2_two_valid_native_ids_of_one_product_are_unknown(db):
+    xw = SqliteCrosswalk(db, clock=lambda: S)
+    xw.resolve(e("maintenance", "1106", "veh-1"))                                   # never closed
+    xw.resolve(e("maintenance", "M-1", "veh-1", valid_from=S - timedelta(days=1)))  # the renumbered asset, picked
+    xw.resolve(e("scheduling", "BUS-44", "veh-1"))
+    assert xw.all_ids(AG, "veh-1") == {"scheduling": "BUS-44"}
+    assert xw.lookup(AG, "maintenance", "M-1") == "veh-1"                           # each id alone is one vehicle
+
+
+def test_h2_one_native_id_valid_for_two_vehicles_is_unknown_both_ways(db):
+    xw = SqliteCrosswalk(db, clock=lambda: S)
+    xw.resolve(e("maintenance", "M-9", "veh-1"))
+    xw.resolve(e("maintenance", "M-9", "veh-2", valid_from=S - timedelta(hours=1)))
+    assert "maintenance" not in xw.all_ids(AG, "veh-1")
+    assert "maintenance" not in xw.all_ids(AG, "veh-2")
+    assert xw.lookup(AG, "maintenance", "M-9") is None                              # no single vehicle
+    assert sorted(c.canonical_id for c in xw.candidates(AG, "maintenance", "M-9")) == ["veh-1", "veh-2"]
+
+
+def test_h2_an_ended_second_row_is_no_conflict(db):
+    xw = SqliteCrosswalk(db, clock=lambda: S)
+    xw.resolve(e("maintenance", "M-9", "veh-1", valid_to=S))
+    xw.resolve(e("maintenance", "M-9", "veh-2", valid_from=S))
+    assert xw.all_ids(AG, "veh-2") == {"maintenance": "M-9"} and xw.lookup(AG, "maintenance", "M-9") == "veh-2"

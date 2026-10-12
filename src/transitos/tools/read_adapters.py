@@ -300,7 +300,7 @@ class SchedulingReader:
         raw = self.http.json(agency, "GET", "/vehicles", params={"status": "ready"})
         policy = self.deps.policy_for(agency)
         probe = Block(id="-", vehicle_id="-", start=start, end=end, needs=needs)
-        facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
+        facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None, ready_unknown=0,
                       profiles={"scheduling": scheduling_profile(raw)})
         cands = [v for v in (map_vehicle(self.deps, agency, r) for r in raw)   # one bad record excludes only it (F4)
                  if v.status == "ready"
@@ -419,7 +419,7 @@ class WorkforceReader:
         policy = self.deps.policy_for(agency)
         ops, profile = self._export(agency)
         facts = Facts(blocks={block.id: block}, vehicles={}, operators={}, ready_count=None, commitments=None,
-                      profiles={"workforce": profile})
+                      ready_unknown=0, profiles={"workforce": profile})
         elig = [op for op in ops  # the block's current operator is listed too when eligible; a record that breaks
                 if not any(i.status == "violation"   # a rule (F4) excludes only that operator
                            for i in guarded_items(f"operator {op.id}", operator_items, block, op, known_need_type(block),

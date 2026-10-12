@@ -75,7 +75,8 @@ class FakeCrosswalk:
     def lookup(self, agency, product, native_id):
         return self.map.get((agency, product, native_id))
 
-    def all_ids(self, agency, canonical_id):
+    def all_ids(self, agency, canonical_id, at=None, entities=None):
+        """A test double with no validity or entity: `at` and `entities` are accepted and ignored (A147)."""
         return {p: n for (a, p, n), c in self.map.items() if a == agency and c == canonical_id}
 
     def add_unresolved(self, agency, product, native_id, event_id):
