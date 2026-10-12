@@ -15,6 +15,7 @@ from transitos.clearance.evaluate import (
     kill_switch_item,
 )
 from transitos.clearance.facts import SCHEDULING_FIELDS, Facts, native_profile
+from transitos.clearance.rules import count_ready
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle
 from transitos.contracts.policy import AgencyPolicy, Limits
 
@@ -92,9 +93,14 @@ def run_row(row):
         com = o.get("commitments", {})
         commitments = None if com is None else {
             k: [(T0 + timedelta(hours=s), T0 + timedelta(hours=e), bid) for s, e, bid in v] for k, v in com.items()}
+        assets = {v: "active" for v in o["spares"]}   # S2 F4: rows that do not care: active
+        ready, unknown = o.get("ready"), 0
+        if "ready_status" in o:                        # R4-1: the ready count derived from the counted spares
+            assets.update(o["ready_status"])
+            ready, unknown = count_ready(list(o["ready_status"]), o["ready_status"])
         f = Facts(blocks=blocks, vehicles={v: vehicle(None, v) for v in o["spares"]}, operators=ops,
-                  ready_count=o["ready"], commitments=commitments, profiles=profiles(None, False),
-                  asset_status={v: "active" for v in o["spares"]})   # S2 F4: rows that do not care: active
+                  ready_count=ready, commitments=commitments, profiles=profiles(None, False),
+                  asset_status=assets, ready_unknown=unknown)
         opt = Option(tuple(Assign(a[0], a[1], a[2] if len(a) > 2 else None) for a in o["assign"]))
         c = safe_evaluate(opt, f, pol, T0)        # the entry point every caller uses (fails closed)
         return c.items, c

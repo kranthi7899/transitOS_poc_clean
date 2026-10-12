@@ -219,6 +219,22 @@ def _option_facts(**kw) -> tuple[Facts, Option]:
     return f, Option((Assign("b1", "veh-2"), Assign("b2", "veh-2", "op-1")))
 
 
+@pytest.mark.parametrize("variant,statuses", [("unreachable", {"veh-2": "unreachable", "veh-3": "unreachable"}),
+                                              ("missing", {"veh-2": "active", "veh-3": "missing"}),
+                                              ("blank", {"veh-2": "active", "veh-3": ""}),
+                                              ("no feed", None)])
+def test_counted_spare_asset_status_missing_makes_last_spare_unverifiable(variant, statuses):
+    """R4-1 sweep: a spare counted toward ready_count whose maintenance status is unknown -> last_spare is
+    unverifiable (basis unknown), never a native pass."""
+    from transitos.clearance.rules import count_ready
+    ready, unknown = count_ready(["veh-2", "veh-3"], statuses)
+    f, opt = _option_facts(ready=ready)
+    f.ready_unknown = unknown
+    got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == "last_spare"]
+    assert got and all((i.status, i.basis, i.requires_ack) == ("unverifiable", "unknown", True) for i in got), \
+        [i.model_dump() for i in got]
+
+
 def test_ready_count_missing_is_unverifiable():
     f, opt = _option_facts(ready=None)
     got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == "last_spare"]

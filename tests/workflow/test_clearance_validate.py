@@ -104,3 +104,21 @@ def test_validator_still_catches_structure_errors(make_env):
     assert "missing_assignment:B1" in errs
     _, errs = validate_output(out(("B9", "veh-2", None)), f)
     assert "unknown_block:B9" in errs
+
+
+def test_r4_1_unreachable_counted_spares_make_last_spare_reach_the_plan_and_the_ack_list(make_env):
+    """R4-1 through the workflow: maintenance cannot say whether the spares are retired: the plan carries
+    last_spare unverifiable (basis unknown, requires_ack) and execution waits for its acknowledgement."""
+    from test_clearance_plan import run_of
+
+    from transitos.clearance.evaluate import unacknowledged
+    from transitos.contracts.clearance import ClearanceItem
+    w = world_with([veh("veh-1"), veh("veh-2"), veh("veh-3"), veh("veh-4")], None, [block("B1", 1, 3)])
+    w.asset_overrides = {"veh-2": "unreachable", "veh-3": "unreachable", "veh-4": "unreachable"}
+    env = make_env(world=w)
+    rid = start(env)
+    plan = run_of(env, rid)["plan"]
+    items = [ClearanceItem.model_validate(i) for i in plan["clearance"]]
+    ls = [i for i in items if i.rule == "last_spare"]
+    assert ls and all((i.status, i.basis, i.requires_ack) == ("unverifiable", "unknown", True) for i in ls)
+    assert "last_spare" in unacknowledged(items, [])

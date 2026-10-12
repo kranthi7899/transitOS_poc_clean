@@ -61,3 +61,12 @@ def test_retired_spare_as_the_only_alternative_escalates(world):
                    expected=Outcome.ESCALATE_NO_SAFE_OPTION, script=(("deliver", 0),), expect_wo_creates=0)
     res = run_scenario(world, only, keep_observation=True)
     assert res.outcome == Outcome.ESCALATE_NO_SAFE_OPTION.value and res.observation.writes == []
+
+
+def test_r4_2_write_time_ready_count_excludes_a_known_retired_spare(world):
+    """R4-2: two ready spares in scheduling, veh-2 retired in maintenance; moving the block onto veh-3 would leave
+    no real spare (min_spares 1). Before the fix the write re-check counted veh-2 and let it through."""
+    sc = BY_ID["retired_spare_never_proposed"]
+    world.apply(replace(sc, tweaks=replace(sc.tweaks, spares=2, retired_spare=2)))
+    res = world.system.toolset.reassign_block(AGENCY, "blk-1", "veh-3", "k-r42")
+    assert res.is_blocked and "min_spares" in (res.note or ""), res

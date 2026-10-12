@@ -200,9 +200,12 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
             raise HTTPException(409, str(exc) or type(exc).__name__)
         return {**_summary(run), "already_decided": False}
 
-    def do_crosswalk(entry: CrosswalkEntry) -> dict[str, Any]:
-        # Phase 10 F2: a human pick never overwrites history; a store that refuses answers 409 with the row
-        pick = getattr(crosswalk, "pick", None) or crosswalk.resolve
+    def do_crosswalk(entry: CrosswalkEntry, move: bool = False) -> dict[str, Any]:
+        # Phase 10 F2: a human pick never overwrites history; a store that refuses answers 409 with the row.
+        # G1: move=True is 'device moved' (close the id's row at the event time, open the picked vehicle's)
+        if move and getattr(crosswalk, "move", None) is None:
+            raise HTTPException(422, "this crosswalk store has no 'device moved' action")
+        pick = crosswalk.move if move else (getattr(crosswalk, "pick", None) or crosswalk.resolve)
         try:
             released = pick(entry)
         except ValueError as exc:
@@ -246,8 +249,8 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         return unresolved.list_unresolved(agency) if unresolved else []
 
     @app.post("/crosswalk")
-    def crosswalk_fix(entry: CrosswalkEntry):
-        return do_crosswalk(entry)
+    def crosswalk_fix(entry: CrosswalkEntry, move: bool = False):
+        return do_crosswalk(entry, move)
 
     @app.get("/killswitch")
     def killswitch_get(agency: str):
@@ -370,6 +373,13 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                 f"<input type='hidden' name='canonical_id' value='{_e(c['canonical_id'])}'>"
                 f"<button class='ok'>Pick {_e(c['canonical_id'])}</button> {float(c['score']):.2f} "
                 f"<small>{_e('; '.join(c.get('evidence', [])))}</small></form>" for c in i.get("candidates") or [])
+            if i.get("contradiction"):   # G1: only for events parked by the id/VIN-plate contradiction
+                out += "".join(
+                    f"<form method='post' action='/ui/crosswalk'>{hidden(i)}"
+                    f"<input type='hidden' name='canonical_id' value='{_e(c['canonical_id'])}'>"
+                    "<input type='hidden' name='move' value='true'>"
+                    f"<button class='warn'>Device moved to {_e(c['canonical_id'])}</button></form>"
+                    for c in i.get("candidates") or [] if not any("contradicted" in e for e in c.get("evidence", [])))
             return (f"<b>{_e(i['outcome'])}</b>" if i.get("outcome") else "") + out
 
         rows = "".join(
@@ -388,7 +398,8 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         f = await _form(request)
         try:
             do_crosswalk(CrosswalkEntry(**{k: f.get(k, "") for k in
-                                           ("agency", "product", "native_id", "entity", "canonical_id")}))
+                                           ("agency", "product", "native_id", "entity", "canonical_id")}),
+                         move=f.get("move") == "true")
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         return RedirectResponse("/ui/unresolved", status_code=303)

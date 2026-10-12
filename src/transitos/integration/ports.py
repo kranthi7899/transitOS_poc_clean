@@ -174,5 +174,7 @@ class CrosswalkUnresolved:
             out.append({"agency": a, "product": p, "native_id": n, "event_ids": e,
                         "outcome": res.get("outcome") if res else None,
                         "candidates": res.get("candidates", []) if res else [],
-                        "notes": res.get("notes", []) if res else []})
+                        "notes": res.get("notes", []) if res else [],
+                        # G1: parked by the id vs VIN/plate contradiction -> the panel offers 'device moved'
+                        "contradiction": any("(F1)" in n for n in (res.get("notes", []) if res else []))})
         return out

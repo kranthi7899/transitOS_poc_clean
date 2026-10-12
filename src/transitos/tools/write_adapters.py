@@ -19,7 +19,7 @@ from transitos.clearance.evaluate import (
     safe_vehicle_move,
 )
 from transitos.clearance.facts import Facts, commitments_from_blocks
-from transitos.clearance.rules import guarded, known_vehicle_type
+from transitos.clearance.rules import count_ready, guarded, known_vehicle_type
 from transitos.contracts.events import SYSTEM_ACTOR
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
 from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
@@ -186,10 +186,13 @@ class SchedulingWriter(_Base):
         assert block.value and veh.value and ready.value is not None and sched.value is not None
         # S2 fix round F4: the spare's maintenance asset status, read live (a KNOWN retired asset blocks; an
         # unknown one was the approver's to acknowledge)
-        assets = MaintenanceReader(self.deps).asset_statuses(agency, [to_vehicle_id]).value
+        ready_ids = [x.id for x in ready.value]
+        assets = MaintenanceReader(self.deps).asset_statuses(agency, [to_vehicle_id, *ready_ids]).value
+        n_ready, n_unknown = count_ready(ready_ids, assets)   # R4-2: known-retired spares are not counted
         facts = Facts(blocks={block.value.id: block.value}, vehicles={veh.value.id: veh.value}, operators={},
-                      ready_count=len(ready.value), commitments=commitments_from_blocks(sched.value),
-                      profiles={"scheduling": self.reader.capability_profile(agency)}, asset_status=assets)
+                      ready_count=n_ready, commitments=commitments_from_blocks(sched.value),
+                      profiles={"scheduling": self.reader.capability_profile(agency)}, asset_status=assets,
+                      ready_unknown=n_unknown)
         c = safe_vehicle_move(block.value.id, veh.value.id, facts, policy)   # an exception blocks (fail closed)
         v = [i.detail or i.rule for i in c.violations if i.rule != "last_spare"]
         if to_vehicle_id not in {x.id for x in ready.value}:

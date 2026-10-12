@@ -157,3 +157,35 @@ def test_f2_panel_pick_keeps_history_and_answers_409_instead_of_overwriting(real
     assert r.status_code == 409
     assert r.json()["detail"]["conflict"]["canonical_id"] in ("veh-1", "veh-2")
     assert xw.lookup("agency-a", "telematics", "T-77", at=swap - timedelta(minutes=1)) == "veh-1"
+
+
+def test_g1_device_moved_through_the_real_panel(real):
+    """G1 through the real panel: a stop-lamp fault from T-77 (veh-1's gateway) carries veh-2's VIN -> parked by
+    the contradiction. The UI offers 'device moved' for it; a plain pick of veh-1 re-parks; POST /crosswalk with
+    move=true to veh-2 republishes and the run starts for veh-2; an event dated before still resolves to veh-1;
+    an identical second move changes nothing."""
+    sc = BY_ID["dirty_id_normalised"]                        # identity tweaks: rows carry VINs
+    real.apply(sc)
+    from transitos.verification.scenarios_step2 import vehicle_identity
+    vin2 = vehicle_identity(2, sc.tweaks)["sched_vin"]
+    ev = fault("T-77", 5, native_vin=vin2)
+    real.deliver(ev)
+    pc, xw = real.system.panel_client, real.system.xw
+    [item] = pc.get("/unresolved").json()
+    assert item["contradiction"] is True and item["native_id"] == "T-77"
+    html = pc.get("/ui/unresolved").text
+    assert "Device moved to veh-2" in html
+    body = {"agency": "agency-a", "product": "telematics", "native_id": "T-77", "entity": "vehicle"}
+    r = pc.post("/crosswalk", json={**body, "canonical_id": "veh-1"})
+    assert r.status_code == 200
+    real.system.run_until_idle()
+    assert real.observe().runs == [] and pc.get("/unresolved").json()          # re-parked
+    r = pc.post("/crosswalk", params={"move": "true"}, json={**body, "canonical_id": "veh-2"})
+    assert r.status_code == 200 and r.json()["republished"] == [ev.id]
+    real.system.run_until_idle()
+    assert [x.vehicle_id for x in real.observe().runs] == ["veh-2"]
+    assert xw.lookup("agency-a", "telematics", "T-77", at=ev.time - timedelta(minutes=1)) == "veh-1"
+    assert xw.lookup("agency-a", "telematics", "T-77", at=ev.time) == "veh-2"
+    r = pc.post("/crosswalk", params={"move": "true"}, json={**body, "canonical_id": "veh-2"})
+    assert r.status_code == 200 and r.json()["republished"] == []
+    assert len([x for x in xw.rows("agency-a") if x.native_id == "T-77"]) == 2

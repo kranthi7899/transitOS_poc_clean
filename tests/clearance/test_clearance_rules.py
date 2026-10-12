@@ -439,3 +439,29 @@ def test_safe_evaluate_fails_closed_on_any_exception():
     g = facts([blk()], [veh("veh-2")], [opr()])
     g.__class__ = Boom
     assert safe_evaluate(Option((Assign("b1", "veh-2"),)), g, POL, T0).excluded
+
+
+# ---- R4-1: last_spare with counted spares whose maintenance status is unknown -------------------------------
+def test_probe_r4b_two_unreachable_spares_make_last_spare_unverifiable():
+    """Reviewer repro (probe_r4b): S1 and S2 both 'unreachable', ready_count 2, min_spares 1, the plan uses S1.
+    The remaining spare S2 may be retired: last_spare must not be a native pass."""
+    from transitos.clearance.rules import count_ready
+    st = {"S1": "unreachable", "S2": "unreachable"}
+    ready, unknown = count_ready(["S1", "S2"], st)
+    assert (ready, unknown) == (2, 2)
+    f = facts([blk()], [veh("S1"), veh("S2")], [opr()], ready_count=ready, asset_status=st)
+    f.ready_unknown = unknown
+    items = evaluate_option(Option((Assign("b1", "S1"),)), f, AgencyPolicy(agency="a", limits=Limits(min_spares=1)),
+                            T0).items
+    ls = one(items, "last_spare")
+    assert (ls.status, ls.basis, ls.requires_ack) == ("unverifiable", "unknown", True)
+
+
+@pytest.mark.parametrize("statuses,want", [
+    ({"S1": "active", "S2": "active"}, (2, 0)), ({"S1": "active", "S2": "retired"}, (1, 0)),
+    ({"S1": "unreachable", "S2": "retired"}, (1, 1)), ({"S1": "missing", "S2": ""}, (2, 2)),
+    (None, (2, 2)),                                       # no feed at all: every counted spare is unknown
+])
+def test_count_ready_excludes_known_retired_and_counts_unknown(statuses, want):
+    from transitos.clearance.rules import count_ready
+    assert count_ready(["S1", "S2"], statuses) == want

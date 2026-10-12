@@ -754,3 +754,31 @@
   given: {asset_status: no_feed}
   rule: asset_active
   expect: {status: unverifiable, basis: unknown, requires_ack: true}
+
+# ---- R4-1: last_spare when a COUNTED spare's maintenance status is not known active -------------------------
+# `option.ready_status`: the maintenance status of every spare counted as ready (the ready count is derived from it:
+# known-retired spares are not counted).
+- id: last_spare_counted_spares_unreachable_is_unverifiable
+  source: "R4-1 ruling: last_spare must carry basis unknown and status UNVERIFIABLE (requires_ack) whenever any spare counted toward ready_count has asset status other than active"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2, veh-3], ready_status: {veh-2: unreachable, veh-3: unreachable},
+           assign: [[b1, veh-2]]}
+  rule: last_spare
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: last_spare_counted_spare_missing_from_maintenance_is_unverifiable
+  source: "R4-1 ruling: unknown (unreachable or missing) counted spare -> unverifiable"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2, veh-3], ready_status: {veh-2: active, veh-3: missing},
+           assign: [[b1, veh-2]]}
+  rule: last_spare
+  expect: {status: unverifiable, basis: unknown, requires_ack: true}
+- id: last_spare_known_retired_spare_is_not_counted
+  source: "R4-1 ruling: known-retired spares stay excluded from the count (1 active ready - 1 used = 0 < 1)"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2, veh-3], ready_status: {veh-2: active, veh-3: retired},
+           assign: [[b1, veh-2]]}
+  rule: last_spare
+  expect: {status: violation, basis: native}
+- id: last_spare_all_counted_spares_active_is_pass
+  source: "R4-1 ruling: known active everywhere = pass as today"
+  option: {blocks: [[b1, 1, 2]], spares: [veh-2, veh-3], ready_status: {veh-2: active, veh-3: active},
+           assign: [[b1, veh-2]]}
+  rule: last_spare
+  expect: {status: pass, basis: native}

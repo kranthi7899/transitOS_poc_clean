@@ -218,3 +218,72 @@ def test_f2_a_pick_never_rewrites_history(bus, svc, xw):
     rows = sorted((r.valid_from or S - timedelta(days=99), r.canonical_id, r.valid_to)
                   for r in xw.rows(AG) if r.native_id == "T-77")
     assert rows == [(S - timedelta(days=99), "veh-1", S), (S + timedelta(hours=1), "veh-2", None)]
+
+
+# ---------------------------------------------------------------- last fix round (R2 re-check)
+def _t90_rows(xw):
+    return sorted((r.valid_from, r.valid_to, r.canonical_id) for r in xw.rows(AG) if r.native_id == "T-90")
+
+
+def test_g1_device_moved_releases_a_contradiction_parked_event(bus, svc, xw):
+    """G1 (reviewer repro): T-90 -> veh-1; a fault carrying veh-2's VIN parks (F1). Picking the id's own vehicle
+    re-parks it; 'device moved' to veh-2 closes veh-1's row at the event's time, opens veh-2's from it and
+    republishes: the event resolves to veh-2; an event dated before still resolves to veh-1; a second identical
+    move is a no-op."""
+    seed(xw)
+    at = S + timedelta(hours=1)
+    run(bus, svc, fault("c", "T-90", at, native_vin=VIN_2))
+    entry = lambda canon: CrosswalkEntry(agency=AG, product="telematics", native_id="T-90", entity="vehicle",
+                                         canonical_id=canon)
+    svc.apply_mapping(entry("veh-1"))                       # plain pick of the id's own vehicle
+    ok, _ = run(bus, svc)
+    assert "c" not in ok and [u["event_id"] for u in xw.unresolved(AG)] == ["c"]
+    assert svc.apply_mapping(entry("veh-2"), move=True) == 1
+    ok, _ = run(bus, svc, fault("before", "T-90", at - timedelta(minutes=30)))
+    assert ok["c"].canonicalid == "veh-2" and ok["before"].canonicalid == "veh-1"
+    assert _t90_rows(xw) == [(S, at, "veh-1"), (at, None, "veh-2")]
+    assert svc.apply_mapping(entry("veh-2"), move=True) == 0  # identical move again: nothing changes
+    assert _t90_rows(xw) == [(S, at, "veh-1"), (at, None, "veh-2")]
+
+
+def test_g1_a_move_that_would_leave_overlapping_rows_is_refused(bus, svc, xw):
+    from transitos.plumbing.crosswalk import CrosswalkConflict
+    seed(xw)
+    later = S + timedelta(hours=5)
+    xw.resolve(CrosswalkEntry(agency=AG, product="telematics", native_id="T-90", entity="vehicle",
+                              canonical_id="veh-3", valid_from=later))
+    before = _t90_rows(xw)
+    run(bus, svc, fault("c", "T-90", S + timedelta(hours=1), native_vin=VIN_2))
+    try:
+        svc.apply_mapping(CrosswalkEntry(agency=AG, product="telematics", native_id="T-90", entity="vehicle",
+                                         canonical_id="veh-2"), move=True)
+        raise AssertionError("move accepted")
+    except CrosswalkConflict:
+        pass
+    assert _t90_rows(xw) == before and [u["event_id"] for u in xw.unresolved(AG)] == ["c"]
+
+
+def test_g4_n5_a_pick_overlapping_another_vehicles_row_is_refused(bus, svc, xw):
+    """n5: the overlap guard in pick_in (another vehicle's row covering the pick's window) must refuse."""
+    from transitos.plumbing.crosswalk import CrosswalkConflict
+    xw.resolve(CrosswalkEntry(agency=AG, product="telematics", native_id="T-5", entity="vehicle",
+                              canonical_id="veh-1", valid_to=S + timedelta(days=1)))
+    with xw.db.tx() as c:
+        xw.add_unresolved_in(c, AG, "telematics", "T-5", fault("p", "T-5", S))
+    try:
+        xw.pick(CrosswalkEntry(agency=AG, product="telematics", native_id="T-5", entity="vehicle",
+                               canonical_id="veh-2"))
+        raise AssertionError("pick accepted")
+    except CrosswalkConflict as e:
+        assert e.conflict_row["canonical_id"] == "veh-1"
+    assert [r.canonical_id for r in xw.rows(AG) if r.native_id == "T-5"] == ["veh-1"]
+
+
+def test_g4_n7_an_ended_row_never_contradicts_the_fast_path(bus, svc, xw):
+    """n7: veh-2's VIN sits on a row that ENDED before the event: no contradiction, the id's vehicle stands."""
+    xw.resolve(CrosswalkEntry(agency=AG, product="scheduling", native_id="BUS-45", entity="vehicle",
+                              canonical_id="veh-2", vin=VIN_2, valid_to=S))
+    xw.resolve(CrosswalkEntry(agency=AG, product="telematics", native_id="T-90", entity="vehicle",
+                              canonical_id="veh-1", valid_from=S))
+    ok, failed = run(bus, svc, fault("e", "T-90", S + timedelta(hours=1), native_vin=VIN_2))
+    assert ok["e"].canonicalid == "veh-1" and not failed
