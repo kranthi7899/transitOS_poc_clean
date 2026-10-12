@@ -88,7 +88,10 @@ def test_through_clearance_on_the_fall_back_day_an_ambiguous_start_is_not_availa
     r = run_scenario(make_world(), sc, keep_observation=True)
     assert r.outcome == "escalate-no-safe-option", (r.outcome, r.mismatches)
     assert r.observation.writes == []
-    assert "availability" in str(r.observation.runs[0].model_dump())
+    assert r.observation.runs[0].violations == ["no_feasible_operator:blk-1"]
+    # the same day with every product on UTC (knob off) staffs the block: the escalation is the conservative fold
+    utc = dataclasses.replace(sc, tweaks=dataclasses.replace(sc.tweaks, local_time=False))
+    assert run_scenario(make_world(), utc).outcome.startswith("in-progress")   # proposed, awaiting approval
 
 
 def test_dst_fallback_event_block_starts_after_the_ambiguous_hour():

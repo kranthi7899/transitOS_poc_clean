@@ -82,11 +82,11 @@ def _time_reader(deps: Any, agency: str, *, strict: bool = True) -> Callable[...
     workforce CSV, whose zone-less cell already fails closed per operator inside clearance (F4; known gap A113)."""
     local, tz = local_time(deps, agency)
 
-    def read(s: Any, utc_offset: str | None = None) -> datetime | None:
+    def read(s: Any, utc_offset: str | None = None, fold: int = 0) -> datetime | None:
         if _blank(s):
             return None
-        if local:
-            return to_utc(str(s).strip(), tz, utc_offset=utc_offset)  # type: ignore[arg-type]
+        if local:   # `fold` matters only in the repeated fall-back hour and only when no utc_offset came (A145)
+            return to_utc(str(s).strip(), tz, utc_offset=utc_offset, fold=fold)  # type: ignore[arg-type]
         return _zoned_dt(str(s)) if strict else _parse_dt(str(s))
     return read
 
@@ -336,6 +336,14 @@ def _split(s: str | None) -> list[str]:
     return [x for x in (s or "").split(";") if x]
 
 
+# Fix round F2 (A145): the workforce CSV carries no utc_offset, so a wall time in the repeated fall-back hour is read
+# as the CONSERVATIVE occurrence for the rule it feeds: the LATER one (fold=1) for a start of availability and for
+# the end of the last duty (less availability, less rest); the EARLIER one (fold=0) for an end of availability, the
+# start of today's duty (more spread) and every expiry (training_valid_to via _dated, medical_valid_to).
+CSV_FOLD = {"available_from": 1, "last_duty_end": 1, "available_to": 0, "duty_start_today": 0,
+            "medical_valid_to": 0, "training_valid_to": 0}
+
+
 def _dated(s: str | None, read: Callable[..., datetime | None] = _parse_dt) -> dict[str, datetime]:
     """'P=2027-01-01T00:00:00+00:00;lift=...' -> {code: datetime}"""
     out: dict[str, datetime] = {}
@@ -374,15 +382,18 @@ class WorkforceReader:
             out.append(Operator(
                 id=cid, qualifications=_split(row.get("qualifications")),
                 lift_trained=_bool(row.get("lift_trained")), hours_today=float(row.get("hours_today") or 0),
-                hours_week=float(row.get("hours_week") or 0), available_from=ts(row.get("available_from")),
-                available_to=ts(row.get("available_to")), on_extra_board=_bool(row.get("on_extra_board")),
+                hours_week=float(row.get("hours_week") or 0),
+                available_from=ts(row.get("available_from"), fold=CSV_FOLD["available_from"]),
+                available_to=ts(row.get("available_to"), fold=CSV_FOLD["available_to"]),
+                on_extra_board=_bool(row.get("on_extra_board")),
                 licence_class=(row.get("licence_class") or None),  # type: ignore[arg-type]
                 endorsements=_split(row.get("endorsements")),
                 trained_vehicle_types=_split(row.get("trained_vehicle_types")),
                 training_valid_to=_dated(row.get("training_valid_to"), ts),
-                medical_valid_to=ts(row.get("medical_valid_to")),
-                last_duty_end=ts(row.get("last_duty_end")),
-                duty_start_today=ts(row.get("duty_start_today")), unknown_fields=unknown))
+                medical_valid_to=ts(row.get("medical_valid_to"), fold=CSV_FOLD["medical_valid_to"]),
+                last_duty_end=ts(row.get("last_duty_end"), fold=CSV_FOLD["last_duty_end"]),
+                duty_start_today=ts(row.get("duty_start_today"), fold=CSV_FOLD["duty_start_today"]),
+                unknown_fields=unknown))
         return out, profile
 
     def operators(self, agency: str) -> list[Operator]:
