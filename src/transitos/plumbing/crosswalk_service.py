@@ -57,7 +57,7 @@ class CrosswalkService:
     def _enrich(self, ev: CloudEvent, canonical: str, entity: str) -> CloudEvent:
         data = dict(ev.data)
         if entity == "vehicle":
-            ids = self.xw.all_ids(ev.agencyid, canonical)
+            ids = self.xw.all_ids(ev.agencyid, canonical, at=ev.time)   # G3 (A148): the rows valid at the event
             data["refs"] = VehicleRefs(
                 canonical=canonical, telematics=ids.get("telematics"),
                 maintenance=ids.get("maintenance"), scheduling=ids.get("scheduling")).model_dump()
@@ -79,7 +79,10 @@ class CrosswalkService:
             if entity == "vehicle" and check is not None and \
                     (res := check(ev.agencyid, product, evidence, ev.time, canon[0])) is not None:
                 return None, res, ["the event's VIN or plate names a different vehicle than its id (F1)"]
-            return canon[0], None, []
+            conflicts = getattr(self.resolver, "conflict_notes", None)   # G2 (A149): resolves, conflict recorded
+            notes = conflicts(ev.agencyid, evidence, ev.time, canon[0]) \
+                if entity == "vehicle" and conflicts is not None else []
+            return canon[0], None, notes
         if len(canon) > 1:   # overlapping validity windows for one native id: a data conflict, a human decides
             res = Resolution(outcome="AMBIGUOUS", confidence=1.0, candidates=[
                 Candidate(canonical_id=c, score=1.0, evidence=[f"exact {product} id {native} (overlapping rows)"])
@@ -130,6 +133,10 @@ class CrosswalkService:
             top = res.candidates[0]
             ev = ev.model_copy(update={"data": {**ev.data, "identity": {
                 "outcome": res.outcome, "confidence": res.confidence, "evidence": list(top.evidence),
+                "notes": notes}}})
+        elif notes:           # G2 (A149): exact-id fast path with an identity conflict recorded for the audit
+            ev = ev.model_copy(update={"data": {**ev.data, "identity": {
+                "outcome": "MATCH", "confidence": 1.0, "evidence": [f"exact {product} id {native}"],
                 "notes": notes}}})
         outbox.add(conn, self._enrich(ev, canonical, entity), TOPIC_RESOLVED, canonical, dedupe_id=f"resolved:{ev.id}")
         conn.execute("INSERT INTO xw_processed VALUES(?,?,'resolved') ON CONFLICT(grp,event_id) DO UPDATE SET status='resolved'",

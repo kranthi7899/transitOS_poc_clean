@@ -180,7 +180,7 @@ class System:
         self.bus: SqliteBus | KafkaBus = SqliteBus(self.db) if self.bus_kind == "sqlite" else \
             KafkaBus(namespace=self.kafka_namespace())
         self.relay = Relay(self.db, self.bus)
-        self.xw = SqliteCrosswalk(self.db, self.bus)
+        self.xw = SqliteCrosswalk(self.db, self.bus, clock=self.clock.now)   # G3 (A147): 'now' for all_ids
         self.xw_svc = CrosswalkService(self.db, self.bus, self.xw)
         c, a = self.mocks.clients, self.agency
         self.pollers = [MaintenancePoller(self.db, c["maintenance"], a), SchedulingPoller(self.db, c["scheduling"], a),

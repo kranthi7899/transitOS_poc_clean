@@ -267,7 +267,7 @@ class WorkforceWriter(_Base):
     def assign_operator(self, agency: str, block_id: str, operator_id: str, key: str, *,
                         compensation: bool = False) -> Result[Block]:
         def go() -> Result[Block]:
-            native_op = native_of(self.deps, agency, operator_id, "workforce")
+            native_op = native_of(self.deps, agency, operator_id, "workforce", operator=True)   # G3 (A147)
             if native_op is None:
                 raise ProductUnavailable("crosswalk", f"no workforce id for {operator_id}")
             if not compensation:

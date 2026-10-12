@@ -72,6 +72,8 @@ def test_crosswalk_fix_round_statements_translate():
     assert translate(xw.RECOVER_V2["rename"][0], with_params=False) == "ALTER TABLE xw_entries_v2 RENAME TO xw_entries"
     for stmt in split_script(xw.MIGRATE_V1):
         assert "PRAGMA" not in translate(stmt, with_params=False).upper()
+    # bug sweep A, G3: all_ids reads every row of the canonical id (validity and entity filtered in Python)
+    assert translate(xw.ALL_IDS_SQL) == f"SELECT {xw.COLS} FROM xw_entries WHERE agency=%s AND canonical_id=%s"
     # G1 'device moved' closes the old row in place
     assert translate("UPDATE xw_entries SET valid_to=? WHERE agency=? AND product=? AND native_id=? AND vf=?") == \
         "UPDATE xw_entries SET valid_to=%s WHERE agency=%s AND product=%s AND native_id=%s AND vf=%s"

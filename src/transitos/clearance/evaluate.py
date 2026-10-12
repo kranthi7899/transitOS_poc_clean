@@ -77,9 +77,28 @@ def _eff_operator(a: Assign, facts: Facts) -> str | None:
     return a.operator_id or facts.blocks[a.block_id].operator_id
 
 
+class _Replaced:
+    """Bug sweep A, F12 (A150): the schedule-feed commitments an option takes away. A commitment ("vehicle:<id>" or
+    "operator:<id>", block) is replaced only when the option re-plans that block AND puts a DIFFERENT resource of that
+    kind on it: every assignment sets the block's vehicle, so any other vehicle's commitment on the block is gone;
+    an assignment sets the operator only when it names one, so a block that keeps its operator keeps every operator
+    commitment (the option's own pairwise check then judges the kept operator). Everything else is kept."""
+
+    def __init__(self, option: Option):
+        self._vehicle = {a.block_id: a.spare_id for a in option.assignments}
+        self._operator = {a.block_id: a.operator_id for a in option.assignments if a.operator_id is not None}
+
+    def __contains__(self, key: tuple[str, str]) -> bool:
+        resource, bid = key
+        kind, _, rid = resource.partition(":")
+        new = self._vehicle if kind == "vehicle" else self._operator if kind == "operator" else {}
+        return bid in new and new[bid] != rid
+
+
 def double_booking_item(option: Option, facts: Facts) -> ClearanceItem:   # fails closed without a feed (A74)
     """Double-booking, judged inside the option (a vehicle or operator on overlapping blocks) and against the
-    schedule feed (`facts.commitments`). No feed -> fails closed."""
+    schedule feed (`facts.commitments`, which may include the affected blocks themselves). A commitment the option
+    replaces (F12, A150: see `_Replaced`) is ignored; every other one counts. No feed -> fails closed."""
     if facts.commitments is None:
         return item("double_booking", "violation", "unknown",
                     "schedule feed not available: double-booking cannot be ruled out (fails closed)")
@@ -98,12 +117,13 @@ def double_booking_item(option: Option, facts: Facts) -> ClearanceItem:   # fail
                     bx, by = facts.blocks[x.block_id], facts.blocks[y.block_id]
                     if overlaps(bx.start, bx.end, by.start, by.end):
                         clashes.append(f"{kind} {rid} is on overlapping blocks {bx.id} and {by.id}")
+    replaced = _Replaced(option)
     for a in option.assignments:
         b = facts.blocks[a.block_id]
         keys = [f"vehicle:{a.spare_id}"] + ([f"operator:{o}"] if (o := _eff_operator(a, facts)) else [])
         for k in keys:
             for s, e, bid in facts.commitments.get(k, []):
-                if bid != b.id and overlaps(b.start, b.end, s, e):
+                if bid != b.id and (k, bid) not in replaced and overlaps(b.start, b.end, s, e):
                     clashes.append(f"{k.replace(':', ' ')} is already on block {bid} during {b.id}")
     if clashes:
         return item("double_booking", "violation", "native", "; ".join(sorted(set(clashes))))

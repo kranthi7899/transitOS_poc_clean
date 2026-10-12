@@ -111,8 +111,9 @@ class Facts:
     vehicles     candidate spare vehicles by id
     operators    candidate operators and the blocks' current operators by id
     ready_count  ready spares (trigger vehicle excluded) free over the horizon; None = unknown
-    commitments  other scheduled work per resource ("vehicle:<id>" / "operator:<id>") that is NOT one of
-                 `blocks`; None = the schedule feed is not available (double-booking then fails closed)
+    commitments  scheduled work per resource ("vehicle:<id>" / "operator:<id>"), the whole feed (it may include
+                 `blocks` themselves: the commitments an option replaces are ignored there, F12/A150);
+                 None = the schedule feed is not available (double-booking then fails closed)
     profiles     capability profile per product ("scheduling", "workforce")
     """
     blocks: dict[str, Block]

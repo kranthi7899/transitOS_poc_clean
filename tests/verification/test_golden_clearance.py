@@ -30,12 +30,12 @@ def _date(v):
     return v
 
 
-def block(spec, bid="b1", op="op-1", start_h=1.0, hours=4.0, unknown=()) -> Block:
+def block(spec, bid="b1", op="op-1", start_h=1.0, hours=4.0, unknown=(), vid="veh-1") -> Block:
     spec = dict(spec or {})
     start_h, hours = spec.pop("start_h", start_h), spec.pop("hours", hours)
     needs = {"seats": 30, "wheelchair_positions": 1, "lift": True, "type": "standard", **spec,
              "unknown_fields": list(unknown or ())}
-    return Block(id=bid, vehicle_id="veh-1", operator_id=op, start=T0 + timedelta(hours=start_h),
+    return Block(id=bid, vehicle_id=vid, operator_id=op, start=T0 + timedelta(hours=start_h),
                  end=T0 + timedelta(hours=start_h + hours), start_depot="North", needs=Needs(**needs))
 
 
@@ -83,7 +83,8 @@ def run_row(row):
         return [kill_switch_item(row["kill_switch"])], None
     if "option" in row:
         o = row["option"]
-        blocks = {b[0]: block(None, b[0], b[3] if len(b) > 3 else f"op-{n + 1}", b[1], b[2])
+        blocks = {b[0]: block(None, b[0], b[3] if len(b) > 3 else f"op-{n + 1}", b[1], b[2],
+                              vid=b[4] if len(b) > 4 else "veh-1")   # bug sweep A (F12): current vehicle
                   for n, b in enumerate(o["blocks"])}
         ids = {"op-1", "op-2"} | {b.operator_id for b in blocks.values() if b.operator_id} | \
               {a[2] for a in o["assign"] if len(a) > 2}

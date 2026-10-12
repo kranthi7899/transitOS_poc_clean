@@ -247,6 +247,22 @@ def test_schedule_feed_missing_fails_closed_the_documented_exception():
     assert got and all((i.status, i.basis) == ("violation", "unknown") for i in got)
 
 
+def test_f12_option_that_moves_an_operator_off_a_block_still_fails_closed_without_the_feed():
+    """Bug sweep A (F12, A150): ignoring the commitments an option replaces needs the feed; with no feed the
+    option that moves op-1 off b1 onto an overlapping b2 is still a fail-closed violation, never a pass."""
+    b1 = base_block()
+    b2 = Block(id="b2", vehicle_id="veh-5", operator_id="op-2", start=b1.start + timedelta(hours=1),
+               end=b1.end + timedelta(hours=1), start_depot="North", needs=b1.needs)
+    f = Facts(blocks={"b1": b1, "b2": b2}, vehicles={"veh-2": base_vehicle(), "veh-3": base_vehicle(id="veh-3")},
+              operators={"op-1": base_operator(), "op-2": base_operator(id="op-2"), "op-3": base_operator(id="op-3")},
+              ready_count=4, commitments=None,
+              profiles={"scheduling": native_profile("scheduling"), "workforce": native_profile("workforce")})
+    opt = Option((Assign("b1", "veh-2", "op-3"), Assign("b2", "veh-3", "op-1")))
+    got = [i for i in safe_evaluate(opt, f, POL, T0).items if i.rule == "double_booking"]
+    assert got and all((i.status, i.basis) == ("violation", "unknown") for i in got)
+    assert safe_evaluate(opt, f, POL, T0).excluded
+
+
 @pytest.mark.parametrize("field,value", [("hours_today", 0.0), ("hours_today", 9.9), ("hours_week", 0.0),
                                          ("hours_week", 69.9)])
 def test_accumulated_hours_with_a_missing_input_are_never_a_pass_or_violation(field, value):

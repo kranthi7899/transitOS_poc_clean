@@ -142,14 +142,7 @@ class RulesResolver:
         """F1 (A141): the exact native id maps to `canonical`, but the event's VIN or plate EXACTLY matches a
         DIFFERENT vehicle's valid row and matches none of `canonical`'s rows -> AMBIGUOUS with both. Missing or
         dirty evidence is unknown (no contradiction); a name alone never overrides the id."""
-        ev_plate, ev_vin, _ = _hard_evidence(evidence)
-        if ev_plate is None and ev_vin is None:
-            return None
-        hits: dict[str, list[str]] = {}
-        for r in self.source.rows(agency):
-            if r.agency == agency and r.entity in VEHICLE_ENTITIES and valid_at(r, at):
-                for _, why in _hard_hits(r, ev_vin, ev_plate):
-                    hits.setdefault(r.canonical_id, []).append(f"{why} ({r.product} {r.native_id})")
+        hits = self._hard_hits_at(agency, evidence, at)
         others = {c: ev for c, ev in hits.items() if c != canonical}
         if not others or canonical in hits:
             return None
@@ -159,6 +152,29 @@ class RulesResolver:
                             evidence=sorted(ev)) for c, ev in others.items()]
         return Resolution(outcome="AMBIGUOUS", confidence=1.0,
                           candidates=sorted(cands, key=lambda c: (-c.score, c.canonical_id)))
+
+    def _hard_hits_at(self, agency: str, evidence: Evidence, at: datetime) -> dict[str, list[str]]:
+        """canonical id -> the exact VIN / plate hits of the event's evidence on that vehicle's rows valid at `at`."""
+        ev_plate, ev_vin, _ = _hard_evidence(evidence)
+        hits: dict[str, list[str]] = {}
+        if ev_plate is None and ev_vin is None:
+            return hits
+        for r in self.source.rows(agency):
+            if r.agency == agency and r.entity in VEHICLE_ENTITIES and valid_at(r, at):
+                for _, why in _hard_hits(r, ev_vin, ev_plate):
+                    hits.setdefault(r.canonical_id, []).append(f"{why} ({r.product} {r.native_id})")
+        return hits
+
+    def conflict_notes(self, agency: str, evidence: Evidence, at: datetime, canonical: str) -> list[str]:
+        """G2 (A149): on the fast path, when the event's VIN or plate matches `canonical`'s own rows (so it is no F1
+        contradiction and the event resolves to `canonical`) but ALSO exactly matches another vehicle's row valid at
+        `at`, each such hit is returned as a note `<vin|plate>_matches_other_vehicle:<canonical>` for the audit.
+        Never changes the outcome. Missing or dirty evidence, and ended rows, are no conflict."""
+        hits = self._hard_hits_at(agency, evidence, at)
+        if canonical not in hits:
+            return []
+        return sorted({f"{why.split(' ', 1)[0]}_matches_other_vehicle:{c}"
+                       for c, whys in hits.items() if c != canonical for why in whys})
 
     def resolve(self, agency: str, product: str, evidence: Evidence, at: datetime) -> Resolution:
         return self.resolve_detailed(agency, product, evidence, at)[0]

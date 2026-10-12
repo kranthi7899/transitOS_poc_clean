@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,7 +19,7 @@ from transitos.contracts.envelope import CloudEvent
 
 from .db import Db
 from .pg import split_script
-from .resolver import utc, valid_at
+from .resolver import VEHICLE_ENTITIES, utc, valid_at
 
 _ENTRIES = """(
   agency TEXT NOT NULL, product TEXT NOT NULL, native_id TEXT NOT NULL, vf TEXT NOT NULL DEFAULT '',
@@ -44,6 +45,8 @@ ALTER TABLE xw_entries_v2 RENAME TO xw_entries;
 CREATE INDEX IF NOT EXISTS ix_xw_canon ON xw_entries(agency, canonical_id);
 """
 COLS = "agency,product,native_id,vf,entity,canonical_id,valid_to,vin,plate,display_name"
+# G3: every row of one canonical id; validity and entity are filtered in Python (both dialects agree)
+ALL_IDS_SQL = f"SELECT {COLS} FROM xw_entries WHERE agency=? AND canonical_id=?"
 RECOVER_V2 = {   # F7: what start-up does with an orphaned xw_entries_v2 (see SqliteCrosswalk._recover)
     "merge": (f"INSERT OR IGNORE INTO xw_entries({COLS}) SELECT {COLS} FROM xw_entries_v2",
               "DROP TABLE xw_entries_v2"),
@@ -74,11 +77,13 @@ def _current_first(e: CrosswalkEntry) -> tuple:
 
 
 class SqliteCrosswalk:
-    def __init__(self, db: Db | str, bus=None):
+    def __init__(self, db: Db | str, bus=None, clock: Callable[[], datetime] | None = None):
         """bus (optional, a SqliteBus) lets resolve() recover a parked event body from events.raw when
-        add_unresolved() was called without it (the contract signature carries only the event id)."""
+        add_unresolved() was called without it (the contract signature carries only the event id). clock
+        (optional; the System passes its simulated clock) is what 'now' means for all_ids without `at` (G3)."""
         self.db = Db(db) if isinstance(db, str) else db
         self.bus = bus
+        self.clock = clock
         self._recover()
         self.db.script(SCHEMA)
         self._migrate()
@@ -138,12 +143,22 @@ class SqliteCrosswalk:
         c = self.candidates(agency, product, native_id, at)
         return c[0].canonical_id if c else None
 
-    def all_ids(self, agency: str, canonical_id: str) -> dict[str, str]:
-        """product -> the canonical id's CURRENT native id there (open-ended row first, else the latest one)."""
-        rows = self.db.execute(f"SELECT {COLS} FROM xw_entries WHERE agency=? AND canonical_id=?",
-                               (agency, canonical_id)).fetchall()
+    def all_ids(self, agency: str, canonical_id: str, at: datetime | None = None,
+                entities: tuple[str, ...] = VEHICLE_ENTITIES) -> dict[str, str]:
+        """product -> the canonical id's native id there VALID at `at` (G3, A147-A148). Only rows whose entity is in
+        `entities` count (default: a vehicle's vehicle/asset rows; operators pass ("operator",)). `at` None = now on
+        this store's clock; a store built without a clock keeps the pre-G3 rule (open-ended row first, else the
+        latest one: only stores no System owns, i.e. tests and tools, A147). A product with no valid row is left out
+        (unknown), never filled from an ended or future-dated row. Several rows valid at once (a data conflict):
+        the latest-starting one, deterministic."""
+        rows = self.db.execute(ALL_IDS_SQL, (agency, canonical_id)).fetchall()
+        ens = [en for en in (_entry(r) for r in rows) if en.entity in entities]
+        if at is None and self.clock is not None:
+            at = self.clock()
+        if at is not None:
+            ens = [en for en in ens if valid_at(en, at)]
         out: dict[str, str] = {}
-        for en in sorted((_entry(r) for r in rows), key=_current_first):
+        for en in sorted(ens, key=_current_first):
             out.setdefault(en.product, en.native_id)
         return out
 

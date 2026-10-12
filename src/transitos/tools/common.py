@@ -46,7 +46,9 @@ class StaticCrosswalk:
     def lookup(self, agency: str, product: str, native_id: str) -> str | None:
         return self._by_native.get((agency, product, native_id))
 
-    def all_ids(self, agency: str, canonical_id: str) -> dict[str, str]:
+    def all_ids(self, agency: str, canonical_id: str, at: datetime | None = None,
+                entities: tuple[str, ...] | None = None) -> dict[str, str]:
+        """No validity or entity is stored here (a test double): `at` and `entities` are accepted and ignored (A147)."""
         return dict(self._by_canonical.get((agency, canonical_id), {}))
 
     def add_unresolved(self, agency: str, product: str, native_id: str, event_id: str) -> None:
@@ -127,7 +129,11 @@ def unavailable(product: str, note: str) -> Result:
     return Result.unavailable(product, note)
 
 
-def native_of(deps: Deps, agency: str, canonical: str, product: str) -> str | None:
+def native_of(deps: Deps, agency: str, canonical: str, product: str, *, operator: bool = False) -> str | None:
+    """The canonical id's native id in `product`, valid now (G3, A147: the crosswalk filters by validity on the
+    System clock and by entity); None = unknown. `operator=True` asks for an operator's (workforce) id."""
+    if operator:
+        return deps.crosswalk.all_ids(agency, canonical, entities=("operator",)).get(product)  # type: ignore[call-arg]
     return deps.crosswalk.all_ids(agency, canonical).get(product)
 
 
