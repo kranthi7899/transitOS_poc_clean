@@ -35,14 +35,15 @@ real products.
 
 | Component | Design intent (CLAUDE.md, briefs, contracts) | As built | Difference / note |
 |---|---|---|---|
-| Contracts | Frozen pydantic v1, JSON Schema export | v1.1 additive (docs/CONTRACTS.md): resolved-event `refs`, `canonicalid`, `Result.blocked`, `compensation` keyword, compensation keys, `cancel_work_order` action | Committed schemas are tested against the models |
-| Mock products (A) | Five SIMULATED products, chaos, sim clock | As designed + registerable custom fleets, `changed_by` on scheduling writes, RFC3339 workforce windows | `/sim` routes drive repairs, meters, dispatcher actions |
-| Event plumbing (B) | Watch adapters, outbox/relay, bus with replay, crosswalk, audit | As designed; SqliteBus and KafkaBus both implement Producer/Consumer (per-key order, at-least-once, consumer offsets, replay); one contract suite runs on both | Kafka offsets are per-reader delivery tokens; see "Kafka profile" |
+| Contracts | Frozen pydantic v1, JSON Schema export | v1.2 additive (docs/CONTRACTS.md; Phase 10 adds operator qualification, clearance items, per-record `unknown_fields`, crosswalk validity and resolution types); v1.1: resolved-event `refs`, `canonicalid`, `Result.blocked`, `compensation` keyword, compensation keys, `cancel_work_order` action | Committed schemas are tested against the models |
+| Mock products (A) | Five SIMULATED products, chaos, sim clock | As designed + registerable custom fleets, `changed_by` on scheduling writes, RFC3339 workforce windows | `/sim` routes drive repairs, meters, dispatcher actions. Phase 10: VIN/plate/name per product, a messy generated fleet (`agency-088`), a Pending Repair flow, optional zone-less local time and epoch-ms wire formats (default off) |
+| Event plumbing (B) | Watch adapters, outbox/relay, bus with replay, crosswalk, audit | As designed; SqliteBus and KafkaBus both implement Producer/Consumer (per-key order, at-least-once, consumer offsets, replay); one contract suite runs on both | Kafka offsets are per-reader delivery tokens; see "Kafka profile". Phase 10: `plumbing/resolver.py` (MATCH / AMBIGUOUS / NO_MATCH with confidence, VIN check digit, fleet-number folding, validity at the event's time), validity-dated crosswalk, `discovery.py`, panel Pick and "Device moved" |
 | Clearance (C) | One pure module for every hard limit and graded rule | `src/transitos/clearance/`: facts with data provenance (native/derived/assumed/unknown), rules, option evaluation, ranking (top three); fails closed; called by planner, validator, write adapters; verification keeps an outcome tripwire + golden table | Missing data is never a violation and never a silent pass (unverifiable/not_evaluated, acknowledgement by rule id) |
 | Tools (C) | Per-agency registry, adapters, hard limits in code, idempotent writes, kill switch | As designed; blocked writes `Result.blocked`; block reads overlay the workforce assignment | Adapter re-check covers needs/spares/hours/lift, not qualification (A26) |
 | Workflow (D) | LangGraph, interrupts without writes, saga, approval, timers, reasoning interface | As designed + PM urgency rule in code, escalation outcome tags, no undo after a rider-alert attempt | One spare per block (A49); undo order decision (A48) |
 | Panel (E) | Approvals, defects, unresolved ids, kill switch, timeline | As designed + return-to-service decision scope, sim-clock injection | No auth (A42) |
-| Verification (F) | Scenarios, invariants, report, World | 23 scenarios on FakeWorld and on the real integrated world | `World.restart` added on the integration world only |
+| World engine (A) | (Phase 10) Ground truth the products see with their own delay | `src/transitos/world/`: scripted `DayScript`, `GroundTruth`, `ProductLag`, actors (telematics, shop, dispatcher, foreman), seeded stochastic mode from real NTD failure quantiles; detection latency in the report (it restates scripted inputs; it does not measure orchestrator speed) | Deterministic; determinism guarded by an AST test |
+| Verification (F) | Scenarios, invariants, report, World | 49 scenarios (24 original, Step 1 clearance 8, Step 3 world engine 5, Step 2 identity 8, Step 4 shop and time 4) on the real integrated world; FakeWorld skips the lag/wire-format ones | `World.restart` added on the integration world only |
 | Integration | Wire everything | `src/transitos/integration/`: `System` (tick/run_until_idle/restart/recover), panel ports, write log, `IntegrationWorld`, demo | Deterministic single-threaded driver instead of background loops |
 
 ## Local profile vs production mapping
@@ -128,5 +129,10 @@ test suite takes ~160 s on Kafka vs ~10 s on SQLite (topic creation and acks per
   unverifiable (A135); write-time last-spare window is looser than the planner's (F11); a block's own commitments can
   cause a false double-booking exclusion (F12, safe direction).
 - The operations log (approval/expiry/kill-switch ordering) is in memory; durable audit = DecisionStore.
-- No Postgres profile, no authentication, no real LLM, single-threaded driver (no concurrent resumes
+- No authentication, no real LLM, single-threaded driver (no concurrent resumes
   of one run). The Kafka profile has no dynamic consumer-group rebalancing (A51) and no TLS/SASL.
+- Phase 10 gaps (docs/assumptions/phase10-step3.md, phase10-step4.md): the orchestrator cannot know a fault cleared
+  (the telematics mock emits no clear event; A100, A101); a close in the second 01:30 without a `utc_offset` is
+  stamped an hour early (A112); with the local-time knob off, a zone-less workforce CSV cell fails closed in
+  clearance instead of the read returning unavailable (A113); detection latency does not measure orchestrator
+  speed because simulated time does not advance while the system processes.
