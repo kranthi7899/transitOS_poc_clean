@@ -37,7 +37,7 @@ def shop_calls(ports):
 
 
 def test_converts_exactly_after_the_delay_and_never_before():
-    eng, ports, clock = engine(ForemanActor(delay_min=30, parts_wait_prob=0.0, seed=1, defer_prob=0.0))
+    eng, ports, _ = engine(ForemanActor(delay_min=30, parts_wait_prob=0.0, seed=1, defer_prob=0.0))
     ports.add_pending("pr-1", "veh-1")
     eng.run_until(at(9, 29, 59))
     assert shop_calls(ports) == []

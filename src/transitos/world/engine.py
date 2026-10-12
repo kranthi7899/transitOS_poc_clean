@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from typing import Any
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from transitos.mocks.clock import SimClock
 
