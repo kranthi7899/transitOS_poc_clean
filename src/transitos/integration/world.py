@@ -327,7 +327,8 @@ class IntegrationWorld:
                            audit=sorted(audit, key=lambda a: a.seq), vehicles=vehicles, blocks=blocks,
                            operators=ops, work_orders=wos, alerts=self._docs("alerts", "alerts"),
                            dead_letters=dead, attached_events=dict(attached),
-                           events=events, pending_repairs=self._docs("maintenance", "pending_repair"))
+                           events=events, pending_repairs=self._docs("maintenance", "pending_repair"),
+                           shop_log=list(self.engine.shop_log) if self.engine is not None else [])
 
 
 def make_world() -> IntegrationWorld:

@@ -142,7 +142,11 @@ def test_scripts_roundtrip_and_beats_are_sorted():
 BANNED_ATTR = {("time", "time"), ("datetime", "now"), ("datetime", "utcnow"), ("datetime", "today"), ("uuid", "uuid4"),
                ("os", "urandom"), ("random", "random"), ("random", "randint"), ("random", "choice"),
                ("random", "choices"), ("random", "shuffle"), ("random", "uniform"), ("random", "seed"),
-               ("random", "sample"), ("random", "expovariate")}
+               ("random", "sample"), ("random", "expovariate"),
+               # Step 4 fix round F10: every module-level distribution draw (the unseeded global stream)
+               *(("random", f) for f in ("lognormvariate", "gauss", "normalvariate", "betavariate", "gammavariate",
+                                        "triangular", "vonmisesvariate", "weibullvariate", "paretovariate",
+                                        "getrandbits", "randrange", "binomialvariate"))}
 BANNED_IMPORT = {"requests", "httpx", "socket", "urllib", "secrets", "time"}
 
 
@@ -183,6 +187,15 @@ def test_the_determinism_guard_catches_what_it_claims_to():
     for good in ("import random\nrandom.Random(3)", "from random import Random\nRandom('a|b')",
                  "from datetime import datetime\ndatetime.fromisoformat('2026-01-01T00:00:00+00:00')"):
         assert not determinism_violations(good), good
+
+
+@pytest.mark.parametrize("fn", ["lognormvariate", "gauss", "normalvariate", "betavariate", "gammavariate",
+                                "triangular", "vonmisesvariate", "weibullvariate", "paretovariate", "getrandbits",
+                                "randrange", "binomialvariate"])
+def test_the_guard_catches_module_level_distribution_draws(fn):
+    """Step 4 fix round F10: the module-level `random.<distribution>` draws share the unseeded global stream."""
+    assert determinism_violations(f"import random\nrandom.{fn}(1, 2)"), fn
+    assert not determinism_violations(f"import random\nrng = random.Random('s')\nrng.{fn}(1, 2)"), fn
 
 
 def test_world_package_and_its_hooks_have_no_wall_clock_unseeded_randomness_or_network():

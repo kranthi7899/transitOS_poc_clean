@@ -215,4 +215,14 @@ def epoch_ms_to_utc(ms: int) -> datetime:
     """Epoch milliseconds (telematics wire format under the local-time knob, A110) -> aware UTC datetime."""
     if isinstance(ms, bool) or not isinstance(ms, int):
         raise ValueError(f"epoch milliseconds must be an integer, got {ms!r}")  # noqa: TRY004 - a bad payload value
-    return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=ms)
+    # fix round F3 (A146): plausibility range 2000-01-01 (incl.) .. 2100-01-01 (excl.). Epoch SECONDS, nanoseconds,
+    # 0 and negatives are refused, never read as 1970 or as an overflow
+    if not EPOCH_MS_MIN <= ms < EPOCH_MS_MAX:
+        raise ValueError(f"epoch milliseconds {ms} outside 2000-01-01..2100-01-01 (seconds or nanoseconds?)")
+    try:
+        return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=ms)
+    except OverflowError as e:   # unreachable inside the range; kept so an overflow is always a ValueError
+        raise ValueError(f"epoch milliseconds {ms} out of range") from e
+
+
+EPOCH_MS_MIN, EPOCH_MS_MAX = 946_684_800_000, 4_102_444_800_000

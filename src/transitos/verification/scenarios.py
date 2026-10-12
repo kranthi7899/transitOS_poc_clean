@@ -82,6 +82,7 @@ class Scenario:
     expect_work_orders: int | None = None                 # work orders the maintenance product holds at the end
     expect_pending_repairs: int | None = None             # pending repairs the maintenance product holds at the end
     expect_event_times: tuple[tuple[str, str], ...] | None = None  # (event type, RFC 3339 time) that must be on the bus
+    expect_shop_statuses: tuple[str, ...] | None = None   # fix round F5: statuses the foreman set, in this order
 
 
 # ---- event builders -------------------------------------------------------------------------------

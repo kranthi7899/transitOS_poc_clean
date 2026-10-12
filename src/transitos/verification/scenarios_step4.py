@@ -21,14 +21,20 @@ local_time_normalised    PLAN_VALID. The spec's coolant day with the local-time 
                          CSV send zone-less America/New_York wall time (with per-field utc_offset), telematics sends
                          epoch milliseconds. Same outcome and writes as scripted_day_coolant.
 dst_fallback_event       PLAN_VALID. Same knob, on the 2026 US fall-back day (2026-11-01, 02:00 EDT -> 01:00 EST); the
-                         sim clock starts 04:00Z (00:00 EDT) via the `clock_start` knob. Fault 05:40Z = 01:40 EDT; work
-                         order opened 05:41Z ("01:41"); return to service 06:10Z; the shop closes at 06:30Z = "01:30"
-                         EST, a local wall time EARLIER than the opening. The close must still be seen (the poll cursor
-                         never skips it) and stamped 06:30Z (the product's utc_offset disambiguates).
+                         sim clock starts 05:00Z (01:00 EDT) via the `clock_start` knob, so blk-1 runs 06:00Z-10:00Z.
+                         Fault 05:40Z = 01:40 EDT; work order opened 05:41Z ("01:41"); return to service 06:10Z; the
+                         shop closes at 06:30Z = "01:30" EST, a local wall time EARLIER than the opening. The close must
+                         still be seen (the poll cursor never skips it) and stamped 06:30Z (the product's utc_offset
+                         disambiguates). Fix round F2: the operators' availability starts 05:00Z, which the offset-less
+                         workforce CSV says as "01:00" (ambiguous); it is read conservatively as 06:00Z (A145), which
+                         is not after the 06:00Z block start. With the block at 05:00Z (the first draft, clock_start
+                         04:00Z) nobody is known to be available and the run escalates: that case is a test
+                         (test_through_clearance_on_the_fall_back_day_an_ambiguous_start_is_not_available).
 
 Known gap (A112): without the product's utc_offset, the second 01:30 is read as the first (documented rule), so a
-close in the repeated hour is stamped an hour early; dst_fallback_event runs WITH offsets, and a test pins the
-without-offset consequence. The workforce CSV carries no offsets at all.
+close or event time in the repeated hour is stamped an hour early. That affects only the event's own time, not
+clearance (the workforce CSV, which has no offsets, is read conservatively per field, A145). dst_fallback_event runs
+WITH offsets; a test pins the without-offset consequence.
 
 Why a `clock_start` knob (A114): every older scenario starts at T0 = 2026-10-10 06:00Z and IntegrationWorld built its
 SimClock from that constant; there was no other mechanism. Default None keeps T0 for every older scenario.
@@ -89,6 +95,15 @@ def _tw(**kw) -> Step4Tweaks:
 
 _RETURN = (("approve", "return_to_service"),)
 
+GAP_LOCAL_WIRE = ("A108: this row's checks (outcome, writes, UTC event times) would pass just the same if the knob "
+                  "were ignored and every product sent UTC; it does NOT prove the wire was zone-less local time or "
+                  "epoch ms. That proof is test_local_time_wire_is_really_local_and_the_bus_is_utc.")
+GAP_FALLBACK = ("A112: passes because the maintenance product sends a per-field utc_offset. Without one, the second "
+                "01:30 is read as the first (documented rule) and the close event is stamped 05:30Z, an hour early "
+                "and before its own opening (pinned by test_dst_fallback_without_offsets_follows_the_documented_rule"
+                "_known_gap). Only the event's own time is wrong; clearance reads the offset-less CSV conservatively "
+                "(A145).")
+
 STEP4_SCENARIOS: tuple[Scenario, ...] = (
     _s("repair_with_parts_wait", "Pending repair: the foreman puts it on a work order at 09:51, parts wait 3 h; the "
        "run stays in wait_for_repair through WAITING_PARTS and IN_PROGRESS and resumes only on the 14:20 close",
@@ -99,6 +114,7 @@ STEP4_SCENARIOS: tuple[Scenario, ...] = (
        tweaks=_tw(world_script=_coolant(T0, (9, 40), (10, 15), (14, 0)), maintenance_mode="pending_repair",
                   foreman=ForemanSpec(delay_min=10, parts_wait_prob=1.0, defer_prob=0.0, parts_hours=3.0)),
        expect_wo_creates=1, expect_work_orders=1, expect_pending_repairs=1,
+       expect_shop_statuses=("IN_PROGRESS", "WAITING_PARTS", "IN_PROGRESS"),        # F5: the parts wait happened
        expect_event_times=(("WorkOrderOpened", "2026-10-10T09:51:00+00:00"),       # the foreman's conversion
                            ("WorkOrderClosed", "2026-10-10T14:20:00+00:00")),      # the shop's close, not earlier
        real_world_only=True, real_world_reason=WIRE_REASON),
@@ -122,7 +138,7 @@ STEP4_SCENARIOS: tuple[Scenario, ...] = (
        expect_event_times=(("VehicleFaultDetected", "2026-10-10T09:40:05+00:00"),  # epoch ms on the wire
                            ("WorkOrderOpened", "2026-10-10T09:41:00+00:00"),       # "05:41" local on the wire
                            ("WorkOrderClosed", "2026-10-10T11:50:00+00:00")),
-       real_world_only=True, real_world_reason=WIRE_REASON),
+       known_gap=GAP_LOCAL_WIRE, real_world_only=True, real_world_reason=WIRE_REASON),
     _s("dst_fallback_event", "Fall-back day 2026-11-01: work order opened 01:41 EDT, closed 01:30 EST (an earlier "
        "local wall time); the close is seen, stamped 06:30Z, and the run returns to service",
        Outcome.PLAN_VALID,
@@ -130,9 +146,9 @@ STEP4_SCENARIOS: tuple[Scenario, ...] = (
         ("world_until", "07:00"), *_RETURN),
        events=[fault_event()],
        tweaks=_tw(world_script=_coolant(FALL_BACK, (5, 40), (6, 0), (6, 10)), local_time=True,
-                  clock_start=_at(FALL_BACK, 4)),
+                  clock_start=_at(FALL_BACK, 5)),
        expect_wo_creates=1, expect_work_orders=1, expect_pending_repairs=0,
        expect_event_times=(("WorkOrderOpened", "2026-11-01T05:41:00+00:00"),       # "01:41" EDT, first pass
                            ("WorkOrderClosed", "2026-11-01T06:30:00+00:00")),      # "01:30" EST, second pass
-       real_world_only=True, real_world_reason=WIRE_REASON),
+       known_gap=GAP_FALLBACK, real_world_only=True, real_world_reason=WIRE_REASON),
 )

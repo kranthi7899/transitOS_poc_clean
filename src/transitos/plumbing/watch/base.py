@@ -46,6 +46,15 @@ def make_event(agency: str, product: str, event_id: str, type_: str, time: str |
     )
 
 
+def zoned(value: Any) -> Any:
+    """A product time that must carry its zone (no local-time setting for the agency): returned unchanged when it
+    does; a zone-less value raises ValueError and is never read as UTC (A108, fix round F1)."""
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise ValueError(f"zone-less timestamp {value!r} and the agency has no local_time setting: zone unknown (A108)")
+    return value
+
+
 def identity_evidence(vin: Any, plate: Any, name: Any) -> dict[str, str]:
     """Phase 10 Step 2 (B-1): the VIN, plate and name the product reported, as event data `native_vin`,
     `native_plate`, `native_name`. A blank or absent value is left out (unknown), never sent as ''."""
@@ -101,10 +110,8 @@ class Poller:
     def ts(self, doc: dict, key: str) -> str | datetime:
         """The event time from a product record. A time that cannot be read (zone unknown, mixed formats) holds
         the whole poll (UpstreamError: state kept, retried) rather than emitting an event with a guessed time."""
-        if self.read_time is None:
-            return doc[key]
         try:
-            return self.read_time(doc, key)
+            return zoned(doc[key]) if self.read_time is None else self.read_time(doc, key)
         except ValueError as e:
             raise UpstreamError(f"{self.product} timestamp {key}={doc.get(key)!r}: {e}") from e
 
