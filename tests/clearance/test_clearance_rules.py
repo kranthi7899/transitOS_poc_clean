@@ -139,11 +139,21 @@ def test_length_restriction_violated_by_native_length():
     assert (it.status, it.basis) == ("violation", "native")
 
 
-def test_length_falls_back_to_assumed_class_default_and_says_so():
-    it = one(vehicle_items(blk(max_vehicle_length_ft=45.0), veh(type="articulated"), facts(), POL), "vehicle_length")
-    assert (it.status, it.basis) == ("violation", "assumed")
-    ok = one(vehicle_items(blk(max_vehicle_length_ft=45.0), veh(type="standard"), facts(), POL), "vehicle_length")
-    assert (ok.status, ok.basis) == ("pass", "assumed")
+def test_length_not_provided_is_unverifiable_never_a_typical_value():
+    """Owner Q1: no class default stands in for a length the product did not provide, whatever the class."""
+    for vtype in ("articulated", "standard", "cutaway"):
+        it = one(vehicle_items(blk(max_vehicle_length_ft=30.0), veh(type=vtype), facts(), POL), "vehicle_length")
+        assert (it.status, it.basis, it.requires_ack) == ("unverifiable", "unknown", True), vtype
+        assert "length_ft" in it.detail          # the acknowledgement names the missing field
+
+
+def test_length_provided_decides_even_for_a_short_class():
+    over = one(vehicle_items(blk(max_vehicle_length_ft=30.0), veh(type="cutaway", length=33.0), facts(), POL),
+               "vehicle_length")
+    assert (over.status, over.basis) == ("violation", "native")
+    ok = one(vehicle_items(blk(max_vehicle_length_ft=45.0), veh(type="articulated", length=44.0), facts(), POL),
+             "vehicle_length")
+    assert (ok.status, ok.basis) == ("pass", "native")
 
 
 def test_length_unknown_type_is_unverifiable():

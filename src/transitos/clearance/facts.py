@@ -78,7 +78,6 @@ class Tables:
     passenger_endorsement_code: str
     vehicle_requirements: Mapping[str, Mapping[str, Any]]
     vehicle_order: tuple[str, ...]
-    typical_length_ft: Mapping[str, float]
 
 
 @functools.lru_cache(maxsize=4)
@@ -87,7 +86,7 @@ def load_tables(config_dir: str | None = None) -> Tables:
     lic = yaml.safe_load((base / "licence_classes.yaml").read_text())
     veh = yaml.safe_load((base / "vehicle_classes.yaml").read_text())
     return Tables(tuple(lic["licence_order"]), lic.get("passenger_endorsement_code", "P"),
-                  dict(lic["vehicle_types"]), tuple(veh["order"]), dict(veh.get("typical_length_ft", {})))
+                  dict(lic["vehicle_types"]), tuple(veh["order"]))
 
 
 Interval = tuple[datetime, datetime, str]

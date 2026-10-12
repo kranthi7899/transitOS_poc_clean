@@ -161,7 +161,7 @@ POSSIBLE: dict[str, tuple[tuple[str, str], ...]] = {
     **{r: _KNOWN + _UNV for r in SAFETY},
     "vehicle_ready": _KNOWN,
     "vehicle_fit": _KNOWN + (("warn", "native"),) + _UNV,
-    "vehicle_length": _KNOWN + (("pass", "assumed"), ("violation", "assumed")) + _UNV,
+    "vehicle_length": _KNOWN + _UNV,
     "operator_hours_week": _KNOWN + (("violation", "derived"),) + _UNV,
     **{r: (("pass", "native"), ("warn", "native"), ("not_evaluated", "unknown")) for r in OPTIONAL},
     "double_booking": _KNOWN + (("violation", "unknown"),),
@@ -199,7 +199,8 @@ def why_impossible(rule: str, status: str, basis: str) -> str:
         return "only the weekly cap has a derived source (today's hours as a lower bound), which can only prove " \
                "a breach, never a pass"
     if basis == "assumed":
-        return "only the vehicle length has an agency default (A66 typical length by class)"
+        return "owner Q1: an agency default or a 'typical for the type' value never decides anything, so no rule " \
+               "produces an assumed basis; what the product did not provide is unknown"
     if rule == "operator_eligible":
         return "the rule only exists to refuse an operator outside the code-built list"
     if rule == "clearance_error":

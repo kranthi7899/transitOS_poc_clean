@@ -103,15 +103,12 @@ def vehicle_fit_item(block: Block, v: Vehicle, facts: Facts, policy: AgencyPolic
 
 
 def resolve_length(v: Vehicle, facts: Facts) -> Datum:
-    """Vehicle length in the resolution order: native record, then the tagged class default (A66), else unknown.
-    The class default needs a KNOWN type."""
+    """Vehicle length: ONLY a value the product provided (owner decision Q1). No class default, no 'typical for the
+    type' value: those never decide anything, so a vehicle whose product gave no length is unverifiable."""
     lb = facts.record_basis("scheduling", "length_ft", v)
     if v.length_ft is not None and lb != "unknown":
         return Datum(v.length_ft, lb, "recorded length")
-    if facts.record_basis("scheduling", "type", v) != "unknown" and v.type in facts.tables.typical_length_ft:
-        return Datum(facts.tables.typical_length_ft[v.type], "assumed",
-                     f"assumed typical length for class {v.type} (A66)")
-    return Datum(None, "unknown", f"no length on record and none assumed for type {v.type}")
+    return Datum(None, "unknown", "length_ft not provided by the product")
 
 
 def vehicle_length_item(block: Block, v: Vehicle, facts: Facts) -> ClearanceItem | None:
@@ -123,7 +120,7 @@ def vehicle_length_item(block: Block, v: Vehicle, facts: Facts) -> ClearanceItem
     length = resolve_length(v, facts)
     if length.value is None:
         return unverifiable("vehicle_length", f"{v.id}: {length.note}")
-    over = length.value > limit + EPS   # a breach on an ASSUMED default excludes and says it is assumed (A70; F9)
+    over = length.value > limit + EPS   # only a PROVIDED value can exclude (owner Q1)
     return item("vehicle_length", "violation" if over else "pass", length.basis,
                 f"{v.id}: {length.note} {length.value:g} ft vs block limit {limit:g} ft")
 

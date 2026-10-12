@@ -88,7 +88,7 @@ CASES = [
     # R2-1: the operator rules that depend on the vehicle's type
     *[(r, "vehicle", "type", "type", ["bus", "standard", "cutaway", "articulated"])
       for r in ("operator_licence_class", "operator_vehicle_training", "operator_training_expiry")],
-    ("vehicle_length", "vehicle", "length_ft", "length_ft", [None, 10.0, 99.0]),          # -> assumed (Q3, A66)
+    ("vehicle_length", "vehicle", "length_ft", "length_ft", [None, 10.0, 99.0]),          # not provided -> unverifiable (Q1)
     ("vehicle_seats", "needs", "seats", None, [0, 100]),
     ("vehicle_wheelchair", "needs", "wheelchair_positions", None, [0, 9]),
     ("vehicle_lift", "needs", "lift", None, [False, True]),
@@ -177,9 +177,6 @@ def test_missing_input_is_never_a_pass_and_never_a_violation(case, variant, valu
     got = judge(rule, block, vehicle, op, facts)
     assert got, f"{rule} reported nothing when {record}.{field} was missing ({variant})"
     assert all(noteworthy(i) for i in got)     # F3: never hidden from the plan/decision record as a clean pass
-    if (rule, field) == ("vehicle_length", "length_ft"):      # documented exception: class default, ASSUMED
-        assert all(i.basis == "assumed" for i in got), [i.model_dump() for i in got]
-        return
     want = "not_evaluated" if rule in OPTIONAL else "unverifiable"
     assert all(i.status == want and i.basis == "unknown" for i in got), [i.model_dump() for i in got]
     assert all(i.requires_ack == (want == "unverifiable") for i in got)
@@ -334,7 +331,7 @@ def test_type_unknown_endorsement_follows_the_configured_types_not_a_constant():
     mixed = Tables(t.licence_order, t.passenger_endorsement_code,
                    {**t.vehicle_requirements, "van": {"min_licence_class": "C", "passenger_endorsement": False,
                                                       "training_type": "van"}},
-                   t.vehicle_order, t.typical_length_ft)
+                   t.vehicle_order)
     vehicle = base_vehicle(type="bus", unknown_fields=["type"])
     f = Facts(blocks={"b1": base_block()}, vehicles={vehicle.id: vehicle},
               operators={"op-1": base_operator(endorsements=[])}, ready_count=3, commitments={},
