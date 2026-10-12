@@ -84,6 +84,10 @@ def build_defect_event(body: DefectBody, now: datetime | None = None) -> CloudEv
               "reported_by": body.user})
 
 
+# H3 (A161): what a native id names in each product (the crosswalk seed's entities); a human pick is stored with it
+ENTITY_BY_PRODUCT = {"telematics": "vehicle", "scheduling": "vehicle", "maintenance": "asset", "workforce": "operator"}
+
+
 # ---------------------------------------------------------------- HTML helpers
 CSS = """
 *{box-sizing:border-box}body{font:16px/1.4 system-ui,sans-serif;margin:0;background:#f4f5f7;color:#1b1f24}
@@ -207,6 +211,11 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         # G1: move=True is 'device moved' (close the id's row at the event time, open the picked vehicle's)
         if move and getattr(crosswalk, "move", None) is None:
             raise HTTPException(422, "this crosswalk store has no 'device moved' action")
+        # H3 (A161): the entity comes from the product, server side, never from the page; an unknown product is refused
+        entity = ENTITY_BY_PRODUCT.get(entry.product)
+        if entity is None:
+            raise HTTPException(422, f"unknown product {entry.product!r}: cannot tell what the id names")
+        entry = entry.model_copy(update={"entity": entity})
         pick = crosswalk.move if move else (getattr(crosswalk, "pick", None) or crosswalk.resolve)
         try:
             released = pick(entry)
@@ -371,8 +380,7 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         def hidden(i: dict) -> str:
             return (f"<input type='hidden' name='agency' value='{_e(i['agency'])}'>"
                     f"<input type='hidden' name='product' value='{_e(i['product'])}'>"
-                    f"<input type='hidden' name='native_id' value='{_e(i['native_id'])}'>"
-                    "<input type='hidden' name='entity' value='vehicle'>")
+                    f"<input type='hidden' name='native_id' value='{_e(i['native_id'])}'>")   # entity: server (H3)
 
         def candidates(i: dict) -> str:   # Phase 10 Step 2: the resolver's candidates and evidence, one pick each
             out = "".join(
