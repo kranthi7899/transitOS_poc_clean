@@ -1,6 +1,8 @@
 """Interpret a Scenario against any World; classify the outcome; check expectations + invariants."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from .invariants import check_by_invariant, hard_limits_not_checked
@@ -70,12 +72,17 @@ class ScenarioResult(BaseModel):
         return self.outcome_ok and self.invariants_ok
 
 
-def drive(world: World, scenario: Scenario) -> Observation:
+def drive(world: World, scenario: Scenario, notes: list[str] | None = None) -> Observation:
     world.apply(scenario)
     for op in scenario.script:
         name, arg = op[0], (op[1] if len(op) > 1 else None)
         runs = world.observe().runs
         rid = runs[0].run_id if runs else None
+        if name == "expect_status":       # Phase 10 Step 4: the run's status at this point of the script
+            got = runs[0].status if runs else "no run"
+            if got != arg and notes is not None:
+                notes.append(f"at {op} the run was {got!r}")
+            continue
         if name == "deliver":
             world.deliver(scenario.events[arg])
         elif name == "world_until":      # Phase 10 Step 3: run the world engine to HH:MM on the scenario day
@@ -108,16 +115,25 @@ def run_scenario(world: World, scenario: Scenario, keep_observation: bool = Fals
         # a world that cannot model product lag does not get to agree with a scenario that depends on it
         return ScenarioResult(scenario_id=scenario.id, title=scenario.title, expected=scenario.expected.value,
                               outcome="SKIPPED", known_gap=scenario.known_gap,
-                              skipped="needs per-product lag, which this world does not model (FakeWorld has no lag)")
-    obs = drive(world, scenario)
-    outcome = classify(obs)
+                              skipped=scenario.real_world_reason
+                              or "needs per-product lag, which this world does not model (FakeWorld has no lag)")
     mism: list[str] = []
+    obs = drive(world, scenario, mism)
+    outcome = classify(obs)
     if outcome != scenario.expected.value:
         mism.append(f"outcome {outcome!r} != expected {scenario.expected.value!r}")
     if len(obs.runs) != scenario.expect_runs:
         mism.append(f"{len(obs.runs)} runs != expected {scenario.expect_runs}")
     if scenario.expect_wo_creates is not None and wo_creates(obs) != scenario.expect_wo_creates:
         mism.append(f"{wo_creates(obs)} WOs created != expected {scenario.expect_wo_creates}")
+    if scenario.expect_work_orders is not None and len(obs.work_orders) != scenario.expect_work_orders:
+        mism.append(f"{len(obs.work_orders)} work orders in maintenance != expected {scenario.expect_work_orders}")
+    if scenario.expect_pending_repairs is not None and len(obs.pending_repairs) != scenario.expect_pending_repairs:
+        mism.append(f"{len(obs.pending_repairs)} pending repairs != expected {scenario.expect_pending_repairs}")
+    for etype, at in scenario.expect_event_times or ():
+        seen = sorted(e["time"] for e in obs.events if e["type"] == etype)
+        if not any(datetime.fromisoformat(t) == datetime.fromisoformat(at) for t in seen):
+            mism.append(f"no {etype} at {at} (saw {seen})")
     if scenario.expect_plan_version is not None and obs.runs and obs.runs[0].plan_version != scenario.expect_plan_version:
         mism.append(f"plan_version {obs.runs[0].plan_version} != expected {scenario.expect_plan_version}")
     if scenario.expect_forward_actions is not None:
