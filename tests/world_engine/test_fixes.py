@@ -138,8 +138,10 @@ def test_a_failing_port_call_does_not_lose_the_other_due_reactions():
     eng.tick()                                              # retry
     eng.tick()
     kinds = sorted((o.product, o.kind) for o in eng.observations_log)
+    # bug sweep B (A156) deliberately added ("scheduling", "return_to_service"): the dispatcher returns its own pull
     assert kinds == sorted([("telematics", "fault_on"), ("scheduling", "fault_on"), ("maintenance", "fault_on"),
-                            ("telematics", "fault_off"), ("maintenance", "return_to_service")])
+                            ("telematics", "fault_off"), ("maintenance", "return_to_service"),
+                            ("scheduling", "return_to_service")])
     assert [c[0] for c in ports.calls].count("telematics_fault") == 1                  # performed once, after the retry
 
 

@@ -18,6 +18,7 @@ from ..db import Db
 from .base import (
     Poller,
     UpstreamError,
+    digest,
     identity_evidence,
     load_state,
     make_event,
@@ -134,15 +135,24 @@ class TelematicsBackfillPoller(Poller):
             self.last_error = repr(e)
             return 0
         self.last_error = None
+        self._begin_records()
         added = 0
-        try:
-            with self.db.tx() as c:
-                for item in data.get("items", []):
+        with self.db.tx() as c:
+            for item in data.get("items", []):
+                rk = f"event:{item.get('eventId')}" if isinstance(item, dict) and item.get("eventId") \
+                    else f"digest:{digest(item)}"
+                try:
+                    # every check of ingest_payload (time, fields) runs before its first write, so a refused item
+                    # leaves nothing behind in this transaction
                     added += ingest_payload(c, self.agency, item)
-                if self.before_commit:
-                    self.before_commit()
-                save_state(c, self.name, data.get("next_cursor") or cursor, {})
-        except ValueError as e:   # Step 4.2: an unreadable time holds the page (rolled back), never a guessed time
-            self.last_error = repr(e)
-            return 0
+                except ValueError as e:
+                    # bug sweep B (F7-R4, A155): an unreadable item (zone-less time, implausible epoch) is rejected on
+                    # its own: never emitted with a guessed time, kept in poll_rejects, the rest of the page goes on
+                    self.reject(rk, item.get("eventId") if isinstance(item, dict) else None, item, e)
+                    continue
+                self.accept(rk)
+            self._write_records(c)
+            if self.before_commit:
+                self.before_commit()
+            save_state(c, self.name, data.get("next_cursor") or cursor, {})
         return added

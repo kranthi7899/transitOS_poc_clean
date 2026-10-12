@@ -68,7 +68,7 @@ from transitos.plumbing.watch import (
     WebhookReceiver,
     WorkforcePoller,
 )
-from transitos.plumbing.watch.base import zoned
+from transitos.plumbing.watch.base import list_rejects, zoned
 from transitos.tools.common import payload_time_reader
 from transitos.tools.idem_store import IdemStore
 from transitos.tools.policy import CONFIG_DIR as TOOLS_CONFIG_DIR
@@ -185,6 +185,8 @@ class System:
         c, a = self.mocks.clients, self.agency
         self.pollers = [MaintenancePoller(self.db, c["maintenance"], a), SchedulingPoller(self.db, c["scheduling"], a),
                         WorkforcePoller(self.db, c["workforce"], a), TelematicsBackfillPoller(self.db, c["telematics"], a)]
+        for p in self.pollers:   # bug sweep B (A155): reject rows carry SIM time
+            p.clock = self.clock.now
         self.webhook = WebhookReceiver(self.db, a)
         self.webhook_client = TestClient(self.webhook.app(), base_url="http://transitos")
         self.audit_consumers = [AuditConsumer(self.db, self.bus, "raw"), AuditConsumer(self.db, self.bus, "resolved")]
@@ -219,7 +221,8 @@ class System:
         self.gateway = GraphRunGateway(self)
         self.panel = create_panel(gateway=self.gateway, crosswalk=self.xw, events=OutboxEventSink(self),
                                   audit=StoreAuditReader(self), killswitch=KillSwitchPort(self.killswitch, self._log_ks),
-                                  unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now)
+                                  unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now,
+                                  poll_rejects=lambda ag: list_rejects(self.db, agency=ag))
         self.panel_client = TestClient(self.panel)
 
     def _maintenance_time(self, doc: dict, key: str) -> Any:

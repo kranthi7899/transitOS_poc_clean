@@ -241,6 +241,10 @@ class SchedulingReader:
                           else w.get("opened_at")} for w in wos]
             except ProductUnavailable as e:
                 note = f"maintenance history missing: {e.note}"
+            except UnknownTimezone:   # bug sweep B (A153): the maintenance part is missing, not the scheduling one
+                note = "maintenance_history_missing: timezone_unknown"
+            except (KeyError, ValueError, TypeError) as e:   # A153: any unreadable maintenance part, same attribution
+                note = f"maintenance_history_missing: malformed: {type(e).__name__}: {e}"[:200]
         hist.sort(key=lambda h: h.get("at") or "")
         return Result.part(hist, "maintenance", note) if note else Result.success(hist)
 

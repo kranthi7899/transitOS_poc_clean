@@ -154,8 +154,10 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                audit: AuditReader, killswitch: KillSwitchStore,
                unresolved: UnresolvedReader | None = None,
                agencies: list[str] | None = None,
-               clock: Callable[[], datetime] | None = None) -> FastAPI:
-    """clock: time source for panel-created events (the sim clock in the integrated system)."""
+               clock: Callable[[], datetime] | None = None,
+               poll_rejects: Callable[[str | None], list[dict[str, Any]]] | None = None) -> FastAPI:
+    """clock: time source for panel-created events (the sim clock in the integrated system).
+    poll_rejects: bug sweep B (A155), the watch adapters' open record rejects for an agency (None = all)."""
     app = FastAPI(title="TransitOS panel")
     unresolved = unresolved or (crosswalk if hasattr(crosswalk, "list_unresolved") else None)
 
@@ -247,6 +249,11 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
     @app.get("/unresolved")
     def unresolved_list(agency: str | None = None):
         return unresolved.list_unresolved(agency) if unresolved else []
+
+    @app.get("/poll-rejects")
+    def poll_rejects_list(agency: str | None = None):
+        """Bug sweep B (A155): product records a watch adapter could not read (never emitted, kept for review)."""
+        return poll_rejects(agency) if poll_rejects else []
 
     @app.post("/crosswalk")
     def crosswalk_fix(entry: CrosswalkEntry, move: bool = False):
@@ -391,6 +398,15 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
         body = ("<div class='card'><table><tr><th>Agency</th><th>Product</th><th>Native ID</th>"
                 f"<th>Parked</th><th>Candidates</th><th>Fix</th></tr>{rows}</table></div>" if rows
                 else "<div class='card'>Nothing unresolved.</div>")
+        rejects = poll_rejects(agency) if poll_rejects else []
+        if rejects:   # bug sweep B (A155): unreadable product records, shown only when there are any
+            rrows = "".join(
+                f"<tr><td>{_e(r['agency'])}</td><td>{_e(r['product'])}</td><td>{_e(r['native_id'] or '-')}</td>"
+                f"<td>{_e(r['reason'])}</td><td>{_e(r['first_seen'] or 'unknown')}</td>"
+                f"<td>{_e(r['last_seen'] or 'unknown')}</td></tr>" for r in rejects)
+            body += ("<h2>Unreadable product records</h2><div class='card'><table><tr><th>Agency</th><th>Product</th>"
+                     "<th>Native ID</th><th>Reason</th><th>First seen</th><th>Last seen</th></tr>"
+                     f"{rrows}</table></div>")
         return _page("Unresolved IDs", body)
 
     @app.post("/ui/crosswalk")

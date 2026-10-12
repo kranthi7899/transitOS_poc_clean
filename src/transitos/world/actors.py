@@ -206,13 +206,23 @@ class ForemanActor(Actor):
 
 
 class DispatcherActor(Actor):
+    """Bug sweep B (F13-R3, A156): on `return_to_service` the dispatcher puts back a vehicle IT pulled, after the same
+    dispatcher lag (12 min, ASSUMED A91), to the status it had before the pull (in_service for a bus in service).
+    Only when scheduling still shows out_of_service because of this world's pull: the vehicle is in this actor's own
+    pull record AND the latest scheduling change is the simulated dispatcher's. If the orchestrator or a person
+    changed it since, the return is theirs (A92) and the dispatcher stands down."""
+
     product = "scheduling"
-    kinds = ("fault_on", "callout")
+    kinds = ("fault_on", "callout", "return_to_service")
+
+    def __init__(self, lag: ProductLag) -> None:
+        super().__init__(lag)
+        self._pulled: dict[str, str] = {}     # vehicle -> scheduling status before this world pulled it
 
     def handles(self, beat: Beat) -> bool:
         if beat.kind == "fault_on":
             return bool((beat.params.get("lamps") or {}).get("stop"))
-        return beat.kind == "callout"
+        return beat.kind in ("callout", "return_to_service")
 
     def product_of(self, beat: Beat) -> str:
         return "workforce" if beat.kind == "callout" else "scheduling"
@@ -221,7 +231,22 @@ class DispatcherActor(Actor):
         if beat.kind == "callout":
             ports.workforce_callout(beat.vehicle, dict(beat.params))
             return None
-        if ports.scheduling_status(beat.vehicle) == "out_of_service":
+        if beat.kind == "return_to_service":
+            return self._return(beat.vehicle, ports)
+        before = ports.scheduling_status(beat.vehicle)
+        if before == "out_of_service":
             return "scheduling already shows the vehicle out of service"
         ports.scheduling_out_of_service(beat.vehicle)
+        self._pulled[beat.vehicle] = before
+        return None
+
+    def _return(self, vehicle: str, ports: Ports) -> str | None:
+        before = self._pulled.pop(vehicle, None)
+        if before is None:
+            return "the dispatcher did not pull the vehicle: its return is not the dispatcher's"
+        if ports.scheduling_status(vehicle) != "out_of_service":
+            return "scheduling no longer shows the vehicle out of service"
+        if not ports.scheduling_changed_by_world(vehicle):
+            return "someone else changed the vehicle's status since the dispatcher pulled it: their return"
+        ports.scheduling_set_status(vehicle, before)
         return None

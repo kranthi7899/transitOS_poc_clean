@@ -17,6 +17,9 @@ class Ports(Protocol):
     def telematics_dvir(self, vehicle: str, params: dict) -> None: ...
     def scheduling_status(self, vehicle: str) -> str: ...
     def scheduling_out_of_service(self, vehicle: str) -> None: ...
+    # bug sweep B (F13-R3, A156): the dispatcher returns the vehicles it pulled
+    def scheduling_changed_by_world(self, vehicle: str) -> bool: ...
+    def scheduling_set_status(self, vehicle: str, status: str) -> None: ...
     def maintenance_open_ids(self, vehicle: str) -> list[str]: ...
     def maintenance_open(self, vehicle: str, description: str) -> str | None: ...
     def maintenance_close(self, vehicle: str) -> list[str]: ...
@@ -38,6 +41,7 @@ class RecordingPorts:
         self.open_records: dict[str, list[str]] = {}
         self.pending: dict[str, str] = {}        # Step 4.1: open pending repairs, id -> vehicle
         self.wo_status: dict[str, str] = {}      # Step 4.1: shop status per work order
+        self.changed_by_world: set[str] = set()  # bug sweep B: the latest scheduling change was the world's
         self._n = 0
 
     def telematics_fault(self, vehicle, params):
@@ -55,6 +59,15 @@ class RecordingPorts:
     def scheduling_out_of_service(self, vehicle):
         self.calls.append(("scheduling_out_of_service", vehicle))
         self.status[vehicle] = "out_of_service"
+        self.changed_by_world.add(vehicle)
+
+    def scheduling_changed_by_world(self, vehicle):
+        return vehicle in self.changed_by_world
+
+    def scheduling_set_status(self, vehicle, status):
+        self.calls.append(("scheduling_set_status", vehicle, status))
+        self.status[vehicle] = status
+        self.changed_by_world.add(vehicle)
 
     def maintenance_open_ids(self, vehicle):
         return list(self.open_records.get(vehicle, []))
@@ -154,6 +167,17 @@ class MockPorts:
     def scheduling_out_of_service(self, vehicle):
         self._post("scheduling", "/sim/vehicle-status", {"vehicle": self._v(vehicle)["sched"],
                                                          "status": "out_of_service", "changed_by": self.ACTOR})
+
+    def scheduling_changed_by_world(self, vehicle):
+        """True when the vehicle's LATEST scheduling status change was made by this simulated dispatcher (nobody,
+        neither the orchestrator nor a person, changed it since)."""
+        native = self._v(vehicle)["sched"]
+        changes = [c for c in self._get("scheduling", "/status-changes") if c["vehicle"] == native]
+        return bool(changes) and changes[-1].get("changed_by") == self.ACTOR
+
+    def scheduling_set_status(self, vehicle, status):
+        self._post("scheduling", "/sim/vehicle-status", {"vehicle": self._v(vehicle)["sched"], "status": status,
+                                                         "changed_by": self.ACTOR})
 
     # maintenance
     def maintenance_open_ids(self, vehicle):

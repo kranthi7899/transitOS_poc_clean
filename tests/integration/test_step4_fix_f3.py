@@ -1,6 +1,7 @@
 """Step 4 fix round F3 (A146): epoch milliseconds outside 2000-01-01T00:00Z (inclusive) .. 2100-01-01T00:00Z
 (exclusive) are refused with a ValueError naming the value (seconds-sized, nanosecond-sized, 0, negative); an
-OverflowError is never let out. The webhook answers 400; the backfill poller holds the page with last_error."""
+OverflowError is never let out. The webhook answers 400; the backfill poller rejects that item and emits the rest of
+the page (bug sweep B, A155; it used to hold the whole page with last_error)."""
 from __future__ import annotations
 
 import json
@@ -10,6 +11,7 @@ import pytest
 
 from transitos.plumbing import Db, Relay, SqliteBus
 from transitos.plumbing.watch import TelematicsBackfillPoller, WebhookReceiver
+from transitos.plumbing.watch.base import list_rejects
 from transitos.plumbing.watch.telematics import sign
 from transitos.tools.common import epoch_ms_to_utc
 
@@ -45,7 +47,10 @@ def test_webhook_answers_400_for_an_implausible_epoch(tmp_path, bad):
 
 
 @pytest.mark.parametrize("bad", [1_793_500_200, 1_793_500_200_000_000_000])
-def test_backfill_holds_the_page_instead_of_crashing(tmp_path, mocks, bad):
+def test_backfill_rejects_the_bad_item_and_emits_the_rest_instead_of_crashing(tmp_path, mocks, bad):
+    """Bug sweep B (F7-R4, A155) DELIBERATELY changed this expectation: the page is no longer held. The item with the
+    implausible epoch is rejected (a poll_rejects row naming the value, never emitted), the good item on the same
+    page is emitted, and last_error stays None (the poll itself ran)."""
     db = Db(str(tmp_path / "b.db"))
     t = mocks.c("telematics")
     t.post("/sim/fault", json={"vehicle": "T-77", "spn": 110, "fmi": 0}, headers=H)
@@ -53,8 +58,11 @@ def test_backfill_holds_the_page_instead_of_crashing(tmp_path, mocks, bad):
     for e in st.all(AG, "events"):                     # the vendor sends a broken time on this item
         e["payload"]["time"] = bad
         st.put(AG, "events", f"{e['seq']:08d}", e)
+    t.post("/sim/fault", json={"vehicle": "T-78", "spn": 110, "fmi": 0}, headers=H)   # a good item, same page
     p = TelematicsBackfillPoller(db, t, AG)
-    assert p.poll() == 0 and str(bad) in (p.last_error or "")
+    assert p.poll() == 1 and p.last_error is None
+    (row,) = list_rejects(db)
+    assert row["product"] == "telematics" and str(bad) in row["reason"]
     bus = SqliteBus(db)
     Relay(db, bus).drain()
-    assert list(bus.messages("events.raw")) == []
+    assert [e.data["native_vehicle_id"] for _, _, e in bus.messages("events.raw")] == ["T-78"]
