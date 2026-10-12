@@ -5,12 +5,13 @@ import hashlib
 import hmac
 import json
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
 from transitos.contracts import ids
+from transitos.tools.common import epoch_ms_to_utc
 
 from .. import outbox
 from ..db import Db
@@ -42,7 +43,7 @@ def event_time(t: Any) -> str:
     if isinstance(t, bool):
         raise ValueError(f"telematics time {t!r} is not a timestamp")  # noqa: TRY004 - a bad payload value
     if isinstance(t, int):
-        dt = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=t)
+        dt = epoch_ms_to_utc(t)   # fix round F3 (A146): plausibility range; ValueError (never OverflowError)
         return dt.strftime("%Y-%m-%dT%H:%M:%S") + (f".{dt.microsecond // 1000:03d}" if dt.microsecond else "") + "Z"
     parsed = datetime.fromisoformat(str(t))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
