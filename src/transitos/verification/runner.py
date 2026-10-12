@@ -1,6 +1,7 @@
 """Interpret a Scenario against any World; classify the outcome; check expectations + invariants."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -139,6 +140,10 @@ def run_scenario(world: World, scenario: Scenario, keep_observation: bool = Fals
         seen = sorted(e["time"] for e in obs.events if e["type"] == etype)
         if not any(datetime.fromisoformat(t) == datetime.fromisoformat(at) for t in seen):
             mism.append(f"no {etype} at {at} (saw {seen})")
+    if scenario.expect_escalation_contains is not None:   # Q4 (A184): the reason and options a person is handed
+        esc = obs.escalations.get(obs.runs[0].run_id) if obs.runs else None
+        text = json.dumps(esc, ensure_ascii=False) if esc else ""
+        mism += [f"escalation record lacks {t!r}" for t in scenario.expect_escalation_contains if t not in text]
     if scenario.expect_plan_version is not None and obs.runs and obs.runs[0].plan_version != scenario.expect_plan_version:
         mism.append(f"plan_version {obs.runs[0].plan_version} != expected {scenario.expect_plan_version}")
     if scenario.expect_forward_actions is not None:

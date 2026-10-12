@@ -94,6 +94,8 @@ def test_through_clearance_on_the_fall_back_day_an_ambiguous_start_is_not_availa
     assert run_scenario(make_world(), utc).outcome.startswith("in-progress")   # proposed, awaiting approval
 
 
-def test_dst_fallback_event_block_starts_after_the_ambiguous_hour():
-    """The scenario itself (block 06:00Z-10:00Z) is staffed: the conservative 06:00Z start is not after it."""
-    assert BY_ID["dst_fallback_event"].tweaks.clock_start == _at(FALL_BACK, 5)
+def test_dst_fallback_after_ambiguous_hour_block_starts_after_the_ambiguous_hour():
+    """The moved-later day (block 06:00Z-10:00Z) is staffed: the conservative 06:00Z start is not after it. Owner
+    decision Q4 (A183): dst_fallback_event itself keeps its original 04:00Z clock and escalates."""
+    assert BY_ID["dst_fallback_after_ambiguous_hour"].tweaks.clock_start == _at(FALL_BACK, 5)
+    assert BY_ID["dst_fallback_event"].tweaks.clock_start == _at(FALL_BACK, 4)

@@ -57,6 +57,7 @@ from transitos.contracts.objects import (
 from transitos.contracts.policy import AgencyPolicy
 from transitos.contracts.results import Result
 from transitos.contracts.tools import COMPENSATION
+from transitos.workflow import ambiguity
 from transitos.workflow.limits import HardLimits
 from transitos.workflow.plan import build_plan, step_name
 from transitos.workflow.reasoning import (
@@ -222,6 +223,7 @@ def build_graph(deps: Deps, checkpointer):
             return not any(i.status == "violation" for i in items)
 
         blocks, block_objs, spare_ids = [], {}, {}
+        eligible_ops: dict[str, set[str]] = {}
         vehicles: dict[str, Vehicle] = {}
         operators: dict[str, Operator] = {}
         for it in facts["blocks"]:
@@ -236,6 +238,7 @@ def build_graph(deps: Deps, checkpointer):
             if needs_op and not ops:
                 violations.append(f"no_feasible_operator:{b.id}")
             block_objs[b.id], spare_ids[b.id] = b, [v.id for v in spares]
+            eligible_ops[b.id] = {o.id for o in ops}
             vehicles.update({v.id: v for v in spares})
             operators.update({o.id: o for o in ops})
             blocks.append({"block_id": b.id, "vehicle_id": b.vehicle_id, "start": b.start.isoformat(),
@@ -256,7 +259,29 @@ def build_graph(deps: Deps, checkpointer):
               "window_end": facts["window_end"], "vehicle": facts["vehicle"], "min_spares": pol.limits.min_spares,
               "ready_count": ready_count, "blocks": blocks, "previous_errors": [], "clearance_errors": errors,
               "clearance": snapshot.to_dict(), "clearance_policy": pol.model_dump(mode="json")}
+        no_op = [v.split(":", 1)[1] for v in violations if v.startswith("no_feasible_operator:")]
+        if no_op:
+            human_question(run, mf, no_op, eligible_ops, spare_ids, snapshot, pol, _parse(facts["now"]))
         return mf, violations
+
+    def human_question(run: RunState, mf: dict, no_op: list[str], eligible_ops: dict, spare_ids: dict,
+                       snapshot: Facts, pol: AgencyPolicy, now: datetime) -> None:
+        """Q4 (A179-A182): a block with no feasible operator, where a candidate's time in the product's data was a
+        repeated wall-clock time with no offset: ask a person which instant is meant, with the closest options
+        (`mf["needs_human"]`). Read only on this path, so every other run makes exactly the reads it made before.
+        No ambiguity info (no adapter offers it, or the read failed) adds nothing; an exception while working the
+        question out is said in `mf["needs_human_error"]` and never stops the escalation (fail closed)."""
+        fn = getattr(deps.reads, "time_ambiguities", None)
+        try:
+            res = fn(run.agency) if fn is not None else None
+            amb = res.value if res is not None and res.status == "ok" else None
+            if amb:
+                nh = ambiguity.needs_human_for(amb, no_op, eligible_ops, spare_ids, snapshot, pol, now)
+                if nh:
+                    mf["needs_human"] = nh
+        except Exception as e:  # noqa: BLE001
+            mf["needs_human_error"] = (f"the question for a person could not be worked out: "
+                                       f"{type(e).__name__}: {e}")[:300]
 
     def plan_as_output(plan: Plan) -> ModelOutput:
         a: dict[str, Assignment] = {}
@@ -737,9 +762,18 @@ def build_graph(deps: Deps, checkpointer):
             "still_applied": [step_name(s.action, s.params) for s in run.steps_done if s.status == "done"],
             "plan_steps": [{"step": step_name(s.action, s.params), "status": s.status} for s in (run.plan.steps if run.plan else [])],
         }
+        mf = ctx.get("mf") or {}
+        extra: dict = {}
+        for k in ("needs_human", "needs_human_error"):   # Q4 (A182): only when there is something to say
+            if mf.get(k):
+                detail[k] = mf[k]
+        if "needs_human" in detail or "needs_human_error" in detail:
+            prev = deps.store.get_decision(run.run_id, run.plan_version) or {}
+            extra["recommendation"] = {**(prev.get("recommendation") or {}),
+                                       **{k: detail[k] for k in ("needs_human", "needs_human_error") if k in detail}}
         deps.store.save_escalation(run.run_id, detail)
         clean = bool(run.compensations_done) and ctx.get("reason") != "compensation_failed" and not detail["still_applied"]
-        record(run, ctx, outcome="compensated" if clean else "escalated")
+        record(run, ctx, outcome="compensated" if clean else "escalated", **extra)
         run.status = "ESCALATED"
         deps.store.release(run.run_id, "ESCALATED")
         ctx["escalation"] = detail

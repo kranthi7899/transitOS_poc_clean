@@ -20,20 +20,28 @@ human_wo_exists_pending  PLAN_VALID. maintenance.mode pending_repair. Approved 0
 local_time_normalised    PLAN_VALID. The spec's coolant day with the local-time knob ON: maintenance and the workforce
                          CSV send zone-less America/New_York wall time (with per-field utc_offset), telematics sends
                          epoch milliseconds. Same outcome and writes as scripted_day_coolant.
-dst_fallback_event       PLAN_VALID. Same knob, on the 2026 US fall-back day (2026-11-01, 02:00 EDT -> 01:00 EST); the
-                         sim clock starts 05:00Z (01:00 EDT) via the `clock_start` knob, so blk-1 runs 06:00Z-10:00Z.
-                         Fault 05:40Z = 01:40 EDT; work order opened 05:41Z ("01:41"); return to service 06:10Z; the
-                         shop closes at 06:30Z = "01:30" EST, a local wall time EARLIER than the opening. The close must
-                         still be seen (the poll cursor never skips it) and stamped 06:30Z (the product's utc_offset
-                         disambiguates). Fix round F2: the operators' availability starts 05:00Z, which the offset-less
-                         workforce CSV says as "01:00" (ambiguous); it is read conservatively as 06:00Z (A145), which
-                         is not after the 06:00Z block start. With the block at 05:00Z (the first draft, clock_start
-                         04:00Z) nobody is known to be available and the run escalates: that case is a test
-                         (test_through_clearance_on_the_fall_back_day_an_ambiguous_start_is_not_available).
+dst_fallback_event       ESCALATE_NO_SAFE_OPTION (owner decision Q4; restored to its original clock in the DST
+                         escalation round, A183). Same knob, on the 2026 US fall-back day (2026-11-01, 02:00 EDT ->
+                         01:00 EST); the sim clock starts 04:00Z via the `clock_start` knob, so blk-1 runs
+                         05:00Z-09:00Z. Fault 05:40Z = 01:40 EDT. Every operator's availability starts 05:00Z, which
+                         the offset-less workforce CSV says as "01:00" (it occurs at 05:00Z and at 06:00Z); it is read
+                         conservatively as 06:00Z (A145), after the block starts, so nobody is known to be available:
+                         the run escalates with zero writes. The shop rule (A91, +20 min) still opens its own work
+                         order at 06:00Z ("01:00" EST, second pass) and closes it 20 min after the 06:10Z return, at
+                         06:30Z ("01:30" EST); both are stamped right (the product's utc_offset). TransitOS writes
+                         nothing. The escalation must hand a person the question ("Which
+                         01:00 is meant? ...") and the closest options (op-1 / op-2 if it means 05:00Z), checked by
+                         `expect_escalation_contains` (A184).
+dst_fallback_after_ambiguous_hour  PLAN_VALID. The same day with the clock at 05:00Z (blk-1 06:00Z-10:00Z), the S4 fix
+                         round's moved-later version: the conservative 06:00Z start is not after the block start.
+                         Work order opened 05:41Z ("01:41" EDT); return to service 06:10Z; the shop closes at 06:30Z =
+                         "01:30" EST, a local wall time EARLIER than the opening. The close must still be seen (the
+                         poll cursor never skips it) and stamped 06:30Z (the product's utc_offset disambiguates).
 
 Known gap (A112): without the product's utc_offset, the second 01:30 is read as the first (documented rule), so a
 close or event time in the repeated hour is stamped an hour early. That affects only the event's own time, not
-clearance (the workforce CSV, which has no offsets, is read conservatively per field, A145). dst_fallback_event runs
+clearance (the workforce CSV, which has no offsets, is read conservatively per field, A145; when that makes a block
+unstaffable the escalation asks a person which instant is meant, A179-A182). dst_fallback_after_ambiguous_hour runs
 WITH offsets; a test pins the without-offset consequence.
 
 Why a `clock_start` knob (A114): every older scenario starts at T0 = 2026-10-10 06:00Z and IntegrationWorld built its
@@ -103,6 +111,11 @@ GAP_FALLBACK = ("A112: passes because the maintenance product sends a per-field 
                 "and before its own opening (pinned by test_dst_fallback_without_offsets_follows_the_documented_rule"
                 "_known_gap). Only the event's own time is wrong; clearance reads the offset-less CSV conservatively "
                 "(A145).")
+GAP_FALLBACK_ESC = ("A112 (event-time residual): this row's escalation is the intended behaviour (owner decision Q4), "
+                    "but the gap still holds for the day: without the maintenance product's utc_offset a time in the "
+                    "repeated hour is stamped as the first occurrence (see dst_fallback_after_ambiguous_hour).")
+DST_QUESTION = "Which 01:00 is meant? 01:00 on 2026-11-01 (America/New_York) occurs twice: 05:00Z and 06:00Z"
+DST_OPTION = "op-1 if 01:00 means 05:00Z"
 
 STEP4_SCENARIOS: tuple[Scenario, ...] = (
     _s("repair_with_parts_wait", "Pending repair: the foreman puts it on a work order at 09:51, parts wait 3 h; the "
@@ -139,8 +152,23 @@ STEP4_SCENARIOS: tuple[Scenario, ...] = (
                            ("WorkOrderOpened", "2026-10-10T09:41:00+00:00"),       # "05:41" local on the wire
                            ("WorkOrderClosed", "2026-10-10T11:50:00+00:00")),
        known_gap=GAP_LOCAL_WIRE, real_world_only=True, real_world_reason=WIRE_REASON),
-    _s("dst_fallback_event", "Fall-back day 2026-11-01: work order opened 01:41 EDT, closed 01:30 EST (an earlier "
-       "local wall time); the close is seen, stamped 06:30Z, and the run returns to service",
+    _s("dst_fallback_event", "Fall-back day 2026-11-01, block 05:00Z-09:00Z: every operator's availability is "
+       "\"01:00\" in the offset-less CSV (05:00Z or 06:00Z); read conservatively nobody is known available, so the "
+       "run escalates and asks a person which 01:00 is meant, with the closest options",
+       Outcome.ESCALATE_NO_SAFE_OPTION,
+       (("world_until", "05:41"), ("expect_status", "ESCALATED"), ("world_until", "07:00"), ("expect_status", "ESCALATED")),
+       events=[fault_event()],
+       tweaks=_tw(world_script=_coolant(FALL_BACK, (5, 40), (6, 0), (6, 10)), local_time=True,
+                  clock_start=_at(FALL_BACK, 4)),
+       expect_wo_creates=0, expect_work_orders=1, expect_pending_repairs=0,   # the shop's own record, not ours
+       expect_event_times=(("VehicleFaultDetected", "2026-11-01T05:40:05+00:00"),  # epoch ms on the wire
+                           ("WorkOrderOpened", "2026-11-01T06:00:00+00:00"),       # shop rule +20 min: "01:00" EST
+                           ("WorkOrderClosed", "2026-11-01T06:30:00+00:00")),      # shop rule +20 min: "01:30" EST
+       expect_escalation_contains=(DST_QUESTION, DST_OPTION),
+       known_gap=GAP_FALLBACK_ESC, real_world_only=True, real_world_reason=WIRE_REASON),
+    _s("dst_fallback_after_ambiguous_hour", "Fall-back day 2026-11-01, block after the ambiguous hour: work order "
+       "opened 01:41 EDT, closed 01:30 EST (an earlier local wall time); the close is seen, stamped 06:30Z, and the run "
+       "returns to service",
        Outcome.PLAN_VALID,
        (("world_until", "05:41"), ("approve", "plan"), ("world_until", "06:20"), ("expect_status", "WAITING_FOR_REPAIR"),
         ("world_until", "07:00"), *_RETURN),

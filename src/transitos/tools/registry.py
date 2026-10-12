@@ -87,6 +87,14 @@ class ToolSet:
             return Result.success(None, note="not_supported")
         return fns[0](agency, vehicle_ids)
 
+    def time_ambiguities(self, agency: str) -> Result[list[dict] | None]:
+        """Q4 (A179): product times read from a repeated (fall-back) wall-clock hour with no offset, each with both
+        UTC instants. A None value means no configured adapter offers it (no ambiguity info: escalations as before)."""
+        fns = self._optional("time_ambiguities")
+        if not fns:
+            return Result.success(None, note="not_supported")
+        return fns[0](agency)
+
     def capability_profiles(self, agency: str) -> Result[dict[str, dict]]:
         """What each configured product supplies, as {product: CapabilityProfile.to_dict()}."""
         out: dict[str, dict] = {}

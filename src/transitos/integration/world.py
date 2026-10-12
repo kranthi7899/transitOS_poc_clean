@@ -339,7 +339,8 @@ class IntegrationWorld:
                            operators=ops, work_orders=wos, alerts=self._docs("alerts", "alerts"),
                            dead_letters=dead, attached_events=dict(attached),
                            events=events, pending_repairs=self._docs("maintenance", "pending_repair"),
-                           shop_log=list(self.engine.shop_log) if self.engine is not None else [])
+                           shop_log=list(self.engine.shop_log) if self.engine is not None else [],
+                           escalations={r.run_id: e for r in runs if (e := s.store.get_escalation(r.run_id))})
 
 
 def make_world() -> IntegrationWorld:
