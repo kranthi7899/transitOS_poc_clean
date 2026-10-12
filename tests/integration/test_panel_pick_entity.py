@@ -63,3 +63,19 @@ def test_h3_an_unknown_product_is_refused(world):
                                                            "entity": "vehicle", "canonical_id": "veh-1"})
     assert r.status_code == 422, r.text
     assert not [x for x in world.system.xw.rows(AGENCY) if x.product == "payroll"]
+
+
+@pytest.mark.parametrize("product,stored", [("telematics", "vehicle"), ("scheduling", "vehicle"),
+                                            ("maintenance", "asset"), ("workforce", "operator")])
+@pytest.mark.parametrize("sent", ["vehicle", "operator", "asset", ""])
+def test_j2_the_full_product_to_entity_mapping_is_what_gets_stored(world, product, stored, sent):
+    """Bug sweep A3, J2 (A173), from the H3 ruling: telematics -> vehicle, scheduling -> vehicle, maintenance ->
+    asset, workforce -> operator, whatever entity the client sends (unknown product: 422, test above)."""
+    world.apply(BY_ID["retired_spare_never_proposed"])
+    s = world.system
+    canon = "op-9" if product == "workforce" else "veh-9"
+    r = s.panel_client.post("/crosswalk", json={"agency": AGENCY, "product": product, "native_id": "NEW-9",
+                                                "entity": sent, "canonical_id": canon})
+    assert r.status_code == 200, r.text
+    [row] = [x for x in s.xw.rows(AGENCY) if x.product == product and x.native_id == "NEW-9"]
+    assert row.entity == stored
