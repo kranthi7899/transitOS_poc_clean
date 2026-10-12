@@ -57,7 +57,7 @@ class CrosswalkService:
     def _enrich(self, ev: CloudEvent, canonical: str, entity: str) -> CloudEvent:
         data = dict(ev.data)
         if entity == "vehicle":
-            ids = self.xw.all_ids(ev.agencyid, canonical)
+            ids = self.xw.all_ids(ev.agencyid, canonical, at=ev.time)   # G3 (A148): the rows valid at the event
             data["refs"] = VehicleRefs(
                 canonical=canonical, telematics=ids.get("telematics"),
                 maintenance=ids.get("maintenance"), scheduling=ids.get("scheduling")).model_dump()

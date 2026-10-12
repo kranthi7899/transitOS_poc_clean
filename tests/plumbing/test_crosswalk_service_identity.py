@@ -287,3 +287,49 @@ def test_g4_n7_an_ended_row_never_contradicts_the_fast_path(bus, svc, xw):
                               canonical_id="veh-1", valid_from=S))
     ok, failed = run(bus, svc, fault("e", "T-90", S + timedelta(hours=1), native_vin=VIN_2))
     assert ok["e"].canonicalid == "veh-1" and not failed
+
+
+# ---------------------------------------------------------------- bug sweep A
+def test_g3_enrichment_refs_are_the_rows_valid_at_the_events_own_time(bus, svc, xw):
+    """G3 (A148): data.refs lists each product's id valid at the event's time; an ended or not-yet-valid number is
+    never listed (missing = unknown), and an operator row is never a vehicle's ref."""
+    xw.resolve(CrosswalkEntry(agency=AG, product="telematics", native_id="T-1", entity="vehicle", canonical_id="veh-1"))
+    xw.resolve(CrosswalkEntry(agency=AG, product="maintenance", native_id="1106", entity="asset",
+                              canonical_id="veh-1", valid_to=S))
+    xw.resolve(CrosswalkEntry(agency=AG, product="maintenance", native_id="M-1", entity="asset",
+                              canonical_id="veh-1", valid_from=S + timedelta(hours=2)))
+    xw.resolve(CrosswalkEntry(agency=AG, product="scheduling", native_id="OP-9", entity="operator",
+                              canonical_id="veh-1"))
+    ok, failed = run(bus, svc, fault("before", "T-1", S - timedelta(minutes=1)), fault("gap", "T-1", S),
+                     fault("after", "T-1", S + timedelta(hours=2)))
+    assert not failed
+    assert ok["before"].data["refs"]["maintenance"] == "1106"
+    assert ok["gap"].data["refs"]["maintenance"] is None          # 1106 ended at S, M-1 not yet valid
+    assert ok["after"].data["refs"]["maintenance"] == "M-1"
+    assert {ok[k].data["refs"]["scheduling"] for k in ok} == {None}   # the operator row is never a vehicle ref
+
+
+def test_g2_vin_wins_but_a_plate_naming_another_vehicle_is_recorded(bus, svc, xw):
+    """G2 (A149): T-90 maps to veh-1 and the event's VIN is veh-1's, but its plate is veh-2's: the event still
+    resolves to veh-1 (the VIN wins, as designed) and the conflict is recorded in data.identity.notes."""
+    seed(xw)
+    ok, failed = run(bus, svc, fault("p", "T-90", S + timedelta(hours=1), native_vin=VIN_1,
+                                     native_plate="ZZ 5ABC103"))
+    assert ok["p"].canonicalid == "veh-1" and not failed
+    assert "plate_matches_other_vehicle:veh-2" in ok["p"].data["identity"]["notes"]
+
+
+def test_g2_agreeing_evidence_adds_no_identity_block(bus, svc, xw):
+    """Converse: VIN and plate both veh-1's -> no conflict, the fast-path payload is unchanged."""
+    seed(xw)
+    ok, _ = run(bus, svc, fault("a", "T-90", S + timedelta(hours=1), native_vin=VIN_1, native_plate="ZZ 4KTR219"))
+    assert ok["a"].canonicalid == "veh-1" and "identity" not in ok["a"].data
+
+
+def test_g2_an_ended_row_with_the_plate_is_no_conflict(bus, svc, xw):
+    """The other vehicle's plate row ended before the event: not a conflict (validity as in n7)."""
+    seed(xw)
+    xw.resolve(CrosswalkEntry(agency=AG, product="maintenance", native_id="2001", entity="asset",
+                              canonical_id="veh-7", plate="ZZ 9XYZ999", valid_to=S))
+    ok, _ = run(bus, svc, fault("o", "T-90", S + timedelta(hours=1), native_vin=VIN_1, native_plate="ZZ 9XYZ999"))
+    assert ok["o"].canonicalid == "veh-1" and "identity" not in ok["o"].data

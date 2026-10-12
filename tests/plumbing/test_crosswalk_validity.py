@@ -160,3 +160,69 @@ def test_f7_start_up_discards_a_half_copied_v2_when_the_old_table_survived(tmp_p
     xw = SqliteCrosswalk(db)
     assert xw.all_ids(AG, "veh-1") == {"telematics": "T-1", "maintenance": "M-1"}
     assert not xw._has("xw_entries_v2", "vf")
+
+
+# ---- bug sweep A, G3 (A147-A148): all_ids honours validity and entity -----------------------------------------
+# Written from the ruling before the code: all_ids filters by validity at `at` (valid_from inclusive, valid_to
+# exclusive) and by entity (a vehicle's vehicle/asset rows only); `at` None = now on the store's clock when it has
+# one; no valid row -> the product is MISSING from the result (unknown), never a stale row.
+
+def test_g3_an_ended_only_row_is_missing_not_current(db):
+    xw = SqliteCrosswalk(db)
+    xw.resolve(e("maintenance", "1106", "veh-1", valid_to=S))
+    xw.resolve(e("scheduling", "BUS-44", "veh-1"))
+    assert xw.all_ids(AG, "veh-1", at=S + timedelta(hours=1)) == {"scheduling": "BUS-44"}
+    assert xw.all_ids(AG, "veh-1", at=S) == {"scheduling": "BUS-44"}                      # valid_to exclusive
+    assert xw.all_ids(AG, "veh-1", at=S - timedelta(microseconds=1))["maintenance"] == "1106"
+
+
+def test_g3_a_future_dated_open_row_does_not_win_over_the_current_row(db):
+    xw = SqliteCrosswalk(db)
+    xw.resolve(e("maintenance", "1106", "veh-1", valid_to=S + timedelta(days=1)))          # current until tomorrow
+    xw.resolve(e("maintenance", "M-1", "veh-1", valid_from=S + timedelta(days=1)))         # open, starts tomorrow
+    assert xw.all_ids(AG, "veh-1", at=S) == {"maintenance": "1106"}
+    assert xw.all_ids(AG, "veh-1", at=S + timedelta(days=1)) == {"maintenance": "M-1"}     # valid_from inclusive
+
+
+def test_g3_a_future_dated_row_alone_is_missing(db):
+    xw = SqliteCrosswalk(db)
+    xw.resolve(e("telematics", "T-9", "veh-1", valid_from=S + timedelta(hours=2)))
+    assert xw.all_ids(AG, "veh-1", at=S) == {}
+
+
+def test_g3_an_operator_row_is_never_returned_for_a_vehicle_product(db):
+    xw = SqliteCrosswalk(db)
+    xw.resolve(CrosswalkEntry(agency=AG, product="maintenance", native_id="OP-7", entity="operator",
+                              canonical_id="veh-1"))
+    assert "maintenance" not in xw.all_ids(AG, "veh-1", at=S)
+    xw.resolve(CrosswalkEntry(agency=AG, product="maintenance", native_id="1106", entity="asset",
+                              canonical_id="veh-1", valid_from=S - timedelta(days=1)))
+    assert xw.all_ids(AG, "veh-1", at=S) == {"maintenance": "1106"}    # the asset row, the operator row ignored
+
+
+def test_g3_operator_ids_are_asked_for_explicitly(db):
+    xw = SqliteCrosswalk(db)
+    xw.resolve(CrosswalkEntry(agency=AG, product="workforce", native_id="OP-1", entity="operator",
+                              canonical_id="op-1"))
+    assert xw.all_ids(AG, "op-1", at=S) == {}                                   # default: vehicle/asset rows only
+    assert xw.all_ids(AG, "op-1", at=S, entities=("operator",)) == {"workforce": "OP-1"}
+
+
+def test_g3_without_at_the_stores_clock_is_now(db):
+    now = [S]
+    xw = SqliteCrosswalk(db, clock=lambda: now[0])
+    xw.resolve(e("maintenance", "1106", "veh-1", valid_to=S + timedelta(hours=1)))
+    xw.resolve(e("maintenance", "M-1", "veh-1", valid_from=S + timedelta(hours=1)))
+    assert xw.all_ids(AG, "veh-1") == {"maintenance": "1106"}
+    now[0] = S + timedelta(hours=2)
+    assert xw.all_ids(AG, "veh-1") == {"maintenance": "M-1"}
+
+
+def test_g3_reused_asset_id_ended_vehicle_is_missing_the_new_owner_reads_its_row(db):
+    """Asset 1107 belonged to veh-2 until S, then was given to veh-3 (veh-3's own 1108 ended at S)."""
+    xw = SqliteCrosswalk(db, clock=lambda: S + timedelta(hours=1))
+    xw.resolve(e("maintenance", "1107", "veh-2", valid_to=S))
+    xw.resolve(e("maintenance", "1107", "veh-3", valid_from=S))
+    xw.resolve(e("maintenance", "1108", "veh-3", valid_to=S))
+    assert "maintenance" not in xw.all_ids(AG, "veh-2")
+    assert xw.all_ids(AG, "veh-3") == {"maintenance": "1107"}
