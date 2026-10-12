@@ -39,6 +39,20 @@ BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END $$ LANGUAGE plpgsql
     for t in ("audit_raw", "audit_resolved", "decisions")]
 
 
+def append_only(db: Db, table: str) -> None:
+    """Bug sweep B round 3 (A175): the same append-only guarantee for another (already created) audit table."""
+    if getattr(db, "dialect", "sqlite") == "postgres":
+        with db.lock:
+            db.conn.execute(PG_APPEND_ONLY[0])
+            db.conn.execute(f"CREATE OR REPLACE TRIGGER {table}_append_only BEFORE UPDATE OR DELETE ON {table} "
+                            "FOR EACH ROW EXECUTE FUNCTION transitos_append_only()")
+        return
+    db.script(f"""
+CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} BEGIN SELECT RAISE(ABORT,'{table} is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table} BEGIN SELECT RAISE(ABORT,'{table} is append-only'); END;
+""")
+
+
 def ensure_schema(db: Db) -> None:
     if getattr(db, "dialect", "sqlite") == "postgres":
         db.script(SCHEMA)

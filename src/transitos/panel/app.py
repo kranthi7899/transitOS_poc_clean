@@ -49,6 +49,11 @@ class DefectBody(BaseModel):
     fmi: int | None = None
 
 
+class DismissBody(BaseModel):
+    user: str
+    reason: str = ""
+
+
 class KillSwitchBody(BaseModel):
     agency: str
     on: bool
@@ -159,7 +164,8 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                unresolved: UnresolvedReader | None = None,
                agencies: list[str] | None = None,
                clock: Callable[[], datetime] | None = None,
-               poll_rejects: Callable[[str | None], list[dict[str, Any]]] | None = None) -> FastAPI:
+               poll_rejects: Callable[[str | None], list[dict[str, Any]]] | None = None,
+               dismiss_reject: Callable[[int, str, str], dict[str, Any] | None] | None = None) -> FastAPI:
     """clock: time source for panel-created events (the sim clock in the integrated system).
     poll_rejects: bug sweep B (A155), the watch adapters' open record rejects for an agency (None = all)."""
     app = FastAPI(title="TransitOS panel")
@@ -263,6 +269,19 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
     def poll_rejects_list(agency: str | None = None):
         """Bug sweep B (A155): product records a watch adapter could not read (never emitted, kept for review)."""
         return poll_rejects(agency) if poll_rejects else []
+
+    def do_dismiss(reject_id: int, body: DismissBody) -> dict[str, Any]:
+        if not body.user.strip():
+            raise HTTPException(422, "user is required to dismiss a reject")
+        out = dismiss_reject(reject_id, body.user.strip(), body.reason) if dismiss_reject else None
+        if out is None:
+            raise HTTPException(404, "reject not found")
+        return out
+
+    @app.post("/poll-rejects/{reject_id}/dismiss")
+    def poll_reject_dismiss(reject_id: int, body: DismissBody):
+        """Bug sweep B round 3 (A175): mark one reject dismissed (audited, never deleted); its floor is released."""
+        return do_dismiss(reject_id, body)
 
     @app.post("/crosswalk")
     def crosswalk_fix(entry: CrosswalkEntry, move: bool = False):
@@ -411,11 +430,22 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
             rrows = "".join(
                 f"<tr><td>{_e(r['agency'])}</td><td>{_e(r['product'])}</td><td>{_e(r['native_id'] or '-')}</td>"
                 f"<td>{_e(r['reason'])}</td><td>{_e(r['first_seen'] or 'unknown')}</td>"
-                f"<td>{_e(r['last_seen'] or 'unknown')}</td></tr>" for r in rejects)
+                f"<td>{_e(r['last_seen'] or 'unknown')}</td>"
+                + (f"<td><form method='post' action='/ui/poll-rejects/{int(r['id'])}/dismiss'>"   # round 3, A175
+                   "<input name='user' placeholder='your name' required>"
+                   "<input name='reason' placeholder='why'><button class='warn'>Dismiss</button></form></td>"
+                   if dismiss_reject and r.get("id") is not None else "<td></td>")
+                + "</tr>" for r in rejects)
             body += ("<h2>Unreadable product records</h2><div class='card'><table><tr><th>Agency</th><th>Product</th>"
-                     "<th>Native ID</th><th>Reason</th><th>First seen</th><th>Last seen</th></tr>"
+                     "<th>Native ID</th><th>Reason</th><th>First seen</th><th>Last seen</th><th>Dismiss</th></tr>"
                      f"{rrows}</table></div>")
         return _page("Unresolved IDs", body)
+
+    @app.post("/ui/poll-rejects/{reject_id}/dismiss")
+    async def ui_dismiss_reject(reject_id: int, request: Request):
+        f = await _form(request)
+        do_dismiss(reject_id, DismissBody(user=f.get("user", ""), reason=f.get("reason", "")))
+        return RedirectResponse("/ui/unresolved", status_code=303)
 
     @app.post("/ui/crosswalk")
     async def ui_crosswalk(request: Request):
