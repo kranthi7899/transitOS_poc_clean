@@ -21,6 +21,11 @@ class Ports(Protocol):
     def maintenance_open(self, vehicle: str, description: str) -> str | None: ...
     def maintenance_close(self, vehicle: str) -> list[str]: ...
     def workforce_callout(self, operator: str, params: dict) -> None: ...
+    # Phase 10 Step 4.1 (ForemanActor): pending repairs and the shop status of a work order
+    def maintenance_pending(self) -> list[dict]: ...
+    def maintenance_convert(self, pr_id: str) -> dict | None: ...
+    def maintenance_wo_status(self, wo_id: str) -> str: ...
+    def maintenance_set_status(self, wo_id: str, status: str) -> None: ...
 
 
 class RecordingPorts:
@@ -31,6 +36,8 @@ class RecordingPorts:
         self.calls: list[tuple[Any, ...]] = []
         self.status: dict[str, str] = {}
         self.open_records: dict[str, list[str]] = {}
+        self.pending: dict[str, str] = {}        # Step 4.1: open pending repairs, id -> vehicle
+        self.wo_status: dict[str, str] = {}      # Step 4.1: shop status per work order
         self._n = 0
 
     def telematics_fault(self, vehicle, params):
@@ -66,6 +73,33 @@ class RecordingPorts:
 
     def workforce_callout(self, operator, params):
         self.calls.append(("workforce_callout", operator, params))
+
+    # Phase 10 Step 4.1
+    def add_pending(self, pr_id: str, vehicle: str) -> None:
+        self.pending[pr_id] = vehicle
+
+    def maintenance_pending(self):
+        return [{"id": p, "vehicle": v} for p, v in self.pending.items()]
+
+    def _now(self):
+        return self.clock.now() if self.clock else None
+
+    def maintenance_convert(self, pr_id):
+        vehicle = self.pending.pop(pr_id)
+        self.calls.append(("maintenance_convert", pr_id, self._now()))
+        if self.open_records.get(vehicle):
+            return {"work_order": self.open_records[vehicle][0], "created": False}
+        wid = f"wo-{pr_id}"
+        self.open_records.setdefault(vehicle, []).append(wid)
+        self.wo_status[wid] = "OPEN"
+        return {"work_order": wid, "created": True}
+
+    def maintenance_wo_status(self, wo_id):
+        return self.wo_status.get(wo_id, "OPEN")
+
+    def maintenance_set_status(self, wo_id, status):
+        self.calls.append(("maintenance_set_status", wo_id, status, self._now()))
+        self.wo_status[wo_id] = status
 
 
 class MockPorts:
@@ -124,7 +158,8 @@ class MockPorts:
     # maintenance
     def maintenance_open_ids(self, vehicle):
         asset = self._v(vehicle)["maint"]
-        return [w["id"] for w in self._get("maintenance", f"/workorders?asset={asset}") if w["status"] != "closed"]
+        return [w["id"] for w in self._get("maintenance", f"/workorders?asset={asset}")
+                if str(w["status"]).lower() != "closed"]   # Step 4: the shop vocabulary says CLOSED
 
     def maintenance_open(self, vehicle, description):
         wo = self._post("maintenance", "/workorders", {"asset": self._v(vehicle)["maint"],
@@ -136,6 +171,25 @@ class MockPorts:
         for wid in ids:
             self._post("maintenance", f"/sim/workorders/{wid}/close")
         return ids
+
+    # maintenance: pending repairs (Phase 10 Step 4.1, the foreman)
+    def maintenance_pending(self):
+        by_asset = {v["maint"]: c for c, v in self._veh.items() if v.get("maint")}
+        return [{"id": p["id"], "vehicle": by_asset.get(p["asset"], p["asset"])}
+                for p in self._get("maintenance", "/pending-repairs?status=OPEN")]
+
+    def maintenance_convert(self, pr_id):
+        out = self._post("maintenance", f"/sim/pending-repairs/{pr_id}/convert")
+        wo = out.get("work_order")
+        if wo is None:
+            return None
+        return {"work_order": wo["id"], "created": wo.get("from_pending_repair") == pr_id}
+
+    def maintenance_wo_status(self, wo_id):
+        return str(self._get("maintenance", f"/workorders/{wo_id}")["status"])
+
+    def maintenance_set_status(self, wo_id, status):
+        self._post("maintenance", f"/sim/workorders/{wo_id}/status", {"status": status})
 
     # workforce
     def workforce_callout(self, operator, params):

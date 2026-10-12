@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from typing import Any
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 
@@ -60,7 +61,8 @@ class _Pending:
     due_at: datetime
     order: int
     actor: Actor
-    beat: Beat
+    beat: Beat | None
+    job: Any = None      # Phase 10 Step 4.1: a watching actor's own job (ForemanActor), instead of a truth beat
 
 
 class WorldEngine:
@@ -71,10 +73,21 @@ class WorldEngine:
             TelematicsActor(lag), ShopActor(lag), DispatcherActor(lag)]
         self.observations_log: list[Observation] = []
         self.skipped: list[Skipped] = []
+        self.shop_log: list[dict] = []      # Step 4.1: what watching actors (the foreman) did, in order
         self._pending: list[_Pending] = []
         self._order = 0
 
     # ------------------------------------------------------------------ stepping
+    def _discover(self) -> None:
+        """Phase 10 Step 4.1: actors that WATCH a product (ForemanActor) schedule their own jobs. Actors without a
+        `discover` method (every Step 3 actor) are untouched."""
+        now = self.clock.now()
+        for actor in self.actors:
+            if callable(discover := getattr(actor, "discover", None)):
+                for due_at, job in discover(now, self.ports):
+                    self._order += 1
+                    self._pending.append(_Pending(due_at, self._order, actor, None, job))
+
     def tick(self) -> list[Observation]:
         """Release the beats due now, then perform every reaction due now, in (due time, release order)."""
         now = self.clock.now()
@@ -83,17 +96,33 @@ class WorldEngine:
                 if actor.handles(beat):
                     self._order += 1
                     self._pending.append(_Pending(beat.at + actor.delay(beat), self._order, actor, beat))
-        due = sorted((p for p in self._pending if p.due_at <= now), key=lambda p: (p.due_at, p.order))
-        self._pending = [p for p in self._pending if p.due_at > now]
+        fired: list[Observation] = []
+        while True:
+            self._discover()      # a job may queue follow-ups due at this same instant
+            due = sorted((p for p in self._pending if p.due_at <= now), key=lambda p: (p.due_at, p.order))
+            if not due:
+                return fired
+            self._pending = [p for p in self._pending if p.due_at > now]
+            fired += self._perform(due, now)
+
+    def _perform(self, due: list[_Pending], now: datetime) -> list[Observation]:
         fired: list[Observation] = []
         for i, p in enumerate(due):
             try:
-                reason = p.actor.act(p.beat, self.ports)
+                reason = p.actor.act(p.beat, self.ports) if p.beat is not None else \
+                    p.actor.perform(p.job, self.ports, now)  # type: ignore[attr-defined]
             except BaseException:
                 # a port call failed: this reaction and every later due one stay pending for the next tick (the beat
                 # was already released by the truth and is never released again, so nothing else would retry them)
                 self._pending = due[i:] + self._pending
                 raise
+            if p.beat is None:   # a watching actor's job: logged apart from the truth observations
+                self.shop_log.append({"at": now.isoformat(), "job": p.job.kind, "pr": p.job.pr_id,
+                                      "wo": p.job.wo_id, "status": p.job.status, "skipped": reason})
+                if reason is not None:
+                    self.skipped.append(Skipped(p.actor.product, p.job.vehicle, f"foreman:{p.job.kind}", p.due_at,
+                                                now, reason))
+                continue
             product = p.actor.product_of(p.beat)
             if reason is None:
                 o = Observation(product, p.beat.vehicle, p.beat.kind, p.beat.at, now)
@@ -126,6 +155,7 @@ class WorldEngine:
         if t < self.clock.now():
             return out
         while True:
+            self._discover()      # Step 4.1: a request made since the last step is seen now (no-op for beat actors)
             nxt = self._next_instant(self.clock.now())
             if nxt is None or nxt > t:
                 break
