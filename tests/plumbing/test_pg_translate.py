@@ -92,7 +92,9 @@ def test_poll_rejects_statements_translate():
         "INSERT INTO poll_rejects(poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,"
         "resolved,resolved_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,NULL) ON CONFLICT(poller,record_key) DO UPDATE "
         "SET native_id=excluded.native_id,reason=excluded.reason,digest=excluded.digest,last_seen=excluded.last_seen,"
-        "resolved=0,resolved_at=NULL")
+        "resolved=0,resolved_at=NULL "
+        # bug sweep B round 3 (A176), deliberately extended: a closed row is reopened only by a changed record
+        "WHERE poll_rejects.resolved<2 OR poll_rejects.digest<>excluded.digest")
     assert translate(wb.REJECT_RESOLVE) == \
         "UPDATE poll_rejects SET resolved=1,resolved_at=%s WHERE poller=%s AND record_key=%s AND resolved=0"
     assert translate(wb.REJECT_OPEN_KEYS) == "SELECT record_key FROM poll_rejects WHERE poller=%s AND resolved=0"

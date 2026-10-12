@@ -42,7 +42,10 @@ REJECT_UPSERT = (
     "INSERT INTO poll_rejects(poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,"
     "resolved,resolved_at) VALUES(?,?,?,?,?,?,?,?,?,0,NULL) ON CONFLICT(poller,record_key) DO UPDATE SET "
     "native_id=excluded.native_id,reason=excluded.reason,digest=excluded.digest,last_seen=excluded.last_seen,"
-    "resolved=0,resolved_at=NULL")
+    "resolved=0,resolved_at=NULL "
+    # round 3 (A176): a dismissed or superseded row is reopened only by a CHANGED record, even when the dismissal
+    # landed while this poll was reading (the poll's view of closed rows is from before it)
+    "WHERE poll_rejects.resolved<2 OR poll_rejects.digest<>excluded.digest")
 REJECT_RESOLVE = "UPDATE poll_rejects SET resolved=1,resolved_at=? WHERE poller=? AND record_key=? AND resolved=0"
 REJECT_OPEN_KEYS = "SELECT record_key FROM poll_rejects WHERE poller=? AND resolved=0"
 # Bug sweep B round 3 (A175, A176): `resolved` is the row's state: 0 open, 1 resolved (read again), 2 dismissed by an
@@ -287,9 +290,8 @@ class Poller:
         self._resolved: list[str] = []
         self._open = {r["record_key"] for r in self.db.execute(REJECT_OPEN_KEYS, (self.name,)).fetchall()}
         # fix round N1 b (A166): per stream, the cursor each OPEN reject was read at; a cursor never passes them.
-        # Round 3 (A175): only floors of rows still open count (a dismissed or superseded one no longer holds).
-        self._floors: dict[str, dict[str, str | None]] = {
-            s: {k: f for k, f in v.items() if k in self._open} for s, v in (floors or {}).items()}
+        # Round 3 (A175): the state written at the end of a poll keeps only floors of rows still open (live_floors)
+        self._floors: dict[str, dict[str, str | None]] = {s: dict(v) for s, v in (floors or {}).items()}
         # round 3 (A176): dismissed / superseded rows and the digest the product sent then
         self._closed = {r["record_key"]: r["digest"] for r in self.db.execute(REJECT_CLOSED, (self.name,)).fetchall()}
         self._reopened: list[tuple[str, str]] = []

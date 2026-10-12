@@ -101,6 +101,27 @@ def test_a_stale_reject_costs_every_poll_until_dismissed_then_the_cost_drops_bac
     assert len(raw(db)) == 50                                          # every good change emitted exactly once
 
 
+def test_a_dismissal_made_while_a_poll_is_reading_is_not_undone_by_that_poll(db, mocks):
+    """The race: the poll loaded its state (with the floor), then the operator dismisses, then the same poll re-reads
+    the unchanged stale record and writes its state. The row stays dismissed and the floor stays released."""
+    _changes(mocks, 5)
+    feed = Feed(mocks.c("scheduling"), "/status-changes")
+    feed.front.append(dict(STALE))
+    p = SchedulingPoller(db, feed, AG)
+    p.poll()
+    (row,) = list_rejects(db)
+    inner_get = feed.get
+
+    def get_and_dismiss(path, **kw):
+        if path == "/status-changes":
+            dismiss_reject(db, row["id"], by="ops", reason="during the poll", at=None)
+        return inner_get(path, **kw)
+    feed.get = get_and_dismiss   # type: ignore[method-assign]
+    p.poll()
+    (kept,) = list_rejects(db, include_resolved=True)
+    assert kept["state"] == "dismissed" and "reject_floors" not in load_state(db, p.name)[1]
+
+
 def test_dismissing_an_unknown_id_is_none_and_changes_nothing(db, mocks):
     p = SchedulingPoller(db, mocks.c("scheduling"), AG)
     p.poll()
