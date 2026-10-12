@@ -54,7 +54,8 @@ def test_g3_reused_asset_id_ended_vehicle_is_unknown_and_the_new_owner_reads_its
 def test_g3_the_ended_vehicle_is_unverifiable_for_clearance_never_active(world):
     _reuse_asset_1107(world)
     statuses = world.system.toolset.asset_statuses(AGENCY, ["veh-2", "veh-3"]).value
-    facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None, asset_status=statuses)
+    facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None, asset_status=statuses,
+                  ready_unknown=0)
     v2 = Vehicle(id="veh-2", agency=AGENCY, depot="North", type="standard", seats=40, wheelchair_positions=2,
                  lift_ok=True, status="ready")
     it = asset_active_item(v2, facts)

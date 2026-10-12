@@ -109,7 +109,7 @@ def run_row(row):
     v = vehicle(g.get("vehicle"), unknown=g.get("vehicle_unknown"))
     op = operator(g.get("operator"), expires=g.get("expires"), window=g.get("operator_window_h"),
                   unknown=g.get("operator_unknown"))
-    f = Facts(blocks={b.id: b}, vehicles={v.id: v}, operators={op.id: op}, ready_count=3, commitments={},
+    f = Facts(blocks={b.id: b}, vehicles={v.id: v}, operators={op.id: op}, ready_count=3, commitments={}, ready_unknown=0,
               profiles=profiles(g.get("drop"), g.get("legacy")), asset_status=asset_feed(g.get("asset_status"), v.id))
     # the planner's own path: one block onto one spare, the block keeps its operator (R2-1: the operator rules
     # must see the vehicle type exactly as the planner hands it over, not as this driver would)

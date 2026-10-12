@@ -54,7 +54,7 @@ def facts(blocks=(), vehicles=(), operators=(), ready_count=3, commitments=None,
                  operators={o.id: o for o in operators}, ready_count=ready_count,
                  commitments={} if commitments is None else commitments, profiles=profs,
                  trigger_vehicle_id="veh-1",
-                 asset_status=asset_status)   # S2 F4: the default sees every vehicle's asset as active
+                 asset_status=asset_status, ready_unknown=0)   # R5-2: explicit (tests that need >0 set it)   # S2 F4: the default sees every vehicle's asset as active
 
 
 class _AllActive(dict):
@@ -465,3 +465,16 @@ def test_probe_r4b_two_unreachable_spares_make_last_spare_unverifiable():
 def test_count_ready_excludes_known_retired_and_counts_unknown(statuses, want):
     from transitos.clearance.rules import count_ready
     assert count_ready(["S1", "S2"], statuses) == want
+
+
+# ---- bug sweep A2, R5-2 (A163): ready_unknown has no default (a caller that forgets it must not fail open) -----
+def test_r5_2_facts_cannot_be_built_without_ready_unknown():
+    with pytest.raises(TypeError, match="ready_unknown"):
+        Facts(blocks={}, vehicles={}, operators={}, ready_count=3, commitments={})  # type: ignore[call-arg]
+
+
+def test_r5_2_facts_from_a_dict_without_ready_unknown_is_refused():
+    d = Facts(blocks={}, vehicles={}, operators={}, ready_count=3, commitments={}, ready_unknown=0).to_dict()
+    d.pop("ready_unknown")
+    with pytest.raises(KeyError):
+        Facts.from_dict(d)

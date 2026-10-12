@@ -31,7 +31,7 @@ class HardLimits:
         return self.limits.min_spares
 
     def _facts(self) -> Facts:
-        return Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
+        return Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None, ready_unknown=0,
                      profiles={"scheduling": native_profile("scheduling"),
                                "workforce": native_profile("workforce", drop=_LEGACY_DROP)})
 

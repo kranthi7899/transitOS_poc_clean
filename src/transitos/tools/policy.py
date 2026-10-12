@@ -107,8 +107,8 @@ def check_lift_qualification(needs: Needs, operator: Operator) -> list[str]:
 def check_spare_meets_needs(vehicle: Vehicle, needs: Needs, policy: AgencyPolicy | None = None) -> list[str]:
     """Capacity, lift and graded type fit (a larger class passes with a warning, smaller never)."""
     block = Block(id="-", vehicle_id="-", start=_EPOCH, end=_EPOCH, needs=needs)
-    facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None,
-                  profiles={"scheduling": native_profile("scheduling")})
+    facts = Facts(blocks={}, vehicles={}, operators={}, ready_count=None, commitments=None, ready_unknown=0,
+                  profiles={"scheduling": native_profile("scheduling")})   # no spare count here (R5-2)
     items = guarded(f"vehicle {vehicle.id}", vehicle_items, block, vehicle, facts, policy or AgencyPolicy(agency="-"))
     return [i.detail for i in items if i.status == "violation" and i.rule != "vehicle_ready"]
 

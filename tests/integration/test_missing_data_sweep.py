@@ -69,7 +69,7 @@ def judge(env, from_export: bool = False):
     op = next(o for o in ops if o.id == OP)
     profiles = {k: CapabilityProfile.from_dict(v) for k, v in env.tools.capability_profiles(AG).value.items()}
     facts = Facts(blocks={block.id: block}, vehicles={vehicle.id: vehicle}, operators={op.id: op}, ready_count=3,
-                  commitments={}, profiles=profiles)
+                  commitments={}, profiles=profiles, ready_unknown=0)
     # the planner's own path (R2-1): the block keeps its operator, the operator rules get the type as handed over
     return safe_evaluate(Option((Assign(block.id, vehicle.id),)), facts, AgencyPolicy(agency=AG), T5).items
 
