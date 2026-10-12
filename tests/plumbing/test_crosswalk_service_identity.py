@@ -205,6 +205,23 @@ def test_f5_f8_candidates_without_a_match_are_kept_in_failed_and_stored(bus, svc
     assert [c["canonical_id"] for c in cands] == ["veh-1", "veh-2"] and all(c["evidence"] for c in cands)
 
 
+def test_q3_candidates_are_shown_to_a_person_sorted_by_score_not_by_id(bus, svc, xw):
+    """Owner Q3: all candidates and their evidence, sorted by score (then id). Here the HIGHER-scoring candidate has
+    the LARGER id, so an id-ordered list would be wrong; nothing is attributed automatically below the MATCH bar."""
+    for n, name in ((1, "Bus 47X"), (2, "Bus 44")):
+        xw.resolve(CrosswalkEntry(agency=AG, product="scheduling", native_id=f"B-{n}", entity="vehicle",
+                                  canonical_id=f"veh-{n}", display_name=name))
+    ok, failed = run(bus, svc, fault("f", "T-400", S, native_name="Bus 4"))
+    assert not ok                                                   # no automatic attribution
+    sent = failed["f"].data["identity"]["candidates"]
+    assert [c["canonical_id"] for c in sent] == ["veh-2", "veh-1"]
+    assert sent[0]["score"] > sent[1]["score"] and all(c["evidence"] for c in sent)
+    [u] = xw.unresolved(AG)
+    stored = u["resolution"]["candidates"]
+    assert [c["canonical_id"] for c in stored] == ["veh-2", "veh-1"]
+    assert u["resolution"]["outcome"] == "AMBIGUOUS"                # NO_MATCH only when there is no candidate
+
+
 def test_f2_a_pick_never_rewrites_history(bus, svc, xw):
     """F2 repro: the old unit's event after the swap parks; the human picks veh-2. Events dated before the swap
     still belong to veh-1; events after the parked event's time belong to veh-2."""
