@@ -136,3 +136,4 @@ test suite takes ~160 s on Kafka vs ~10 s on SQLite (topic creation and acks per
   stamped an hour early (A112); with the local-time knob off, a zone-less workforce CSV cell fails closed in
   clearance instead of the read returning unavailable (A113); detection latency does not measure orchestrator
   speed because simulated time does not advance while the system processes.
+- Bug-sweep gaps (docs/assumptions/phase10-bugsweep-{a,b}.md): a poll treats a zone mismatch as configuration (holds and retries) and only genuinely per-record faults become `poll_rejects` (dismiss and supersede are audited; the product's feed shape for the telematics floor is the mock's); the telematics floor needs an integer cursor; write-time re-checks only refuse and never double-book (A151); products that never stamp an opened time would make work-order labelling refuse (A171); a crosswalk conflict reads as unknown and has no panel listing yet (A160).

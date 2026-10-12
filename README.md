@@ -129,9 +129,9 @@ Last run: lint clean, 49/49 scenarios on all three profiles.
 
 | Profile | Tests |
 |---|---|
-| Local | 1457 passed, 150 skipped (Kafka and Postgres cases skip without a server) |
-| Kafka | 1501 passed, 106 skipped |
-| Postgres | 1528 passed, 79 skipped |
+| Local | 1620 passed, 173 skipped (Kafka and Postgres cases skip without a server) |
+| Kafka | 1668 passed, 125 skipped |
+| Postgres | 1706 passed, 87 skipped |
 
 Scenario families:
 - **Original 24:** severe fault with a spare, operator swap, PM overdue (urgent and minor), DVIR defect, last spare, wheelchair and lift mismatches, operator hours, unqualified operator, duplicates, human work order already exists, unresolved vehicle id, product down on read, approval rejected and expired, compensation, kill switch, spare taken after proposal.
