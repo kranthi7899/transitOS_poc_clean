@@ -162,16 +162,27 @@ def map_block(deps: Deps, agency: str, raw: dict) -> Block:
                  end=_parse_dt(raw["end"]), start_depot=raw.get("start_depot", ""), needs=_needs(raw.get("needs")))
 
 
-def map_work_order(deps: Deps, agency: str, raw: dict) -> WorkOrder:
-    vid = deps.crosswalk.lookup(agency, "maintenance", str(raw["asset"]))
+def label_at(deps: Any, agency: str, asset: Any, opened: datetime | None, what: str) -> str:
+    """J1 (A171): the vehicle an order belongs to is the one that held its asset id WHEN IT WAS OPENED (a pending
+    repair: when it was requested), never whoever holds the id now. No opened time, or no single holder then
+    (A160), = unknown: refused (ProductUnavailable), never labelled 'now'."""
+    if opened is None:
+        raise ProductUnavailable("maintenance", f"{what} has no opened time: its vehicle is unknown (A171)")
+    vid = deps.crosswalk.lookup(agency, "maintenance", str(asset), at=opened)
     if vid is None:
-        raise ProductUnavailable("crosswalk", f"unmapped maintenance asset {raw['asset']}")
+        raise ProductUnavailable("crosswalk", f"unmapped maintenance asset {asset} at {opened.isoformat()} ({what})")
+    return vid
+
+
+def map_work_order(deps: Deps, agency: str, raw: dict) -> WorkOrder:
     status = _WO_STATUS.get(raw["status"])
     if status is None:
         raise ProductUnavailable("maintenance", f"unknown work order status {raw['status']!r}")
     read, off = _time_reader(deps, agency), _offsets(raw)
+    opened = read(raw.get("opened_at"), off.get("opened_at"))
+    vid = label_at(deps, agency, raw["asset"], opened, f"work order {raw.get('id')}")   # J1 (A171)
     return WorkOrder(id=str(raw["id"]), native_no=str(raw["wo_no"]), asset_vehicle_id=vid, status=status,  # type: ignore[arg-type]
-                     description=raw.get("description", ""), opened_at=read(raw.get("opened_at"), off.get("opened_at")),
+                     description=raw.get("description", ""), opened_at=opened,
                      closed_at=read(raw.get("closed_at"), off.get("closed_at")),
                      source="human" if raw.get("opened_by") == "human" else "system")
 
@@ -180,20 +191,21 @@ def map_pending_repair(deps: Deps, agency: str, pr: dict, wo: dict | None = None
     """Phase 10 Step 4.1 (A106): a pending repair as the canonical WorkOrder the workflow tracks. Its id stays the
     REQUEST's id for life (one effect per idempotency key; compensation cancels through it). Once the foreman has
     put it on a work order (`wo`), number, status and dates are that work order's. A cancelled request is closed."""
-    vid = deps.crosswalk.lookup(agency, "maintenance", str(pr["asset"]))
-    if vid is None:
-        raise ProductUnavailable("crosswalk", f"unmapped maintenance asset {pr['asset']}")
-    read = _time_reader(deps, agency)
+    read, off = _time_reader(deps, agency), _offsets(pr)
+    created = read(pr.get("created_at"), off.get("created_at"))
+    vid = label_at(deps, agency, pr["asset"], created, f"pending repair {pr.get('id')}")   # J1 (A171): request time
     src = "human" if pr.get("requested_by") == "human" else "system"
     if pr["status"] == "CONVERTED" and wo is not None:
         w = map_work_order(deps, agency, wo)
+        if w.asset_vehicle_id != vid:   # J1 (A172): request and work order name different vehicles: unknown
+            raise ProductUnavailable("crosswalk", f"pending repair {pr.get('id')} ({vid}) and its work order "
+                                                  f"{w.id} ({w.asset_vehicle_id}) name different vehicles")
         return w.model_copy(update={"id": str(pr["id"]), "source": src})
     status = _PR_STATUS.get(pr["status"])
     if status is None:
         raise ProductUnavailable("maintenance", f"unknown pending repair status {pr['status']!r}")
-    off = _offsets(pr)
     return WorkOrder(id=str(pr["id"]), native_no=str(pr["pr_no"]), asset_vehicle_id=vid, status=status,  # type: ignore[arg-type]
-                     description=pr.get("description", ""), opened_at=read(pr.get("created_at"), off.get("created_at")),
+                     description=pr.get("description", ""), opened_at=created,
                      closed_at=read(pr.get("updated_at"), off.get("updated_at")) if status == "closed" else None,
                      source=src)  # type: ignore[arg-type]
 
@@ -234,6 +246,11 @@ class SchedulingReader:
             try:
                 wos = Http("maintenance", self.deps).json(agency, "GET", "/workorders", params={"asset": mnative})
                 local, read = local_time(self.deps, agency)[0], _time_reader(self.deps, agency)
+                # J1 (A172): only orders this vehicle held the asset for when they were opened; an order whose
+                # vehicle is unknown (no opened time, no single holder then) makes the maintenance part missing
+                wos = [w for w in wos if label_at(self.deps, agency, mnative,
+                                                  read(w.get("opened_at"), _offsets(w).get("opened_at")),
+                                                  f"work order {w.get('id')}") == vehicle_id]
                 # Step 4.2: a zone-less local opened_at is passed on as UTC (never naive); default: unchanged
                 hist += [{"kind": "work_order", "vehicle_id": vehicle_id, "wo_id": str(w["id"]),
                           "status": w["status"], "by": w.get("opened_by"),
@@ -446,12 +463,16 @@ class MaintenanceReader:
         open_ = sorted(((read(w.get("opened_at"), _offsets(w).get("opened_at")), i, w) for i, w in enumerate(raw)
                         if _WO_STATUS.get(w["status"]) in ("open", "in_progress")),
                        key=lambda t: (t[0] is not None, t[0] or datetime.min.replace(tzinfo=UTC), t[1]))
-        if open_:
-            return Result.success(map_work_order(self.deps, agency, open_[0][2]))
+        # J1 (A171-A172): every open order on the asset is labelled at its OWN opened time (any label unknown refuses
+        # the whole read, fail closed); only this vehicle's orders count (a reused asset id's older orders do not)
+        mine = [o for o in (map_work_order(self.deps, agency, w) for _, _, w in open_) if o.asset_vehicle_id == vehicle_id]
+        if mine:
+            return Result.success(mine[0])
         if maintenance_mode(self.deps, agency) == "pending_repair":   # Step 4.1: a request not yet on a WO (A106)
             prs = self.http.json(agency, "GET", "/pending-repairs", params={"asset": asset, "status": "OPEN"})
-            if prs:
-                return Result.success(map_pending_repair(self.deps, agency, prs[0]))
+            mine = [o for o in (map_pending_repair(self.deps, agency, p) for p in prs) if o.asset_vehicle_id == vehicle_id]
+            if mine:
+                return Result.success(mine[0])
         return Result.success(None)
 
     # ---- Phase 10 Step 4.1: pending repairs (A105, A106) -------------------------------------------------------

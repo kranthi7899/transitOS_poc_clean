@@ -43,7 +43,8 @@ class StaticCrosswalk:
             self._by_native[(agency, product, native)] = canonical_id
             self._by_canonical.setdefault((agency, canonical_id), {})[product] = native
 
-    def lookup(self, agency: str, product: str, native_id: str) -> str | None:
+    def lookup(self, agency: str, product: str, native_id: str, at: datetime | None = None) -> str | None:
+        """No validity stored (a test double): `at` is accepted (contract signature) and ignored (A147, A171)."""
         return self._by_native.get((agency, product, native_id))
 
     def all_ids(self, agency: str, canonical_id: str, at: datetime | None = None,
