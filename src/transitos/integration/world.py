@@ -30,7 +30,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from transitos.contracts.envelope import TOPIC_FAILED, CloudEvent
+from transitos.contracts.envelope import TOPIC_FAILED, TOPIC_RAW, CloudEvent
 from transitos.contracts.objects import Block, Operator, RunState, Vehicle, WorkOrder
 from transitos.mocks.clock import SimClock
 from transitos.mocks.seed import build_fleet, register_fleet
@@ -38,6 +38,12 @@ from transitos.tools.read_adapters import map_block, map_vehicle, map_work_order
 from transitos.verification.latency import detection_latency
 from transitos.verification.model import AuditEvent, Observation, WriteRecord
 from transitos.verification.scenarios import AGENCY, NATIVE_ASSET, T0, Scenario
+from transitos.world.actors import (
+    DispatcherActor,
+    ForemanActor,
+    ShopActor,
+    TelematicsActor,
+)
 from transitos.world.engine import WorldEngine
 from transitos.world.lag import ProductLag
 from transitos.world.ports import MockPorts
@@ -58,6 +64,7 @@ class IntegrationWorld:
         self.system: System | None = None
         self._acks: dict[str, list[str]] = {}
         self.engine: WorldEngine | None = None          # Phase 10 Step 3: set when the scenario has a world_script
+        self.t0 = T0                                     # Phase 10 Step 4: the scenario's clock start
         self.latency_audit: list[AuditEvent] = []
 
     # ------------------------------------------------------------------ setup
@@ -66,11 +73,13 @@ class IntegrationWorld:
         if self.system is not None:   # one world, one live system: release the previous one's clients
             self.system.close()
         register_fleet(AGENCY, scenario_fleet(t))
-        self.mocks = Mocks.start(SimClock(T0))
+        self.t0 = getattr(t, "clock_start", None) or T0      # Phase 10 Step 4: a scenario may start on another day
+        self.mocks = Mocks.start(SimClock(self.t0))
         self.mocks.seed(AGENCY)
         self.system = s = System(AGENCY, self.mocks, tempfile.mkdtemp(prefix="transitos-world-"))
         self._acks = {}
         s.policy_patch = {"vehicle_fit": fit} if (fit := getattr(t, "vehicle_fit", "allow_larger")) != "allow_larger" else {}
+        self._apply_step4(t)
         if drop := getattr(t, "drop_operator_fields", ()):   # a product that holds only part of the operator data
             self.mocks.clients["workforce"].post("/sim/operator-fields", json={"drop": list(drop)},
                                                  headers=self._h).raise_for_status()
@@ -84,10 +93,26 @@ class IntegrationWorld:
         self._install_chaos()
         self.engine, self.latency_audit = None, []
         if (day := getattr(t, "world_script", None)) is not None:
-            self._start_world(day, getattr(t, "world_lag", None))
+            self._start_world(day, getattr(t, "world_lag", None), getattr(t, "foreman", None))
+
+    def _apply_step4(self, t) -> None:
+        """Phase 10 Step 4 knobs, all off by default (every older scenario takes none of these branches):
+        maintenance_mode -> the registry flag maintenance.mode and the product's shop vocabulary (A105, A107);
+        local_time -> the products' render-only time format (A108, A110) and the registry's local_time setting."""
+        s, cfg = self.system, self.system.registry_settings[AGENCY]
+        if (mode := getattr(t, "maintenance_mode", "work_order")) != "work_order":
+            cfg["maintenance"] = {"mode": mode}
+            self.mocks.clients["maintenance"].post("/sim/config", json={"shop_vocabulary": True},
+                                                   headers=self._h).raise_for_status()
+        if getattr(t, "local_time", False):
+            tz = s.registry.settings(AGENCY).get("timezone")
+            fmt = {"local_tz": tz, "utc_offset": bool(getattr(t, "utc_offset", True)), "epoch_ms": True}
+            for product in ("maintenance", "workforce", "telematics"):
+                self.mocks.clients[product].post("/sim/time-format", json=fmt, headers=self._h).raise_for_status()
+            cfg["local_time"] = True
 
     # ------------------------------------------------------------------ world engine (Phase 10 Step 3)
-    def _start_world(self, day, lag: ProductLag | None) -> None:
+    def _start_world(self, day, lag: ProductLag | None, foreman=None) -> None:
         """Ground truth + per-product lag drive the real mocks; the system runs to idle after every step and each
         step stamps what it saw with the sim time (proposals, writes) for the latency measurement (A99)."""
         s = self.system
@@ -112,15 +137,22 @@ class IntegrationWorld:
             return n
         s.run_until_idle = stamped_idle  # type: ignore[method-assign]
         clock = s.clock
-        self.engine = WorldEngine(GroundTruth(clock, day, seed=0), lag or ProductLag(),
+        lag = lag or ProductLag()
+        actors = None
+        if foreman is not None:   # Phase 10 Step 4.1: the shop foreman joins the default actors (A106)
+            actors = [TelematicsActor(lag), ShopActor(lag), DispatcherActor(lag),
+                      ForemanActor(foreman.delay_min, foreman.parts_wait_prob, foreman.seed,
+                                   defer_prob=foreman.defer_prob, parts_hours=foreman.parts_hours,
+                                   defer_hours=foreman.defer_hours, lag=lag)]
+        self.engine = WorldEngine(GroundTruth(clock, day, seed=0), lag,
                                   MockPorts(self.mocks, AGENCY, build_fleet(AGENCY, clock.now())), clock,
-                                  settle=s.run_until_idle)
+                                  settle=s.run_until_idle, actors=actors)
 
     def advance_world_to(self, hhmm: str) -> None:
         """Script op ("world_until", "HH:MM"): run the world engine to that time of day on the scenario day."""
         if self.engine is None:
             raise ValueError("scenario has no world_script")
-        self.engine.run_until(hhmm_on(T0, hhmm))
+        self.engine.run_until(hhmm_on(self.t0, hhmm))
 
     def latency(self) -> dict | None:
         return None if self.engine is None else detection_latency(self.engine.observations_log, self.latency_audit,
@@ -217,7 +249,12 @@ class IntegrationWorld:
         run = self.system.gateway.get_run(run_id)
         if run is None or not run.wo_id:
             return
-        self.mocks.clients["maintenance"].post(f"/sim/workorders/{run.wo_id}/close", headers=self._h)
+        wo_id = run.wo_id
+        if (pr := self.mocks.apps["maintenance"].state.ctx.store.get(AGENCY, "pending_repair", wo_id)) is not None:
+            if not pr.get("work_order"):   # Step 4.1: a request not yet on a work order has nothing to close
+                return
+            wo_id = pr["work_order"]
+        self.mocks.clients["maintenance"].post(f"/sim/workorders/{wo_id}/close", headers=self._h)
         self.system.run_until_idle()
 
     def take_spare(self, run_id: str) -> None:
@@ -285,10 +322,12 @@ class IntegrationWorld:
             attached[row["run_id"]].append(row["event_id"])
         dead = [{"event_id": e.id, "reason": e.failurereason, "native": e.data.get("native_vehicle_id")
                  or e.data.get("native_asset_id")} for _, _, e in s.bus.messages(TOPIC_FAILED)]
+        events = [{"type": e.type, "time": e.time.isoformat(), "id": e.id} for _, _, e in s.bus.messages(TOPIC_RAW)]
         return Observation(agency=AGENCY, policy=s.policy(), runs=runs, writes=writes,
                            audit=sorted(audit, key=lambda a: a.seq), vehicles=vehicles, blocks=blocks,
                            operators=ops, work_orders=wos, alerts=self._docs("alerts", "alerts"),
-                           dead_letters=dead, attached_events=dict(attached))
+                           dead_letters=dead, attached_events=dict(attached),
+                           events=events, pending_repairs=self._docs("maintenance", "pending_repair"))
 
 
 def make_world() -> IntegrationWorld:

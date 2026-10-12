@@ -199,7 +199,7 @@ from .scenarios_step3 import (
 )
 
 SCENARIOS = SCENARIOS + STEP3B_SCENARIOS
-from .scenarios_step4 import STEP4_SCENARIOS  # Phase 10 Step 4 (pending repair, local time; appended last)
+from .scenarios_step4 import STEP4_SCENARIOS  # Phase 10 Step 4 (appended last)
 
 SCENARIOS = SCENARIOS + STEP4_SCENARIOS
 BY_ID = {s.id: s for s in SCENARIOS}

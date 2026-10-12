@@ -13,7 +13,12 @@ from transitos.verification import report
 from transitos.verification.fake_world import FakeWorld
 from transitos.verification.runner import drive, run_scenario
 from transitos.verification.scenarios import BY_ID, SCENARIOS, Outcome
-from transitos.verification.scenarios_step4 import FALL_BACK, SPRING_FORWARD, WIRE_REASON, Step4Tweaks, _at, _coolant
+from transitos.verification.scenarios_step4 import (
+    SPRING_FORWARD,
+    WIRE_REASON,
+    _at,
+    _coolant,
+)
 
 IDS = ("repair_with_parts_wait", "human_wo_exists_pending", "local_time_normalised", "dst_fallback_event")
 H = {"X-Agency": "agency-a"}
@@ -101,7 +106,9 @@ def test_a_person_opening_a_work_order_first_gets_the_request_no_duplicate():
 
 def test_pending_mode_with_a_human_work_order_before_the_trigger_creates_no_request():
     sc = BY_ID["human_wo_exists_pending"]
-    sc = dataclasses.replace(sc, tweaks=dataclasses.replace(sc.tweaks, human_wo_exists=True), expect_wo_creates=0)
+    sc = dataclasses.replace(sc, tweaks=dataclasses.replace(sc.tweaks, human_wo_exists=True), expect_wo_creates=0,
+                             expect_pending_repairs=0,     # the plan reuses the person's work order: no request
+                             expect_event_times=(("WorkOrderOpened", "2026-10-10T06:00:00+00:00"),))
     r = run_scenario(make_world(), sc, keep_observation=True)
     assert r.passed, (r.mismatches, {k: v for k, v in r.invariants.items() if v})
     assert len(r.observation.work_orders) == 1 and r.observation.work_orders[0].source == "human"
@@ -152,7 +159,9 @@ def test_spring_forward_day_end_to_end():
     sc = dataclasses.replace(sc, tweaks=dataclasses.replace(
         sc.tweaks, world_script=_coolant(SPRING_FORWARD, (6, 40), (7, 0), (7, 10)), clock_start=_at(SPRING_FORWARD, 5)),
         script=(("world_until", "06:41"), ("approve", "plan"), ("world_until", "08:00"),
-                ("approve", "return_to_service")))
+                ("approve", "return_to_service")),
+        expect_event_times=(("WorkOrderOpened", "2026-03-08T06:41:00+00:00"),
+                            ("WorkOrderClosed", "2026-03-08T07:30:00+00:00")))
     r = run_scenario(make_world(), sc)
     assert r.passed, (r.mismatches, {k: v for k, v in r.invariants.items() if v})
     w = make_world()
@@ -172,5 +181,4 @@ def test_unknown_agency_timezone_escalates_degraded_never_guessed():
     w.advance_world_to("09:41")
     obs = w.observe()
     assert [r.status for r in obs.runs] == ["ESCALATED"] and obs.writes == []
-    assert dataclasses.is_dataclass(Step4Tweaks)
-    assert FALL_BACK.tzinfo is not None
+    assert "timezone_unknown" in str(obs.runs[0].model_dump())     # the reason names the unknown zone

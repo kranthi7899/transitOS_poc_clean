@@ -1,5 +1,7 @@
 # Per-agency tool registry: tool -> adapter id. Swap a product by changing one adapter id.
 agency: agency-088
+# Phase 10 Step 4 (A105, A108): see agency-042.yaml. Off unless `local_time: true` / `maintenance.mode` are set.
+timezone: America/Chicago
 products:
   # ports of `python -m transitos.mocks.run` (transitos.mocks.run.PORTS)
   scheduling:  {base_url: "http://localhost:8101"}
