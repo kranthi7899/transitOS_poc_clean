@@ -1,10 +1,13 @@
 """Shared plumbing for adapters: HTTP with timeout/retry, dependency bundle, crosswalk shim."""
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -107,3 +110,76 @@ def unavailable(product: str, note: str) -> Result:
 
 def native_of(deps: Deps, agency: str, canonical: str, product: str) -> str | None:
     return deps.crosswalk.all_ids(agency, canonical).get(product)
+
+
+# ---- Phase 10 Step 4.2: zone-less local time ----------------------------------------------------------------
+# A product that renders local wall-clock time with no zone (A108) is read with the AGENCY's timezone from
+# tools/config/<agency>.yaml. Documented rules (A109), Review Focus 6:
+#   * fall-back repeat (01:30 happens twice): the FIRST occurrence (fold=0) unless the caller passes fold=1 or the
+#     product supplies a utc_offset for that field, which always wins (and must be one of the two real offsets);
+#   * spring-forward gap (02:30 never shows on the clock): resolved FORWARD by the gap (02:30 -> 03:30 DST),
+#     whatever the fold;
+#   * a string that already carries a zone is a bug (mixed formats): ValueError, never silently accepted;
+#   * a missing or unknown timezone is never guessed as UTC: UnknownTimezone (a ValueError).
+
+_LOCAL_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+_LOCAL_HM = re.compile(r"^\d{2}:\d{2}$")
+_ZONED = re.compile(r"(Z|[+-]\d{2}:?\d{2})$", re.IGNORECASE)
+_OFFSET = re.compile(r"^([+-])(\d{2}):(\d{2})$")
+
+
+class UnknownTimezone(ValueError):
+    """The agency timezone is missing or not a zoneinfo key: zone-less local time cannot be read (never UTC)."""
+
+
+def zone(tz: str | None) -> ZoneInfo:
+    if not isinstance(tz, str) or not tz.strip():
+        raise UnknownTimezone("agency timezone is not configured: zone-less local time cannot be read")
+    try:
+        return ZoneInfo(tz.strip())
+    except (ZoneInfoNotFoundError, ValueError) as e:
+        raise UnknownTimezone(f"agency timezone {tz!r} is not a known zone") from e
+
+
+def _offset(s: str) -> timedelta:
+    m = _OFFSET.match(s.strip()) if isinstance(s, str) else None
+    if m is None:
+        raise ValueError(f"utc_offset {s!r} is not +HH:MM / -HH:MM")
+    sign = -1 if m.group(1) == "-" else 1
+    return sign * timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+
+
+def to_utc(naive: str, tz: str, *, fold: int = 0, utc_offset: str | None = None,
+           on: date | None = None) -> datetime:
+    """Zone-less local `YYYY-MM-DDTHH:MM:SS` (or `HH:MM` on the date `on`) in `tz` -> aware UTC datetime (A109)."""
+    if fold not in (0, 1):
+        raise ValueError("fold must be 0 or 1")
+    s = naive.strip() if isinstance(naive, str) else ""
+    if s and _ZONED.search(s) and not _LOCAL_HM.match(s):
+        raise ValueError(f"timestamp {naive!r} already carries a zone: mixed formats are a bug (A109)")
+    zi = zone(tz)
+    if _LOCAL_HM.match(s):
+        if on is None:
+            raise ValueError(f"HH:MM {naive!r} needs a date")
+        s = f"{on.isoformat()}T{s}:00"
+    if not _LOCAL_TS.match(s):
+        raise ValueError(f"not a zone-less local timestamp YYYY-MM-DDTHH:MM:SS: {naive!r}")
+    wall = datetime.fromisoformat(s)      # naive; raises on an impossible date or hour
+    if utc_offset is not None:
+        inst = (wall - _offset(utc_offset)).replace(tzinfo=UTC)
+        if inst.astimezone(zi).replace(tzinfo=None) != wall:
+            raise ValueError(f"utc_offset {utc_offset} does not fit {naive!r} in {tz}: product and agency zone disagree")
+        return inst
+    a = wall.replace(tzinfo=zi, fold=0).astimezone(UTC)
+    b = wall.replace(tzinfo=zi, fold=1).astimezone(UTC)
+    if a.astimezone(zi).replace(tzinfo=None) != wall:      # a gap: no instant shows this wall time
+        # fold=0 applies the offset in force BEFORE the transition, which lands the reading forward by the gap
+        return max(a, b)
+    return b if fold == 1 else a
+
+
+def epoch_ms_to_utc(ms: int) -> datetime:
+    """Epoch milliseconds (telematics wire format under the local-time knob, A110) -> aware UTC datetime."""
+    if isinstance(ms, bool) or not isinstance(ms, int):
+        raise ValueError(f"epoch milliseconds must be an integer, got {ms!r}")
+    return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=ms)
