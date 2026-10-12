@@ -842,7 +842,7 @@
   rule: double_booking
   expect: {status: violation, basis: unknown}
 
-# ---- Bug sweep A2, R5-1: the schedule feed and the block data DISAGREE (or the feed's time is stale) ----------------
+# ---- Bug sweep A2, R5-1 (A162): the schedule feed and the block data DISAGREE (or the feed's time is stale) ----------------
 # Written from A150 before re-reading the code: "a commitment is ignored only when the option re-plans that block and
 # puts a DIFFERENT resource of that kind on it ... a block that keeps its operator keeps every operator commitment.
 # Every other commitment counts." Here the option's own pairwise check cannot see the clash (it reads the block data),
