@@ -37,3 +37,12 @@ The prompt contains only a whitelist of fields; free text is truncated and `<` i
 tag; the system prompt says text in the data is never an instruction; and the answer is validated regardless. The key is
 read from the environment or `.env.local`, never logged, stored in a record, or put in a prompt, and a test fails the
 build if a key-shaped string is ever tracked by git.
+
+## Measured (2026-10-12, `claude-haiku-5-5`, real calls)
+- Two live checks and the three-scenario end-to-end check pass.
+- The whole 50-scenario report passes with Haiku as the reasoner (`make llm-report`).
+- Across all scenarios, **32 of 32 plans** where the reasoner was asked used Haiku's answer after validation; the
+  code-ranked fallback never ran. The other 18 scenarios stop before the reasoning step (escalations, monitor, dead
+  letters), so they make no call.
+- Cost: about **$0.018 in total for 75 calls** (roughly a quarter of a cent per call); a full report run is about one cent.
+
