@@ -20,7 +20,9 @@ from transitos.verification.scenarios_step4 import (
     _coolant,
 )
 
-IDS = ("repair_with_parts_wait", "human_wo_exists_pending", "local_time_normalised", "dst_fallback_event")
+IDS = ("repair_with_parts_wait", "human_wo_exists_pending", "local_time_normalised", "dst_fallback_event",
+       "dst_fallback_after_ambiguous_hour")   # DST escalation round (Q4, A183): the fifth is the moved-later day
+LATER = "dst_fallback_after_ambiguous_hour"
 H = {"X-Agency": "agency-a"}
 
 
@@ -48,7 +50,7 @@ def maint(w, path: str):
 
 # ------------------------------------------------------------------ registration and the report
 def test_registered_last_and_the_older_45_are_untouched():
-    assert len(SCENARIOS) == 49 and [s.id for s in SCENARIOS[45:]] == list(IDS)
+    assert len(SCENARIOS) == 50 and [s.id for s in SCENARIOS[45:]] == list(IDS)
     assert all(not getattr(s.tweaks, "local_time", False) and getattr(s.tweaks, "maintenance_mode", "work_order")
                == "work_order" and getattr(s.tweaks, "clock_start", None) is None for s in SCENARIOS[:45])
     assert all(s.expect_work_orders is None and not s.real_world_reason for s in SCENARIOS[:45])
@@ -58,7 +60,7 @@ def test_registered_last_and_the_older_45_are_untouched():
 def test_step4_scenarios_pass_on_the_real_system(sid):
     r = report.run_all(make_world, (BY_ID[sid],))[0]
     assert r.passed and not r.skipped, (r.mismatches, {k: v for k, v in r.invariants.items() if v})
-    assert r.outcome == Outcome.PLAN_VALID.value
+    assert r.outcome == (Outcome.ESCALATE_NO_SAFE_OPTION if sid == "dst_fallback_event" else Outcome.PLAN_VALID).value
 
 
 @pytest.mark.parametrize("sid", IDS)
@@ -137,7 +139,7 @@ def test_local_time_gives_the_same_writes_as_the_utc_day():
 
 
 def test_dst_fallback_close_with_an_earlier_local_time_is_stamped_06_30z():
-    w = partial("dst_fallback_event", 5)                # to 07:00 (before the return approval)
+    w = partial(LATER, 5)                               # to 07:00 (before the return approval)
     (wo,) = maint(w, "/workorders")
     assert (wo["opened_at"], wo["closed_at"]) == ("2026-11-01T01:41:00", "2026-11-01T01:30:00")
     assert wo["utc_offset"] == {"opened_at": "-04:00", "closed_at": "-05:00", "updated_at": "-05:00"}
@@ -148,14 +150,14 @@ def test_dst_fallback_close_with_an_earlier_local_time_is_stamped_06_30z():
 def test_dst_fallback_without_offsets_follows_the_documented_rule_known_gap():
     """Known gap A112: with no utc_offset the second 01:30 is read as the FIRST (EDT): the close is stamped 05:30Z,
     BEFORE its own opening (05:41Z). The run still resumes (resume is by vehicle), so the outcome holds."""
-    w = partial("dst_fallback_event", 5, utc_offset=False)
+    w = partial(LATER, 5, utc_offset=False)
     assert [e.time for e in events(w, "WorkOrderClosed")] == [z(2026, 11, 1, 5, 30)]
     assert w.observe().runs[0].status != "WAITING_FOR_REPAIR"
 
 
 def test_spring_forward_day_end_to_end():
     """2026-03-08: the clock jumps 02:00 EST -> 03:00 EDT. Opened 06:41Z (01:41 EST), closed 07:30Z (03:30 EDT)."""
-    sc = BY_ID["dst_fallback_event"]
+    sc = BY_ID[LATER]
     sc = dataclasses.replace(sc, tweaks=dataclasses.replace(
         sc.tweaks, world_script=_coolant(SPRING_FORWARD, (6, 40), (7, 0), (7, 10)), clock_start=_at(SPRING_FORWARD, 5)),
         script=(("world_until", "06:41"), ("approve", "plan"), ("world_until", "08:00"),

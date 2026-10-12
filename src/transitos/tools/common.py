@@ -210,6 +210,14 @@ def to_utc(naive: str, tz: str, *, fold: int = 0, utc_offset: str | None = None,
     return b if fold == 1 else a
 
 
+def fold_readings(naive: str, tz: str) -> tuple[datetime, datetime] | None:
+    """Q4 (A179): the two UTC instants a zone-less local wall time stands for when it falls in a repeated (fall-back)
+    hour, earlier first; None when it names exactly one instant (or none: a spring-forward gap resolves forward and
+    is not ambiguous). Raises like `to_utc` on a value it cannot read."""
+    a, b = to_utc(naive, tz, fold=0), to_utc(naive, tz, fold=1)
+    return (min(a, b), max(a, b)) if a != b else None
+
+
 def payload_time_reader(cfg: dict) -> Callable[[dict, str], datetime] | None:
     """For a watch adapter: read `doc[key]` as zone-less local time in the agency timezone (the product's optional
     per-field `utc_offset` map disambiguates), or None when the agency's products send zoned time (the default)."""

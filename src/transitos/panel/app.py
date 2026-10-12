@@ -141,6 +141,24 @@ def _clearance_card(run: RunState) -> str:
             f"<th>Detail</th><th>Approver</th></tr>{rows}</table></div>")
 
 
+def _needs_human_card(records: list[Any]) -> str:
+    """Q4 (A182): an escalation that needs a person's answer (e.g. which of two instants an ambiguous local time in
+    a product's data means), with the closest options, from the latest decision record that carries one."""
+    rec = next((r.recommendation for r in reversed(records)
+                if (r.recommendation or {}).get("needs_human") or (r.recommendation or {}).get("needs_human_error")),
+               None)
+    if rec is None:
+        return ""
+    b = "<div class='card warn'><h2>Needs a person</h2>"
+    for e in rec.get("needs_human") or []:
+        b += f"<p><b>{_e(e.get('question', ''))}</b></p><p>Why: {_e(e.get('why', ''))}</p>"
+        opts = "".join(f"<li>{_e(o.get('text', ''))}</li>" for o in e.get("options") or [])
+        b += f"<p>Closest options:</p><ul>{opts}</ul>" if opts else f"<p>{_e(e.get('no_option', ''))}</p>"
+    if rec.get("needs_human_error"):
+        b += f"<p>{_e(rec['needs_human_error'])}</p>"
+    return b + "</div>"
+
+
 async def _form(request: Request) -> dict[str, str]:
     raw = (await request.body()).decode()
     return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
@@ -328,6 +346,7 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
              f"<b>{_e(run.vehicle_id)}</b> agency {_e(run.agency)} plan v{run.plan_version}</div>")
         if run.violations:
             b += "<div class='card warn'>Violations: " + _e("; ".join(run.violations)) + "</div>"
+        b += _needs_human_card(audit.for_run(run_id))
         if plan:
             steps = "".join(f"<tr><td>{_e(s.action)}</td><td>{_e(s.params)}</td><td>{_e(s.status)}</td></tr>"
                             for s in plan.steps)

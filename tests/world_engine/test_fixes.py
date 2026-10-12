@@ -182,5 +182,6 @@ def test_fake_world_skips_lag_scenarios_and_says_why_it_does_not_fake_agreement(
 
 def test_only_the_lag_scenarios_are_real_world_only():
     # Phase 10 Step 4 appended four more (wire formats and the pending-repair flow, each with its own reason)
-    step4 = {"repair_with_parts_wait", "human_wo_exists_pending", "local_time_normalised", "dst_fallback_event"}
+    step4 = {"repair_with_parts_wait", "human_wo_exists_pending", "local_time_normalised", "dst_fallback_event",
+             "dst_fallback_after_ambiguous_hour"}   # DST escalation round (Q4, A183)
     assert {s.id for s in SCENARIOS if s.real_world_only} - step4 == {"dispatcher_acts_before_approval"}

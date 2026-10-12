@@ -23,6 +23,7 @@ from .common import (
     Http,
     ProductUnavailable,
     UnknownTimezone,
+    fold_readings,
     local_time,
     maintenance_mode,
     native_of,
@@ -375,6 +376,27 @@ def _dated(s: str | None, read: Callable[..., datetime | None] = _parse_dt) -> d
     return out
 
 
+def _ambiguities(row: dict, op: Operator, tz: str | None) -> list[dict]:
+    """Q4 (A179): every CSV time cell of this operator that names a repeated (fall-back) wall time, with both
+    instants (earlier first), the one the rules read (`read_as`, CSV_FOLD) and the operator record as read. Only for
+    zone-less local time; a cell that cannot be read raised already while the record was read."""
+    out: list[dict] = []
+    cells = [(f, None, row.get(f)) for f in CSV_FOLD if f != "training_valid_to"]
+    for part in _split(row.get("training_valid_to")):       # per credential code, as `_dated` reads them
+        code, _, v = part.partition("=")
+        if code and v:
+            cells.append(("training_valid_to", code, v))
+    for fld, code, cell in cells:
+        if _blank(cell) or (pair := fold_readings(str(cell).strip(), tz)) is None:  # type: ignore[arg-type]
+            continue
+        used = pair[CSV_FOLD[fld]]
+        out.append({"product": "workforce", "subject": op.id, "native_id": row.get("operator"), "field": fld,
+                    "key": code, "local": str(cell).strip(), "timezone": tz,
+                    "readings": [_utc_str(x) for x in pair], "read_as": _utc_str(used),
+                    "record": op.model_dump(mode="json")})
+    return out
+
+
 class WorkforceReader:
     """adapter id: workforce_mock_v1. Reads come from the daily CSV export (A3) so hours may be stale.
     The header row decides which fields the export supplies (capability profile, Phase 10, A73): a column that
@@ -385,14 +407,20 @@ class WorkforceReader:
         self.http = Http("workforce", deps)
 
     def _export(self, agency: str) -> tuple[list[Operator], CapabilityProfile]:
+        ops, profile, _ = self._read_export(agency)
+        return ops, profile
+
+    def _read_export(self, agency: str) -> tuple[list[Operator], CapabilityProfile, list[dict]]:
         text = self.http.request(agency, "GET", "/export/operators.csv").text
         reader = csv.DictReader(io.StringIO(text))
         cols = set(reader.fieldnames or [])
         profile = CapabilityProfile("workforce", {
             f: ("native" if set(c) <= cols else "unknown") for f, c in FIELD_COLUMNS.items()})
         out: list[Operator] = []
+        ambiguous: list[dict] = []   # Q4 (A179): cells in a repeated wall-clock hour, with both instants
         # Step 4.2: the CSV may carry zone-less local time (no offsets); knob off = the pre-Step-4 parse (A113)
         ts = _time_reader(self.deps, agency, strict=False)
+        local, tz = local_time(self.deps, agency)
         for row in reader:
             cid = self.deps.crosswalk.lookup(agency, "workforce", row["operator"])
             if cid is None:
@@ -415,10 +443,18 @@ class WorkforceReader:
                 last_duty_end=ts(row.get("last_duty_end"), fold=CSV_FOLD["last_duty_end"]),
                 duty_start_today=ts(row.get("duty_start_today"), fold=CSV_FOLD["duty_start_today"]),
                 unknown_fields=unknown))
-        return out, profile
+            if local:
+                ambiguous += _ambiguities(row, out[-1], tz)
+        return out, profile, ambiguous
 
     def operators(self, agency: str) -> list[Operator]:
         return self._export(agency)[0]
+
+    @guarded("workforce")
+    def time_ambiguities(self, agency: str) -> Result[list[dict]]:
+        """Q4 (A179): optional read (not in ReadTools): each operator time in the export that occurs twice on the
+        wall clock and carries no offset, with both UTC instants, earlier first. Empty when there is none."""
+        return Result.success(self._read_export(agency)[2])
 
     def capability_profile(self, agency: str) -> CapabilityProfile:
         # the header row alone (Step 4.2: a cell that cannot be read, e.g. local time with no known zone, makes the

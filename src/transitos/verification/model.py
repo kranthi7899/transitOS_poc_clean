@@ -59,6 +59,8 @@ class Observation(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)            # product events as published: type, time
     pending_repairs: list[dict[str, Any]] = Field(default_factory=list)   # the maintenance product's requests
     shop_log: list[dict[str, Any]] = Field(default_factory=list)          # what the world's foreman did (F5)
+    # Q4 (A184): the escalation record per run id as the workflow stored it (worlds that have one; empty otherwise)
+    escalations: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     def forward_writes(self, run_id: str | None = None) -> list[WriteRecord]:
         return [w for w in self.writes if not w.compensation and (run_id is None or w.run_id == run_id)]
