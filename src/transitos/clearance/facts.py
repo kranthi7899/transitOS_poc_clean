@@ -126,6 +126,9 @@ class Facts:
     # S2 fix round F4 (A142): maintenance asset status per vehicle id, as the maintenance product reports it
     # ("active", "retired", ...), "missing" (no maintenance asset), "unreachable"; None = no asset-status feed
     asset_status: dict[str, str] | None = None
+    # R4-1 (A143): how many of the spares counted in ready_count have a maintenance status that is not known
+    # active (rules.count_ready); > 0 makes last_spare unverifiable. Callers that count spares set it
+    ready_unknown: int = 0
 
     def basis(self, product: str, name: str) -> Basis:
         p = self.profiles.get(product)
@@ -152,6 +155,7 @@ class Facts:
             "profiles": {k: p.to_dict() for k, p in self.profiles.items()},
             "trigger_vehicle_id": self.trigger_vehicle_id,
             "asset_status": None if self.asset_status is None else dict(self.asset_status),
+            "ready_unknown": self.ready_unknown,
         }
 
     @classmethod
@@ -166,7 +170,8 @@ class Facts:
                 for k, v in d["commitments"].items()},
             profiles={k: CapabilityProfile.from_dict(p) for k, p in d["profiles"].items()},
             trigger_vehicle_id=d.get("trigger_vehicle_id", ""),
-            asset_status=None if d.get("asset_status") is None else dict(d["asset_status"]))
+            asset_status=None if d.get("asset_status") is None else dict(d["asset_status"]),
+            ready_unknown=int(d.get("ready_unknown", 0)))
 
 
 __all__ = ["BASIS_ORDER", "PRODUCT_FIELDS", "RECORD_FIELDS", "SCHEDULING_FIELDS", "WORKFORCE_FIELDS", "Basis", "CapabilityProfile",

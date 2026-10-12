@@ -37,6 +37,7 @@ from transitos.clearance.rank import rank_plans
 from transitos.clearance.rules import (
     clearance_error,
     count_distinct_spares,
+    count_ready,
     guarded,
     known_need_type,
     last_spare_item,
@@ -207,9 +208,11 @@ def build_graph(deps: Deps, checkpointer):
         commitments = None if sched is None else commitments_from_blocks(Block.model_validate(x) for x in sched)
         asset_status = facts.get("asset_status")
         # a vehicle KNOWN retired in maintenance is no spare, so it does not count towards min_spares (A142)
-        ready_count = len([i for i in facts["ready_ids"] if (asset_status or {}).get(i) != "retired"])
+        # R4-1 (A143): a counted spare whose status is not known active makes last_spare unverifiable
+        ready_count, ready_unknown = count_ready(facts["ready_ids"], asset_status)
         probe = Facts(blocks={}, vehicles={}, operators={}, ready_count=ready_count, commitments=commitments,
-                      profiles=profiles, trigger_vehicle_id=run.vehicle_id, asset_status=asset_status)
+                      profiles=profiles, trigger_vehicle_id=run.vehicle_id, asset_status=asset_status,
+                      ready_unknown=ready_unknown)
         violations: list[str] = []
         errors: list[dict] = []   # clearance_error items: a candidate whose record broke a rule is excluded (F4)
 
@@ -248,7 +251,7 @@ def build_graph(deps: Deps, checkpointer):
                                   + ("" if need.exact else "_upper_bound_unverified"))
         snapshot = Facts(blocks=block_objs, vehicles=vehicles, operators=operators, ready_count=ready_count,
                          commitments=commitments, profiles=profiles, trigger_vehicle_id=run.vehicle_id,
-                         asset_status=asset_status)
+                         asset_status=asset_status, ready_unknown=ready_unknown)
         mf = {"run_id": run.run_id, "trigger_type": run.trigger_event.get("type"), "now": facts["now"],
               "window_end": facts["window_end"], "vehicle": facts["vehicle"], "min_spares": pol.limits.min_spares,
               "ready_count": ready_count, "blocks": blocks, "previous_errors": [], "clearance_errors": errors,

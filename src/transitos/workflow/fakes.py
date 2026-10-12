@@ -123,7 +123,8 @@ class FakeReadTools:
     def asset_statuses(self, agency, vehicle_ids):
         """S2 fix round F4: the fake's maintenance assets are all active unless a test marks one retired."""
         retired = getattr(self.w, "retired_assets", set())
-        return Result.success({v: ("retired" if v in retired else "active") for v in vehicle_ids})
+        over = getattr(self.w, "asset_overrides", {})   # R4-1 tests: e.g. {"veh-2": "unreachable"}
+        return Result.success({v: over.get(v, "retired" if v in retired else "active") for v in vehicle_ids})
 
     def list_blocks(self, agency, start, end):
         return Result.success([b.model_copy() for b in self.w.blocks.values() if b.end > start and b.start < end])

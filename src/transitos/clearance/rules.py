@@ -12,7 +12,7 @@ need listed in `Needs.unknown_fields` was not declared, so "no requirement" is n
 the weakest basis of every input it read, so a pass is a clean native pass only when all its inputs were native."""
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -413,8 +413,25 @@ def operator_items(block: Block, op: Operator, vehicle_type: str | None, facts: 
 
 
 # ---- spares, kill switch, double booking ----------------------------------------------------------
-def last_spare_item(ready_count: int | None, distinct_used: int, min_spares: int) -> ClearanceItem:
-    """Last-spare rule (A25, A49 closed): using `distinct_used` distinct spares must leave min_spares ready."""
+def count_ready(ready_ids: Sequence[str], asset_status: Mapping[str, str] | None) -> tuple[int, int]:
+    """R4-1 (A143): (ready count, how many of the counted spares have a maintenance status that is not known
+    active). A KNOWN retired asset is no spare and is not counted; no feed (None), a missing asset, an
+    unreachable product or a blank / unrecognised status is counted but unknown."""
+    ready = unknown = 0
+    for vid in ready_ids:
+        s = None if asset_status is None else (asset_status.get(vid) or "").strip().lower()
+        if s == "retired":
+            continue
+        ready += 1
+        unknown += s != "active"
+    return ready, unknown
+
+
+def last_spare_item(ready_count: int | None, distinct_used: int, min_spares: int,
+                    unknown_counted: int = 0) -> ClearanceItem:
+    """Last-spare rule (A25, A49 closed): using `distinct_used` distinct spares must leave min_spares ready.
+    R4-1 (A143): a KNOWN shortage is a violation even counting the unknown spares; otherwise, if any counted
+    spare's maintenance status is not known active, the count itself is uncertain: unverifiable (ack)."""
     if ready_count is None:
         return unverifiable("last_spare", "ready spare count not available")
     remaining = ready_count - distinct_used
@@ -422,6 +439,9 @@ def last_spare_item(ready_count: int | None, distinct_used: int, min_spares: int
         return item("last_spare", "violation", "native",
                     f"min_spares: {remaining} spare(s) would remain after using {distinct_used} distinct "
                     f"spare(s), minimum is {min_spares}")
+    if unknown_counted > 0:
+        return unverifiable("last_spare", f"{unknown_counted} of {ready_count} counted spare(s) have no known "
+                                          f"active maintenance status: {remaining} left may include retired assets")
     return item("last_spare", "pass", "native",
                 f"{distinct_used} distinct spare(s) consumed, {remaining} left (minimum {min_spares})")
 

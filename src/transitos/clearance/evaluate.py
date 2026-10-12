@@ -143,7 +143,7 @@ def option_items(option: Option, facts: Facts, policy: AgencyPolicy) -> list[Cle
             out.append(item("operator_hours_week", "violation", week_b,
                             f"operator_hours_week: {oid} {op.hours_week:.1f}h + {total_block:.1f}h over "
                             f"{how} > max {lim.max_operator_hours_week:g}h"))
-    out.append(last_spare_item(facts.ready_count, len(by_spare), lim.min_spares))
+    out.append(last_spare_item(facts.ready_count, len(by_spare), lim.min_spares, facts.ready_unknown))   # R4-1
     return out
 
 
