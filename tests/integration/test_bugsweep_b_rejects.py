@@ -160,6 +160,21 @@ def test_maintenance_close_of_an_open_work_order_with_a_bad_close_time_waits_for
     assert [e.type for e in raw(db)].count("WorkOrderClosed") == 1 and list_rejects(db) == []
 
 
+def test_maintenance_cursor_moves_past_a_rejected_record(db, mocks):
+    m = mocks.c("maintenance")
+    m.post("/workorders", json={"asset": "1106", "opened_by": "human"}, headers=H)
+    mocks.clock.advance(minutes=5)
+    late = m.post("/workorders", json={"asset": "1107", "opened_by": "human"}, headers=H).json()   # newest, and bad
+    st = _store(mocks)
+    doc = st.get(AG, "wo", late["id"])
+    doc["opened_at"] = doc["opened_at"].rstrip("Z")
+    st.put(AG, "wo", late["id"], doc)
+    p = MaintenancePoller(db, m, AG)
+    assert p.poll() == 1
+    _, seen = load_state(db, p.name)
+    assert seen["wo_cursor"] == late["updated_at"] and late["id"] not in seen["wo"]
+
+
 def test_an_unknown_agency_timezone_still_holds_the_whole_poll(db, mocks):
     """Configuration, not a record (A157): nothing is rejected, nothing emitted, last_error says why, and nothing is
     lost once the configuration is fixed (the A108 behaviour, unchanged)."""

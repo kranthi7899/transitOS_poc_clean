@@ -135,6 +135,18 @@ def test_the_dispatcher_does_not_return_a_bus_it_did_not_pull():
     assert skip.kind == "return_to_service" and skip.at == at(0, 11, 42)
 
 
+def test_the_dispatcher_does_not_return_a_pull_made_outside_this_world():
+    """Scheduling shows out_of_service under the simulated dispatcher's own marker, but THIS world never pulled it (an
+    earlier run on the same products): not this world's pull, so not this world's return."""
+    script = DayScript(AG, (Beat(at(0, 11, 30), "veh-3", "return_to_service", {}),))
+    mocks, eng = _rig(script)
+    mocks.clients["scheduling"].post("/sim/vehicle-status", json={"vehicle": "BUS-46", "status": "out_of_service",
+                                                                  "changed_by": "dispatcher-sim"}, headers=H)
+    eng.run_until(at(0, 12))
+    assert [c[0] for c in _sched(mocks, "BUS-46")] == ["out_of_service"]
+    assert [s.kind for s in eng.skipped if s.product == "scheduling"] == ["return_to_service"]
+
+
 def test_the_dispatcher_does_not_undo_a_later_pull_by_someone_else():
     """It pulled the bus, then the orchestrator wrote its own out_of_service: the latest change is not this world's,
     so the dispatcher leaves the return to the orchestrator."""
