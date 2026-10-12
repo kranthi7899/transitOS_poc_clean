@@ -230,6 +230,11 @@ class DispatcherActor(Actor):
         self._pulled: dict[str, str] = {}     # vehicle -> scheduling status before this world pulled it
         self._waiting: dict[str, Beat] = {}   # B1: return_to_service beats waiting for maintenance to close
 
+    @property
+    def waiting(self) -> list[str]:
+        """Vehicles whose return waits for maintenance (named in the engine's tick-cap error, A174)."""
+        return sorted(self._waiting)
+
     def discover(self, now: datetime, ports: Ports) -> list[tuple[datetime, Beat]]:
         """B1: a waiting return is due again NOW once maintenance shows nothing open for the vehicle."""
         out = []
