@@ -68,7 +68,7 @@ from transitos.plumbing.watch import (
     WebhookReceiver,
     WorkforcePoller,
 )
-from transitos.plumbing.watch.base import list_rejects, zoned
+from transitos.plumbing.watch.base import dismiss_reject, list_rejects, zoned
 from transitos.tools.common import payload_time_reader
 from transitos.tools.idem_store import IdemStore
 from transitos.tools.policy import CONFIG_DIR as TOOLS_CONFIG_DIR
@@ -222,7 +222,9 @@ class System:
         self.panel = create_panel(gateway=self.gateway, crosswalk=self.xw, events=OutboxEventSink(self),
                                   audit=StoreAuditReader(self), killswitch=KillSwitchPort(self.killswitch, self._log_ks),
                                   unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now,
-                                  poll_rejects=lambda ag: list_rejects(self.db, agency=ag))
+                                  poll_rejects=lambda ag: list_rejects(self.db, agency=ag),
+                                  dismiss_reject=lambda rid, user, why: dismiss_reject(   # round 3 (A175): sim time
+                                      self.db, rid, by=user, reason=why, at=self.clock.now().isoformat()))
         self.panel_client = TestClient(self.panel)
 
     def _maintenance_time(self, doc: dict, key: str) -> Any:

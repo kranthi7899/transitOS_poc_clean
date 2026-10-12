@@ -14,6 +14,7 @@ from transitos.contracts.envelope import CloudEvent
 from transitos.tools.common import UnknownTimezone, ZoneConfigMismatch
 
 from .. import outbox
+from ..audit import append_only
 from ..db import Db
 
 STATE_SCHEMA = """
@@ -41,10 +42,31 @@ REJECT_UPSERT = (
     "INSERT INTO poll_rejects(poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,"
     "resolved,resolved_at) VALUES(?,?,?,?,?,?,?,?,?,0,NULL) ON CONFLICT(poller,record_key) DO UPDATE SET "
     "native_id=excluded.native_id,reason=excluded.reason,digest=excluded.digest,last_seen=excluded.last_seen,"
-    "resolved=0,resolved_at=NULL")
+    "resolved=0,resolved_at=NULL "
+    # round 3 (A176): a dismissed or superseded row is reopened only by a CHANGED record, even when the dismissal
+    # landed while this poll was reading (the poll's view of closed rows is from before it)
+    "WHERE poll_rejects.resolved<2 OR poll_rejects.digest<>excluded.digest")
 REJECT_RESOLVE = "UPDATE poll_rejects SET resolved=1,resolved_at=? WHERE poller=? AND record_key=? AND resolved=0"
 REJECT_OPEN_KEYS = "SELECT record_key FROM poll_rejects WHERE poller=? AND resolved=0"
-REJECT_LIST = f"SELECT {','.join(REJECT_COLS)} FROM poll_rejects WHERE resolved<=? ORDER BY poller,record_key"
+# Bug sweep B round 3 (A175, A176): `resolved` is the row's state: 0 open, 1 resolved (read again), 2 dismissed by an
+# operator, 3 superseded by a later change. A row is never deleted. `rowid` is the reject's id (SQLite's implicit
+# rowid; on Postgres the `rowid BIGSERIAL` column plumbing.pg adds to every table).
+REJECT_STATES = {0: "open", 1: "resolved", 2: "dismissed", 3: "superseded"}
+REJECT_LIST = (f"SELECT rowid AS id,{','.join(REJECT_COLS)} FROM poll_rejects WHERE (resolved=0 OR 1=?) "
+               "ORDER BY poller,record_key")
+REJECT_BY_ID = f"SELECT rowid AS id,{','.join(REJECT_COLS)} FROM poll_rejects WHERE rowid=?"
+REJECT_ID_OF = "SELECT rowid AS id FROM poll_rejects WHERE poller=? AND record_key=?"
+REJECT_CLOSED = "SELECT record_key,digest FROM poll_rejects WHERE poller=? AND resolved>=2"
+REJECT_CLOSE = ("UPDATE poll_rejects SET resolved=?,resolved_at=? WHERE poller=? AND record_key=? AND resolved=0")
+# the audit trail of what happened to a reject (dismissed / superseded / reopened): append-only, SIM time, never wall
+REJECT_AUDIT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS poll_reject_audit(
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, reject_id INTEGER, poller TEXT NOT NULL, record_key TEXT NOT NULL,
+  action TEXT NOT NULL, by_user TEXT NOT NULL, reason TEXT, at TEXT);
+"""
+REJECT_AUDIT_INSERT = ("INSERT INTO poll_reject_audit(reject_id,poller,record_key,action,by_user,reason,at) "
+                       "VALUES(?,?,?,?,?,?,?)")
+REJECT_AUDIT_LIST = "SELECT seq,reject_id,poller,record_key,action,by_user,reason,at FROM poll_reject_audit ORDER BY seq"
 
 
 class RecordUnreadable(Exception):
@@ -58,15 +80,56 @@ def digest(doc: Any) -> str:
 
 
 def ensure_reject_schema(db: Any) -> None:
-    db.script(REJECT_SCHEMA)
+    db.script(REJECT_SCHEMA + REJECT_AUDIT_SCHEMA)
+    append_only(db, "poll_reject_audit")   # the existing audit mechanism (plumbing.audit), A175
+
+
+def _reject_row(r: Any) -> dict:
+    out = {"id": r["id"], **{k: r[k] for k in REJECT_COLS}}
+    out["state"] = REJECT_STATES.get(out["resolved"], "unknown")
+    return out
 
 
 def list_rejects(conn_or_db: Any, poller: str | None = None, agency: str | None = None,
                  include_resolved: bool = False) -> list[dict]:
-    """Reject rows (open ones only unless include_resolved), ordered by poller and record."""
+    """Reject rows (open ones only unless include_resolved: then every state), ordered by poller and record."""
     rows = conn_or_db.execute(REJECT_LIST, (1 if include_resolved else 0,)).fetchall()
-    out = [{k: r[k] for k in REJECT_COLS} for r in rows]
+    out = [_reject_row(r) for r in rows]
     return [r for r in out if poller in (None, r["poller"]) and agency in (None, r["agency"])]
+
+
+def reject_audit(conn_or_db: Any) -> list[dict]:
+    cols = ("seq", "reject_id", "poller", "record_key", "action", "by_user", "reason", "at")
+    return [{k: r[k] for k in cols} for r in conn_or_db.execute(REJECT_AUDIT_LIST).fetchall()]
+
+
+def _release_floor(conn: Any, poller: str, record_key: str) -> None:
+    """Drop one reject's floor from its poller's state (A166 floors live in adapter_state.last_seen)."""
+    cursor, seen = load_state(conn, poller)
+    floors = seen.get("reject_floors") or {}
+    if not any(record_key in f for f in floors.values()):
+        return
+    left = {s: {k: v for k, v in f.items() if k != record_key} for s, f in floors.items()}
+    left = {s: f for s, f in left.items() if f}
+    seen = {k: v for k, v in seen.items() if k != "reject_floors"}
+    save_state(conn, poller, cursor, {**seen, "reject_floors": left} if left else seen)
+
+
+def dismiss_reject(db: Any, reject_id: int, *, by: str, reason: str, at: str | None) -> dict | None:
+    """Bug sweep B round 3 (A175): an operator dismisses an OPEN reject. In ONE transaction: the row becomes
+    `dismissed` (never deleted), an audit row records who / when (`at`, sim time) / why, and the reject's floor is
+    released so its stream's cursor moves on. None for an unknown id; a reject that is not open is returned unchanged
+    (idempotent, no second audit row)."""
+    with db.tx() as c:
+        r = c.execute(REJECT_BY_ID, (reject_id,)).fetchone()
+        if r is None:
+            return None
+        if r["resolved"] == 0:
+            c.execute(REJECT_CLOSE, (2, at, r["poller"], r["record_key"]))
+            _release_floor(c, r["poller"], r["record_key"])
+            c.execute(REJECT_AUDIT_INSERT, (r["id"], r["poller"], r["record_key"], "dismissed", by, reason, at))
+            r = c.execute(REJECT_BY_ID, (reject_id,)).fetchone()
+        return _reject_row(r)
 
 
 class UpstreamError(Exception):
@@ -226,22 +289,46 @@ class Poller:
         self._rejects: list[tuple] = []
         self._resolved: list[str] = []
         self._open = {r["record_key"] for r in self.db.execute(REJECT_OPEN_KEYS, (self.name,)).fetchall()}
-        # fix round N1 b (A166): per stream, the cursor each OPEN reject was read at; a cursor never passes them
+        # fix round N1 b (A166): per stream, the cursor each OPEN reject was read at; a cursor never passes them.
+        # Round 3 (A175): the state written at the end of a poll keeps only floors of rows still open (live_floors)
         self._floors: dict[str, dict[str, str | None]] = {s: dict(v) for s, v in (floors or {}).items()}
+        # round 3 (A176): dismissed / superseded rows and the digest the product sent then
+        self._closed = {r["record_key"]: r["digest"] for r in self.db.execute(REJECT_CLOSED, (self.name,)).fetchall()}
+        self._reopened: list[tuple[str, str]] = []
+        self._superseded: list[tuple[str, str]] = []
+        self._by_subject: dict[str, list[str]] = {}
 
     def reject(self, record_key: str, native_id: Any, doc: Any, err: BaseException, *, stream: str | None = None,
-               floor: str | None = None) -> None:
+               floor: str | None = None, subject: str | None = None) -> None:
         """This record is not emitted; it is kept in poll_rejects and re-evaluated whenever it is seen again. With
-        `stream`, that stream's cursor stays at `floor` (the cursor the record was read at) until it is read."""
+        `stream`, that stream's cursor stays at `floor` (the cursor the record was read at) until it is read.
+        Round 3 (A176): a record whose row was dismissed or superseded and that the product sends again UNCHANGED (same
+        digest) stays closed: no new reject, no floor. A CHANGED one that is still unreadable reopens the row (audit
+        'reopened'). `subject` (a vehicle or operator) lets a later change for it supersede this one (A177)."""
         now = self._seen_at()
         key, k_nul = nul_free(record_key)
         nid, n_nul = nul_free(native_id)
         reason, _ = nul_free(str(err)[:300])
         if k_nul or n_nul:
             reason = f"{reason} [NUL in the vendor id written as \\0]"
-        self._rejects.append((self.name, key, self.agency, self.product, nid, reason, digest(doc), now, now))
+        dig = digest(doc)
+        if key in self._closed:
+            if self._closed[key] == dig:
+                return
+            self._reopened.append((key, reason))   # type: ignore[arg-type]
+        self._rejects.append((self.name, key, self.agency, self.product, nid, reason, dig, now, now))
         if stream is not None:
             self._floors.setdefault(stream, {}).setdefault(key, floor)   # type: ignore[arg-type]
+        if subject is not None:
+            self._by_subject.setdefault(subject, []).append(key)   # type: ignore[arg-type]
+
+    def supersede(self, subject: str, by_key: str) -> None:
+        """Round 3 (A177): `by_key`, a change for `subject` read successfully AFTER that subject's rejected changes in
+        the product's feed, supersedes them: their rows become `superseded` and their floors are released."""
+        for key in self._by_subject.pop(subject, []):
+            self._superseded.append((key, by_key))
+            for f in self._floors.values():
+                f.pop(key, None)
 
     def accept(self, record_key: str) -> None:
         """This record was read: a reject row it had is resolved, and it no longer holds its stream's cursor."""
@@ -273,6 +360,27 @@ class Poller:
             conn.execute(REJECT_UPSERT, row)
         for key in self._resolved:
             conn.execute(REJECT_RESOLVE, (self._seen_at(), self.name, key))
+        now = self._seen_at()
+        for key, reason in self._reopened:
+            rid = conn.execute(REJECT_ID_OF, (self.name, key)).fetchone()["id"]
+            conn.execute(REJECT_AUDIT_INSERT, (rid, self.name, key, "reopened", "system", reason, now))
+        for key, by_key in self._superseded:
+            conn.execute(REJECT_CLOSE, (3, now, self.name, key))
+            rid = conn.execute(REJECT_ID_OF, (self.name, key)).fetchone()["id"]
+            conn.execute(REJECT_AUDIT_INSERT, (rid, self.name, key, "superseded", "system",
+                                               f"superseded by {by_key}", now))
+
+    def live_floors(self, conn: Any, last_seen: dict) -> dict:
+        """Inside the poll's transaction: keep only floors of rows still open (a dismissal made while the poll ran
+        is not undone by this poll's state write; A175)."""
+        floors = last_seen.get("reject_floors")
+        if not floors:
+            return last_seen
+        open_ = {r["record_key"] for r in conn.execute(REJECT_OPEN_KEYS, (self.name,)).fetchall()}
+        left = {s: {k: v for k, v in f.items() if k in open_} for s, f in floors.items()}
+        left = {s: f for s, f in left.items() if f}
+        out = {k: v for k, v in last_seen.items() if k != "reject_floors"}
+        return {**out, "reject_floors": left} if left else out
 
     def status(self) -> dict:
         """The poller's health: last_error (the poll itself failed or is held) and its open record rejects."""
@@ -312,5 +420,5 @@ class Poller:
             self._write_records(c)
             if self.before_commit:
                 self.before_commit()
-            save_state(c, self.name, new_cursor, new_seen)
+            save_state(c, self.name, new_cursor, self.live_floors(c, new_seen))
         return added

@@ -24,6 +24,14 @@ from .ports import Ports
 from .script import Beat
 from .truth import GroundTruth
 
+# Bug sweep B round 3 (A174): passes one tick() may make at a single instant (each pass: discover, then perform what
+# is due). Real days need a handful; a re-queue that never settles raises instead of hanging.
+MAX_TICK_PASSES = 10_000
+
+
+class TickLimitExceeded(RuntimeError):
+    """tick() did not settle within MAX_TICK_PASSES at one instant (an actor keeps re-queueing work for now)."""
+
 
 @dataclass(frozen=True)
 class Observation:
@@ -100,13 +108,20 @@ class WorldEngine:
                     self._order += 1
                     self._pending.append(_Pending(beat.at + actor.delay(beat), self._order, actor, beat))
         fired: list[Observation] = []
-        while True:
+        for _ in range(MAX_TICK_PASSES):
             self._discover()      # a job may queue follow-ups due at this same instant
             due = sorted((p for p in self._pending if p.due_at <= now), key=lambda p: (p.due_at, p.order))
             if not due:
                 return fired
             self._pending = [p for p in self._pending if p.due_at > now]
             fired += self._perform(due, now)
+        # bug sweep B round 3 (A174): a discover that keeps re-queueing work for this instant never settles; fail fast
+        stuck = sorted({type(p.actor).__name__ for p in self._pending if p.due_at <= now} |
+                       {type(a).__name__ for a in self.actors if getattr(a, "waiting", None)})
+        waiting = {type(a).__name__: list(getattr(a, "waiting", None) or []) for a in self.actors
+                   if getattr(a, "waiting", None)}
+        raise TickLimitExceeded(f"tick at {now.isoformat()} did not settle after {MAX_TICK_PASSES} passes: actors "
+                                f"{stuck} keep re-queueing work for this instant; waiting: {waiting}")
 
     def _perform(self, due: list[_Pending], now: datetime) -> list[Observation]:
         fired: list[Observation] = []

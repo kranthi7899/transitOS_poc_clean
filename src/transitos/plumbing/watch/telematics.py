@@ -156,6 +156,7 @@ class TelematicsBackfillPoller(Poller):
             self._write_records(c)
             if self.before_commit:
                 self.before_commit()
+            # known gap A178 (1): ordering by int() fits the mock's sequence cursor only (an opaque one would raise)
             nxt = self.capped("feed", data.get("next_cursor") or cursor, order=lambda v: int(v))
-            save_state(c, self.name, nxt, self.with_floors({}))
+            save_state(c, self.name, nxt, self.live_floors(c, self.with_floors({})))
         return added

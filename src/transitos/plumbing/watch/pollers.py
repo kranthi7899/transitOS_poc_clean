@@ -114,10 +114,11 @@ class SchedulingPoller(Poller):
                     {"native_vehicle_id": ch["vehicle"], "status": ch["status"], "changed_by": ch.get("changed_by", ""),
                      **self.evidence(ident, f"/vehicles/{ch['vehicle']}")})
             except RecordUnreadable as e:   # bug sweep B (A155)
-                self.reject(rk, ch["vehicle"], ch, e, stream="changes", floor=since)
+                self.reject(rk, ch["vehicle"], ch, e, stream="changes", floor=since, subject=ch["vehicle"])
                 continue
             new_cursor = later(new_cursor, at)   # A166
             self.accept(rk)
+            self.supersede(ch["vehicle"], rk)    # round 3 (A177): a later change for the vehicle supersedes
             out.append((ev, raw_key(self.product, ch["vehicle"])))
         return out, self.capped("changes", new_cursor), last_seen
 
@@ -140,9 +141,10 @@ class WorkforcePoller(Poller):
                     "OperatorAvailabilityChanged", self.ts(ch, "changed_at"),
                     {"native_operator_id": ch["operator"], "status": ch["status"]})
             except RecordUnreadable as e:   # bug sweep B (A155)
-                self.reject(rk, ch["operator"], ch, e, stream="changes", floor=since)
+                self.reject(rk, ch["operator"], ch, e, stream="changes", floor=since, subject=ch["operator"])
                 continue
             new_cursor = later(new_cursor, at)   # A166
             self.accept(rk)
+            self.supersede(ch["operator"], rk)   # round 3 (A177): a later change for the operator supersedes
             out.append((ev, raw_key(self.product, ch["operator"])))
         return out, self.capped("changes", new_cursor), last_seen

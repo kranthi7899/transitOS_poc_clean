@@ -92,10 +92,32 @@ def test_poll_rejects_statements_translate():
         "INSERT INTO poll_rejects(poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,"
         "resolved,resolved_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,0,NULL) ON CONFLICT(poller,record_key) DO UPDATE "
         "SET native_id=excluded.native_id,reason=excluded.reason,digest=excluded.digest,last_seen=excluded.last_seen,"
-        "resolved=0,resolved_at=NULL")
+        "resolved=0,resolved_at=NULL "
+        # bug sweep B round 3 (A176), deliberately extended: a closed row is reopened only by a changed record
+        "WHERE poll_rejects.resolved<2 OR poll_rejects.digest<>excluded.digest")
     assert translate(wb.REJECT_RESOLVE) == \
         "UPDATE poll_rejects SET resolved=1,resolved_at=%s WHERE poller=%s AND record_key=%s AND resolved=0"
     assert translate(wb.REJECT_OPEN_KEYS) == "SELECT record_key FROM poll_rejects WHERE poller=%s AND resolved=0"
+    # bug sweep B round 3 (A175), deliberately changed: the list carries the id and every state when asked
+    cols = "poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,resolved,resolved_at"
     assert translate(wb.REJECT_LIST) == (
-        "SELECT poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,resolved,resolved_at "
-        "FROM poll_rejects WHERE resolved<=%s ORDER BY poller,record_key")
+        f"SELECT rowid AS id,{cols} FROM poll_rejects WHERE (resolved=0 OR 1=%s) ORDER BY poller,record_key")
+
+
+def test_poll_reject_dismiss_supersede_and_audit_statements_translate():
+    """Bug sweep B round 3 (A175-A177): the id lookups, the close (dismiss / supersede) and the append-only audit."""
+    from transitos.plumbing.watch import base as wb
+    cols = "poller,record_key,agency,product,native_id,reason,digest,first_seen,last_seen,resolved,resolved_at"
+    assert translate(wb.REJECT_BY_ID) == f"SELECT rowid AS id,{cols} FROM poll_rejects WHERE rowid=%s"
+    assert translate(wb.REJECT_ID_OF) == "SELECT rowid AS id FROM poll_rejects WHERE poller=%s AND record_key=%s"
+    assert translate(wb.REJECT_CLOSED) == "SELECT record_key,digest FROM poll_rejects WHERE poller=%s AND resolved>=2"
+    assert translate(wb.REJECT_CLOSE) == \
+        "UPDATE poll_rejects SET resolved=%s,resolved_at=%s WHERE poller=%s AND record_key=%s AND resolved=0"
+    (ddl,) = [translate(s, with_params=False) for s in split_script(wb.REJECT_AUDIT_SCHEMA)]
+    assert ddl == ("CREATE TABLE IF NOT EXISTS poll_reject_audit(\n  seq BIGSERIAL PRIMARY KEY, reject_id INTEGER, "
+                   "poller TEXT NOT NULL, record_key TEXT NOT NULL,\n  action TEXT NOT NULL, by_user TEXT NOT NULL, "
+                   "reason TEXT, at TEXT)")
+    assert translate(wb.REJECT_AUDIT_INSERT) == ("INSERT INTO poll_reject_audit(reject_id,poller,record_key,action,"
+                                                "by_user,reason,at) VALUES(%s,%s,%s,%s,%s,%s,%s)")
+    assert translate(wb.REJECT_AUDIT_LIST) == \
+        "SELECT seq,reject_id,poller,record_key,action,by_user,reason,at FROM poll_reject_audit ORDER BY seq"
