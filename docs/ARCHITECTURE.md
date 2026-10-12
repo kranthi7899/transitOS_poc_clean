@@ -43,7 +43,7 @@ real products.
 | Workflow (D) | LangGraph, interrupts without writes, saga, approval, timers, reasoning interface | As designed + PM urgency rule in code, escalation outcome tags, no undo after a rider-alert attempt | One spare per block (A49); undo order decision (A48) |
 | Panel (E) | Approvals, defects, unresolved ids, kill switch, timeline | As designed + return-to-service decision scope, sim-clock injection | No auth (A42) |
 | World engine (A) | (Phase 10) Ground truth the products see with their own delay | `src/transitos/world/`: scripted `DayScript`, `GroundTruth`, `ProductLag`, actors (telematics, shop, dispatcher, foreman), seeded stochastic mode from real NTD failure quantiles; detection latency in the report (it restates scripted inputs; it does not measure orchestrator speed) | Deterministic; determinism guarded by an AST test |
-| Verification (F) | Scenarios, invariants, report, World | 49 scenarios (24 original, Step 1 clearance 8, Step 3 world engine 5, Step 2 identity 8, Step 4 shop and time 4) on the real integrated world; FakeWorld skips the lag/wire-format ones | `World.restart` added on the integration world only |
+| Verification (F) | Scenarios, invariants, report, World | 50 scenarios (24 original, Step 1 clearance 8, Step 3 world engine 5, Step 2 identity 8, Step 4 shop and time 5) on the real integrated world; FakeWorld skips the lag/wire-format ones | `World.restart` added on the integration world only |
 | Integration | Wire everything | `src/transitos/integration/`: `System` (tick/run_until_idle/restart/recover), panel ports, write log, `IntegrationWorld`, demo | Deterministic single-threaded driver instead of background loops |
 
 ## Local profile vs production mapping

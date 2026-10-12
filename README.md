@@ -130,15 +130,15 @@ back to the code-ranked plan. A hard spend cap (default $3, never above $10) is 
 
 ## Verification
 
-Track F runs 49 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure). Scenarios that depend on product lag or wire formats are marked real-world-only and skipped on the stand-in world instead of faking agreement. Two scenarios are recorded as **known gaps**, not clean passes (the orchestrator cannot know a fault has cleared).
+Track F runs 50 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure). Scenarios that depend on product lag or wire formats are marked real-world-only and skipped on the stand-in world instead of faking agreement. Two scenarios are recorded as **known gaps**, not clean passes (the orchestrator cannot know a fault has cleared).
 
-Last run: lint clean, 49/49 scenarios on all three profiles.
+Last run: lint clean, 50/50 scenarios on all three profiles.
 
 | Profile | Tests |
 |---|---|
-| Local | 1620 passed, 173 skipped (Kafka and Postgres cases skip without a server) |
-| Kafka | 1668 passed, 125 skipped |
-| Postgres | 1706 passed, 87 skipped |
+| Local | 1684 passed, 178 skipped (Kafka and Postgres cases skip without a server) |
+| Kafka | 1733 passed, 129 skipped |
+| Postgres | 1771 passed, 91 skipped |
 
 Scenario families:
 - **Original 24:** severe fault with a spare, operator swap, PM overdue (urgent and minor), DVIR defect, last spare, wheelchair and lift mismatches, operator hours, unqualified operator, duplicates, human work order already exists, unresolved vehicle id, product down on read, approval rejected and expired, compensation, kill switch, spare taken after proposal.
