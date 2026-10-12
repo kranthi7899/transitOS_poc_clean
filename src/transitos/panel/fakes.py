@@ -72,7 +72,7 @@ class FakeCrosswalk:
         self.parked: dict[tuple[str, str, str], list[CloudEvent]] = {}
         self.unresolved_ids: dict[tuple[str, str, str], list[str]] = {}
 
-    def lookup(self, agency, product, native_id):
+    def lookup(self, agency, product, native_id, at=None):   # `at` ignored: a test double (A147, A171)
         return self.map.get((agency, product, native_id))
 
     def all_ids(self, agency, canonical_id, at=None, entities=None):
