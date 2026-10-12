@@ -139,8 +139,8 @@ class MaintenanceWriter(_Base):
         """Compensation for a pending repair: withdraw an open request (or one attached to a work order someone
         else opened, which stays untouched); a request that created its own work order cancels that work order."""
         if pr.get("requested_by") != "system":
-            raise HardLimit([f"cancel_scope: pending repair {pr['id']} was requested by a human; only system "
-                             "requests may be withdrawn"])
+            why = f"cancel_scope: pending repair {pr['id']} was requested by a human; only system requests may go"
+            raise HardLimit([why])
         if pr["status"] == "CANCELLED":
             return Result.success(self.reader.resolve_pending(agency, pr), note="already_cancelled")
         if pr["status"] == "CONVERTED" and pr.get("work_order"):

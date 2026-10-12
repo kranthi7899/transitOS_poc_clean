@@ -18,7 +18,16 @@ from transitos.clearance.rules import known_need_type
 from transitos.contracts.objects import Block, Needs, Operator, Vehicle, WorkOrder
 from transitos.contracts.results import Result
 
-from .common import Deps, Http, ProductUnavailable, UnknownTimezone, local_time, maintenance_mode, native_of, to_utc
+from .common import (
+    Deps,
+    Http,
+    ProductUnavailable,
+    UnknownTimezone,
+    local_time,
+    maintenance_mode,
+    native_of,
+    to_utc,
+)
 
 _VEHICLE_STATUS = {
     "ready": "ready", "available": "ready", "in_service": "in_service", "active": "in_service",
