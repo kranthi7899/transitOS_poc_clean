@@ -27,8 +27,10 @@ would). `tick()` runs each stage once, in order; `run_until_idle()` repeats unti
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import uuid
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -143,6 +145,8 @@ class System:
                  db: str | None = None):
         self.agency, self.mocks, self.clock = agency, mocks, mocks.clock
         self.dir = Path(data_dir or tempfile.mkdtemp(prefix="transitos-"))
+        # we made it, we own it: removed on close(), when collected, or at exit (never a caller's directory)
+        self._owned_dir_cleanup = weakref.finalize(self, shutil.rmtree, str(self.dir), True) if data_dir is None else None
         self.dir.mkdir(parents=True, exist_ok=True)
         self.bus_kind = bus_kind(bus)
         self.db_kind = db_kind(db)
@@ -257,6 +261,8 @@ class System:
                 closer()
             except Exception:  # noqa: BLE001,S110 - best effort
                 pass
+        if self._owned_dir_cleanup is not None:   # the directory this System made for itself
+            self._owned_dir_cleanup()
 
     def restart(self) -> None:
         """Simulate a process restart: close every connection, rebuild every in-process object from the

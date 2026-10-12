@@ -6,7 +6,6 @@ The vehicle crosswalk is worked out by discovery from the products' own rosters 
 from __future__ import annotations
 
 import json
-import tempfile
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -30,10 +29,10 @@ def fleet():
 
 
 @pytest.fixture
-def system():
+def system(tmp_path):
     m = Mocks.start(SimClock(T0))
     m.seed(AG)
-    s = System(AG, m, tempfile.mkdtemp(prefix="t088-"))
+    s = System(AG, m, tmp_path / "t088")
     yield s
     s.close()
 

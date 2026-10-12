@@ -24,7 +24,9 @@ unaffected by chaos).
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
+import weakref
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -66,6 +68,7 @@ class IntegrationWorld:
         self.engine: WorldEngine | None = None          # Phase 10 Step 3: set when the scenario has a world_script
         self.t0 = T0                                     # Phase 10 Step 4: the scenario's clock start
         self.latency_audit: list[AuditEvent] = []
+        self._data_dir_cleanup: weakref.finalize | None = None   # removes this world's temp data directory
 
     # ------------------------------------------------------------------ setup
     def apply(self, scenario: Scenario) -> None:
@@ -76,7 +79,10 @@ class IntegrationWorld:
         self.t0 = getattr(t, "clock_start", None) or T0      # Phase 10 Step 4: a scenario may start on another day
         self.mocks = Mocks.start(SimClock(self.t0))
         self.mocks.seed(AGENCY)
-        self.system = s = System(AGENCY, self.mocks, tempfile.mkdtemp(prefix="transitos-world-"))
+        self._drop_data_dir()   # the previous scenario's directory (its system is already closed above)
+        data_dir = tempfile.mkdtemp(prefix="transitos-world-")
+        self._data_dir_cleanup = weakref.finalize(self, shutil.rmtree, data_dir, True)   # also removed at exit
+        self.system = s = System(AGENCY, self.mocks, data_dir)
         self._acks = {}
         s.policy_patch = {"vehicle_fit": fit} if (fit := getattr(t, "vehicle_fit", "allow_larger")) != "allow_larger" else {}
         self._apply_step4(t)
@@ -173,6 +179,11 @@ class IntegrationWorld:
                          "workforce": self._docs("workforce", "changes")},
         }
         return json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str)
+
+    def _drop_data_dir(self) -> None:
+        """Remove the directory of the scenario that just ended (its System was closed before this)."""
+        if self._data_dir_cleanup is not None:
+            self._data_dir_cleanup()      # runs rmtree once and detaches
 
     @property
     def _h(self) -> dict:
