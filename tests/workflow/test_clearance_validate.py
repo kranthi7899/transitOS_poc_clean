@@ -48,6 +48,27 @@ def test_validator_rejects_one_spare_on_two_overlapping_blocks(make_env):
     assert any(e.startswith("clearance:double_booking") for e in errs)
 
 
+def test_validator_rejects_a_spare_whose_maintenance_asset_is_retired(make_env):
+    """S2 fix round F4: validate_output judges asset_active from the clearance snapshot (retired = violation)."""
+    f = facts_for(make_env, [veh("veh-1"), veh("veh-2"), veh("veh-3"), veh("veh-4")], [block("B1", 1, 3)])
+    assert {k: f["clearance"]["asset_status"][k] for k in ("veh-2", "veh-3", "veh-4")} == \
+        {"veh-2": "active", "veh-3": "active", "veh-4": "active"}
+    _, errs = validate_output(out(("B1", "veh-2", None)), f)
+    assert errs == []
+    f["clearance"]["asset_status"]["veh-2"] = "retired"
+    _, errs = validate_output(out(("B1", "veh-2", None)), f)
+    assert any("asset_active" in e or "asset_retired" in e for e in errs), errs
+
+
+def test_planner_never_lists_a_retired_spare(make_env):
+    spy = Spy()
+    w = world_with([veh("veh-1"), veh("veh-2"), veh("veh-3"), veh("veh-4")], None, [block("B1", 1, 3)])
+    w.retired_assets = {"veh-2"}
+    start(make_env(world=w, reasoner=spy))
+    assert [s["id"] for s in spy.facts["blocks"][0]["spares"]] == ["veh-3", "veh-4"]
+    assert spy.facts["ready_count"] == 2                      # a known-retired asset is no spare (A146)
+
+
 def test_validator_applies_last_spare_to_distinct_spares(make_env):
     f = facts_for(make_env, [veh("veh-1"), veh("veh-2"), veh("veh-3")],
                   [block("B1", 1, 3), block("B2", 5, 7, op="OP-2")])
