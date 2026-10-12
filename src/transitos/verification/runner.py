@@ -130,6 +130,11 @@ def run_scenario(world: World, scenario: Scenario, keep_observation: bool = Fals
         mism.append(f"{len(obs.work_orders)} work orders in maintenance != expected {scenario.expect_work_orders}")
     if scenario.expect_pending_repairs is not None and len(obs.pending_repairs) != scenario.expect_pending_repairs:
         mism.append(f"{len(obs.pending_repairs)} pending repairs != expected {scenario.expect_pending_repairs}")
+    if scenario.expect_shop_statuses is not None:   # F5: a subsequence of the statuses the foreman actually set
+        done = [e["status"] for e in obs.shop_log if e.get("job") == "status" and e.get("skipped") is None]
+        it = iter(done)
+        if not all(s in it for s in scenario.expect_shop_statuses):
+            mism.append(f"shop statuses {list(scenario.expect_shop_statuses)} not seen in order (saw {done})")
     for etype, at in scenario.expect_event_times or ():
         seen = sorted(e["time"] for e in obs.events if e["type"] == etype)
         if not any(datetime.fromisoformat(t) == datetime.fromisoformat(at) for t in seen):

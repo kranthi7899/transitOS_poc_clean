@@ -114,6 +114,7 @@ STEP4_SCENARIOS: tuple[Scenario, ...] = (
        tweaks=_tw(world_script=_coolant(T0, (9, 40), (10, 15), (14, 0)), maintenance_mode="pending_repair",
                   foreman=ForemanSpec(delay_min=10, parts_wait_prob=1.0, defer_prob=0.0, parts_hours=3.0)),
        expect_wo_creates=1, expect_work_orders=1, expect_pending_repairs=1,
+       expect_shop_statuses=("IN_PROGRESS", "WAITING_PARTS", "IN_PROGRESS"),        # F5: the parts wait happened
        expect_event_times=(("WorkOrderOpened", "2026-10-10T09:51:00+00:00"),       # the foreman's conversion
                            ("WorkOrderClosed", "2026-10-10T14:20:00+00:00")),      # the shop's close, not earlier
        real_world_only=True, real_world_reason=WIRE_REASON),

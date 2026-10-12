@@ -58,6 +58,7 @@ class Observation(BaseModel):
     # Phase 10 Step 4 (filled by worlds that have them; empty otherwise):
     events: list[dict[str, Any]] = Field(default_factory=list)            # product events as published: type, time
     pending_repairs: list[dict[str, Any]] = Field(default_factory=list)   # the maintenance product's requests
+    shop_log: list[dict[str, Any]] = Field(default_factory=list)          # what the world's foreman did (F5)
 
     def forward_writes(self, run_id: str | None = None) -> list[WriteRecord]:
         return [w for w in self.writes if not w.compensation and (run_id is None or w.run_id == run_id)]
