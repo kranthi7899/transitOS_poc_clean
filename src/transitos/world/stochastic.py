@@ -190,7 +190,11 @@ def generate_world(cfg: StochasticConfig) -> StochasticWorld:
     if ops:
         rb = _rng(cfg, "extra-board")
         size = max(1, round(len(ops) * rb.choice(EXTRA_BOARD_PER_10) / 10))
-        extra = tuple(sorted(rb.sample(ops, min(size, len(ops)))))
+        # bug sweep B (F9-R3, A158): members are the top `size` operators by a per-operator seeded rank
+        # (`<seed>|extra|<operator id>`), not a sample of the list, so adding an operator changes the board only if it
+        # outranks a member (displacing exactly one while the size is unchanged)
+        rank = sorted(ops, key=lambda o: (_rng(cfg, "extra", o).random(), o))
+        extra = tuple(sorted(rank[:min(size, len(ops))]))
     shifts = callouts = 0
     for op in ops:
         if op in extra:

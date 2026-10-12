@@ -43,6 +43,8 @@ def test_example_day_observation_rows_written_from_the_spec():
         ("scheduling", "veh-3", "fault_on", at(9, 40), at(9, 52)),             # +12 min dispatcher
         ("maintenance", "veh-3", "fault_on", at(9, 40), at(10, 0)),            # +20 min shop rule
         ("telematics", "veh-3", "fault_off", at(10, 15), at(10, 15, 5)),
+        # bug sweep B (A156), deliberately added: the dispatcher returns the bus IT pulled, +12 min
+        ("scheduling", "veh-3", "return_to_service", at(11, 30), at(11, 42)),
         ("maintenance", "veh-3", "return_to_service", at(11, 30), at(11, 50)),  # shop closes the record +20 min
     ]
 
@@ -83,7 +85,7 @@ def test_each_beat_is_observed_once_however_often_the_engine_ticks():
         eng.tick()
     eng.run_until(at(12))
     eng.run_until(at(8))                              # earlier than now: no-op
-    assert len(eng.observations_log) == n == 5
+    assert len(eng.observations_log) == n == 6        # bug sweep B (A156): + the dispatcher's return (was 5)
     assert [c[0] for c in ports.calls].count("telematics_fault") == 1
 
 
@@ -92,7 +94,9 @@ def test_dispatcher_does_not_flip_a_vehicle_that_is_already_out_of_service():
     ports.status["veh-3"] = "out_of_service"          # e.g. the orchestrator's approved pull landed first
     eng.run_until(at(12))
     assert not [o for o in eng.observations_log if o.product == "scheduling"]
-    assert [s.kind for s in eng.skipped] == ["fault_on"] and eng.skipped[0].product == "scheduling"
+    # bug sweep B (A156), deliberately extended: it did not pull the bus, so it does not return it either
+    assert [s.kind for s in eng.skipped] == ["fault_on", "return_to_service"]
+    assert {s.product for s in eng.skipped} == {"scheduling"} and ports.status["veh-3"] == "out_of_service"
 
 
 def test_shop_does_not_open_a_second_record_when_one_is_open():
