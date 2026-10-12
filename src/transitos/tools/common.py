@@ -197,6 +197,19 @@ def to_utc(naive: str, tz: str, *, fold: int = 0, utc_offset: str | None = None,
     return b if fold == 1 else a
 
 
+def payload_time_reader(cfg: dict) -> Callable[[dict, str], datetime] | None:
+    """For a watch adapter: read `doc[key]` as zone-less local time in the agency timezone (the product's optional
+    per-field `utc_offset` map disambiguates), or None when the agency's products send zoned time (the default)."""
+    if not cfg.get("local_time"):
+        return None
+    tz = cfg.get("timezone")
+
+    def read(doc: dict, key: str) -> datetime:
+        offs = doc.get("utc_offset") if isinstance(doc.get("utc_offset"), dict) else {}
+        return to_utc(doc[key], tz, utc_offset=offs.get(key))  # type: ignore[arg-type]
+    return read
+
+
 def epoch_ms_to_utc(ms: int) -> datetime:
     """Epoch milliseconds (telematics wire format under the local-time knob, A110) -> aware UTC datetime."""
     if isinstance(ms, bool) or not isinstance(ms, int):
