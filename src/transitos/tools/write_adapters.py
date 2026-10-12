@@ -24,7 +24,7 @@ from transitos.contracts.events import SYSTEM_ACTOR
 from transitos.contracts.objects import Block, Needs, Vehicle, WorkOrder
 from transitos.contracts.results import HARD_LIMIT, KILL_SWITCH, Result
 
-from .common import Deps, Http, ProductUnavailable, native_of
+from .common import Deps, Http, ProductUnavailable, maintenance_mode, native_of
 from .policy import kill_switch
 from .read_adapters import (
     MaintenanceReader,
@@ -32,6 +32,7 @@ from .read_adapters import (
     WorkforceReader,
     _iso,
     map_block,
+    map_pending_repair,
     map_work_order,
 )
 
@@ -84,11 +85,20 @@ class MaintenanceWriter(_Base):
     def create_work_order(self, agency: str, vehicle_id: str, description: str, key: str) -> Result[WorkOrder]:
         def go() -> Result[WorkOrder]:
             asset = self._native_vehicle(agency, vehicle_id, "maintenance")
+            pending = maintenance_mode(self.deps, agency) == "pending_repair"
+            if pending:   # Step 4.1 (A106): a replay of this key reads back OUR request, converted or not
+                mine = self.reader.pending_by_key(agency, key)
+                if mine.status != "ok":
+                    return mine  # type: ignore[return-value]
+                if mine.value is not None:
+                    return self._pending_result(agency, mine.value)
             existing = self.reader.find_open_work_order(agency, vehicle_id)
             if existing.status == "unavailable":
                 return existing  # type: ignore[return-value]
             if existing.value is not None:  # reuse (typically human-opened) WO; never duplicate
                 return Result.success(existing.value, note="already_open")
+            if pending:
+                return self._create_pending(agency, asset, description, key)
             try:
                 raw = self.http.json(agency, "POST", "/workorders", headers={"Idempotency-Key": key},
                                      json={"asset": asset, "description": description, "opened_by": "system"})
@@ -103,8 +113,50 @@ class MaintenanceWriter(_Base):
             return back
         return self._run(agency, "create_work_order", key, go, idem=False)
 
+    # ---- Phase 10 Step 4.1: `maintenance.mode: pending_repair` (A105, A106) ------------------------------------
+    def _pending_result(self, agency: str, pr: dict) -> Result[WorkOrder]:
+        wo = self.reader.resolve_pending(agency, pr)
+        note = (f"pending_repair {pr['pr_no']} on work order {wo.native_no}" if pr.get("status") == "CONVERTED"
+                else f"pending_repair {pr['pr_no']} {pr.get('status')}: not yet on a work order")
+        return Result.success(wo, note=note)
+
+    def _create_pending(self, agency: str, asset: str, description: str, key: str) -> Result[WorkOrder]:
+        """Ask the shop for the repair; the foreman puts it on a work order later. The product honours the key."""
+        try:
+            raw = self.http.json(agency, "POST", "/pending-repairs", headers={"Idempotency-Key": key},
+                                 json={"asset": asset, "description": description, "requested_by": "system"})
+        except ProductUnavailable as e:   # a retired asset is a refusal, not an outage (as for work orders, A87)
+            if (e.note or "").startswith("http 409") and "retired" in (e.note or ""):
+                raise HardLimit([f"asset_retired:{asset}"]) from e
+            raise
+        back = self.reader.pending_by_key(agency, key)   # read back by key (accepts a request already converted)
+        if back.status != "ok" or back.value is None or back.value.get("id") != raw.get("id"):
+            return Result.part(map_pending_repair(self.deps, agency, raw), "maintenance",
+                               f"readback failed: {back.note or 'pending repair not found by key'}")
+        return self._pending_result(agency, back.value)
+
+    def _cancel_pending(self, agency: str, pr: dict) -> Result[WorkOrder]:
+        """Compensation for a pending repair: withdraw an open request (or one attached to a work order someone
+        else opened, which stays untouched); a request that created its own work order cancels that work order."""
+        if pr.get("requested_by") != "system":
+            why = f"cancel_scope: pending repair {pr['id']} was requested by a human; only system requests may go"
+            raise HardLimit([why])
+        if pr["status"] == "CANCELLED":
+            return Result.success(self.reader.resolve_pending(agency, pr), note="already_cancelled")
+        if pr["status"] == "CONVERTED" and pr.get("work_order"):
+            wo = self.http.json(agency, "GET", f"/workorders/{pr['work_order']}")
+            if wo.get("from_pending_repair") == pr["id"]:
+                if str(wo["status"]).lower() != "closed":
+                    self.http.json(agency, "POST", f"/workorders/{wo['id']}/cancel")
+                return self.reader.get_work_order(agency, pr["id"])
+        self.http.json(agency, "POST", f"/pending-repairs/{pr['id']}/cancel")
+        return self.reader.get_work_order(agency, pr["id"])
+
     def cancel_work_order(self, agency: str, wo_id: str, key: str) -> Result[WorkOrder]:
         def go() -> Result[WorkOrder]:
+            if maintenance_mode(self.deps, agency) == "pending_repair" and \
+                    (pr := self.reader._pr_raw(agency, wo_id)) is not None:
+                return self._cancel_pending(agency, pr)
             cur = self.reader.get_work_order(agency, wo_id)
             if cur.status != "ok":
                 return cur

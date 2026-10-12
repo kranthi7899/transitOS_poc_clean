@@ -1,6 +1,9 @@
 # Tool registry for the verification-scenario agency (baseline fleet seeded into the real mocks by
 # transitos.integration.fleets). Same adapters as agency-042; clients are injected in-process.
 agency: agency-a
+# Phase 10 Step 4.2 (A108): the agency's zone, used ONLY when its products send zone-less local time (`local_time:
+# true`, off by default; a scenario switches it on). Fictional agency; the zone is a test choice.
+timezone: America/New_York
 tools:
   get_vehicle: scheduling_mock_v1
   get_vehicle_history: scheduling_mock_v1

@@ -30,7 +30,7 @@ class MaintenancePoller(Poller):
             if overdue and not pm_seen.get(k):
                 out.append((make_event(
                     self.agency, self.product, ids.pm_id(self.agency, pm["asset"], pm["service_code"], pm["due_mi"]),
-                    "PMOverdue", pm["updated_at"],
+                    "PMOverdue", self.ts(pm, "updated_at"),
                     {"native_asset_id": pm["asset"], "service_code": pm["service_code"],
                      "due_mi": pm["due_mi"], "meter_mi": pm["meter_mi"],
                      **self.evidence(ident, f"/assets/{pm['asset']}")}),
@@ -42,20 +42,21 @@ class MaintenancePoller(Poller):
             prev = wo_seen.get(wo["id"])
             asset, wo_no = wo["asset"], wo["wo_no"]
             key = raw_key(self.product, asset)
+            status = str(wo["status"]).lower()   # Step 4 (A107): shop vocabulary; only CLOSED/closed is a close
             if prev is None:
                 out.append((make_event(
                     self.agency, self.product, ids.wo_open_id(self.agency, wo_no), "WorkOrderOpened",
-                    wo.get("opened_at") or wo["updated_at"],
+                    self.ts(wo, "opened_at" if wo.get("opened_at") else "updated_at"),
                     {"native_asset_id": asset, "wo_no": wo_no, "opened_by": wo.get("opened_by", "human"),
                      **self.evidence(ident, f"/assets/{asset}")}), key))
             # A cancelled WO (our own saga compensation; mock: status=closed + cancelled=true, A's A12)
             # is not a repair: no WorkOrderClosed, so no run is resumed for return-to-service.
-            if wo["status"] == "closed" and prev != "closed" and not wo.get("cancelled"):
+            if status == "closed" and prev != "closed" and not wo.get("cancelled"):
                 out.append((make_event(
                     self.agency, self.product, ids.wo_close_id(self.agency, wo_no), "WorkOrderClosed",
-                    wo.get("closed_at") or wo["updated_at"],
+                    self.ts(wo, "closed_at" if wo.get("closed_at") else "updated_at"),
                     {"native_asset_id": asset, "wo_no": wo_no, **self.evidence(ident, f"/assets/{asset}")}), key))
-            wo_seen[wo["id"]] = wo["status"]
+            wo_seen[wo["id"]] = status
             wo_cursor = _max(wo_cursor, wo.get("updated_at"))
 
         return out, None, {"pm": pm_seen, "wo": wo_seen, "pm_cursor": pm_cursor, "wo_cursor": wo_cursor}

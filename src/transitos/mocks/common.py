@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from .chaos import MODES, Chaos
-from .clock import SimClock
+from .clock import SimClock, parse_ts
 from .seed import known_agency
 from .store import Store
 
@@ -32,6 +34,63 @@ class Ctx:
     def write_gate(self) -> None:
         if self.chaos.on("reject_write"):
             raise HTTPException(503, "write rejected (chaos)")
+
+    # ---- Phase 10 Step 4.2 (A108, A110): wire time format, render-only, default OFF ----------------------------
+    def time_format(self, agency: str) -> dict:
+        return self.store.get(agency, "config", "time_format") or dict(TIME_FORMAT_OFF)
+
+    def local_zone(self, agency: str) -> ZoneInfo | None:
+        tz = self.time_format(agency).get("local_tz")
+        return ZoneInfo(tz) if tz else None
+
+    def out_ts(self, agency: str, value: Any) -> Any:
+        """A stored UTC timestamp as this product renders it: zone-less local wall time when the agency's knob is
+        on, else unchanged. The store always keeps UTC."""
+        zi = self.local_zone(agency)
+        if zi is None or not isinstance(value, str) or not value:
+            return value
+        return parse_ts(value).astimezone(zi).strftime("%Y-%m-%dT%H:%M:%S")
+
+    def out_offset(self, agency: str, value: str) -> str:
+        zi = self.local_zone(agency)
+        off = parse_ts(value).astimezone(zi).utcoffset() if zi else None
+        mins = int(off.total_seconds() // 60) if off is not None else 0
+        return f"{'-' if mins < 0 else '+'}{abs(mins) // 60:02d}:{abs(mins) % 60:02d}"
+
+    def out_doc(self, agency: str, doc: dict, keys: tuple[str, ...]) -> dict:
+        """Render the timestamp `keys` of one record; with `utc_offset` on, add {key: "+HH:MM"} for each."""
+        fmt = self.time_format(agency)
+        if not fmt.get("local_tz"):
+            return doc
+        out = dict(doc)
+        offsets = {}
+        for k in keys:
+            if isinstance(doc.get(k), str) and doc[k]:
+                out[k] = self.out_ts(agency, doc[k])
+                offsets[k] = self.out_offset(agency, doc[k])
+        if fmt.get("utc_offset"):
+            out["utc_offset"] = offsets
+        return out
+
+    def in_ts(self, agency: str, value: str) -> datetime:
+        """A timestamp a client sent (e.g. updated_since). Zone-less input under the local knob is local wall time;
+        the fall-back repeat is read as its FIRST occurrence (the earlier instant: a cursor may re-read, never
+        skip; A114), a spring-forward gap time forward. Without the knob: as before (zone-less = UTC)."""
+        zi = self.local_zone(agency)
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is not None or zi is None:
+            return parse_ts(value)
+        a, b = dt.replace(tzinfo=zi, fold=0).astimezone(UTC), dt.replace(tzinfo=zi, fold=1).astimezone(UTC)
+        return min(a, b) if a.astimezone(zi).replace(tzinfo=None) == dt else max(a, b)
+
+    def wire_time(self, agency: str) -> str | int:
+        """Telematics event time: RFC 3339 UTC, or epoch milliseconds under the knob (A110)."""
+        if self.time_format(agency).get("epoch_ms"):
+            return int((self.clock.now() - datetime(1970, 1, 1, tzinfo=UTC)).total_seconds() * 1000)
+        return self.clock.iso()
+
+
+TIME_FORMAT_OFF = {"local_tz": None, "utc_offset": False, "epoch_ms": False}
 
 
 def make_app(
@@ -70,6 +129,21 @@ def make_app(
             raise HTTPException(422, f"mode must be one of {MODES}")
         ctx.chaos.set(mode, on)
         return {"active": ctx.chaos.active()}
+
+    @app.post("/sim/time-format")
+    def time_format(body: dict = Body(default={}), x_agency: str = Header()):
+        """Phase 10 Step 4.2 scenario knob (render-only; stored data stays UTC). `local_tz`: render zone-less local
+        wall time in that zone (maintenance, workforce CSV); `utc_offset`: also send each field's offset;
+        `epoch_ms`: telematics sends epoch milliseconds. An empty body switches everything off (the default)."""
+        tz = body.get("local_tz") or None
+        if tz is not None:
+            try:
+                ZoneInfo(tz)
+            except (ZoneInfoNotFoundError, ValueError) as e:
+                raise HTTPException(422, f"unknown zone {tz!r}") from e
+        cfg = {"local_tz": tz, "utc_offset": bool(body.get("utc_offset")), "epoch_ms": bool(body.get("epoch_ms"))}
+        ctx.store.put(x_agency, "config", "time_format", cfg)
+        return cfg
 
     @app.get("/sim/clock")
     def clock_get():

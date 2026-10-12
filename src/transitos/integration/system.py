@@ -66,6 +66,7 @@ from transitos.plumbing.watch import (
     WebhookReceiver,
     WorkforcePoller,
 )
+from transitos.tools.common import payload_time_reader
 from transitos.tools.idem_store import IdemStore
 from transitos.tools.policy import CONFIG_DIR as TOOLS_CONFIG_DIR
 from transitos.tools.policy import KillSwitchStore, load_policy
@@ -147,6 +148,8 @@ class System:
         self.config_dir = INTEGRATION_CONFIG if (INTEGRATION_CONFIG / f"{agency}.yaml").exists() else TOOLS_CONFIG_DIR
         self.reasoner = reasoner or StubReasoner()
         self.policy_patch: dict[str, Any] = {}   # scenario overrides (e.g. vehicle_fit), merged into policy()
+        # Phase 10 Step 4: registry settings overrides per agency (local_time, timezone, maintenance.mode), read live
+        self.registry_settings: dict[str, dict] = {agency: {}}
         self.seq = Seq()
         self.writes = WriteLog(self.seq, lambda: [r["run_id"] for r in self.store.list_runs()])
         self.on_resolved: Callable[[CloudEvent, HandleResult], None] | None = None  # narration hook
@@ -190,8 +193,10 @@ class System:
             self.killswitch = KillSwitchStore(d / "killswitch.db")
         self.registry = Registry(self.config_dir, clients={p: c[p] for p in WRITE_PRODUCTS}, crosswalk=self.xw,
                                  idem=self.idem, killswitch=self.killswitch, sleep=lambda s: None,
-                                 policy_for=lambda ag: self.policy() if ag == self.agency else load_policy(ag, self.config_dir))
+                                 policy_for=lambda ag: self.policy() if ag == self.agency else load_policy(ag, self.config_dir),
+                                 settings_patch=self.registry_settings)
         self.toolset = self.registry.toolset(a)
+        self.pollers[0].read_time = self._maintenance_time   # Step 4.2: zone-less local maintenance time -> UTC
         if pg:
             from transitos.plumbing.pg_stores import PgAuditedRunsIndex
             self.store = PgAuditedRunsIndex(pgmod.schema_name(ns, "runs"), self.decisions)
@@ -211,6 +216,12 @@ class System:
                                   audit=StoreAuditReader(self), killswitch=KillSwitchPort(self.killswitch, self._log_ks),
                                   unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now)
         self.panel_client = TestClient(self.panel)
+
+    def _maintenance_time(self, doc: dict, key: str) -> Any:
+        """The maintenance poller's time reader, from the agency's live registry settings: as sent (default) or
+        zone-less local time in the agency timezone (A108). Raises ValueError when it cannot be read."""
+        read = payload_time_reader(self.registry.settings(self.agency))
+        return doc[key] if read is None else read(doc, key)
 
     def kafka_namespace(self) -> str:
         env = os.environ.get("TRANSITOS_KAFKA_NAMESPACE")

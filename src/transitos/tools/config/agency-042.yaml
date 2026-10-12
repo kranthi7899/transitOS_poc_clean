@@ -1,5 +1,9 @@
 # Per-agency tool registry: tool -> adapter id. Swap a product by changing one adapter id.
 agency: agency-042
+# Phase 10 Step 4 (A105, A108), all optional: `timezone` is read only when `local_time: true` (products send zone-less
+# local wall time); `maintenance: {mode: pending_repair}` makes create_work_order ask for a pending repair. Absent =
+# zoned UTC from every product and a work order posted directly (the pre-Step-4 behaviour).
+timezone: America/New_York
 products:
   # ports of `python -m transitos.mocks.run` (transitos.mocks.run.PORTS)
   scheduling:  {base_url: "http://localhost:8101"}

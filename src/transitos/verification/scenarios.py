@@ -77,6 +77,11 @@ class Scenario:
     known_gap: str = ""                                   # a PASS that rests on a documented gap; shown beside PASS
     expect_forward_actions: tuple[str, ...] | None = None  # actions that must appear among the OK forward writes
     real_world_only: bool = False                         # needs product lag: skipped (with reason) on FakeWorld
+    # Phase 10 Step 4 (default to "no change" for every older scenario):
+    real_world_reason: str = ""                           # why FakeWorld skips it (default: the product-lag reason)
+    expect_work_orders: int | None = None                 # work orders the maintenance product holds at the end
+    expect_pending_repairs: int | None = None             # pending repairs the maintenance product holds at the end
+    expect_event_times: tuple[tuple[str, str], ...] | None = None  # (event type, RFC 3339 time) that must be on the bus
 
 
 # ---- event builders -------------------------------------------------------------------------------
@@ -194,4 +199,7 @@ from .scenarios_step3 import (
 )
 
 SCENARIOS = SCENARIOS + STEP3B_SCENARIOS
+from .scenarios_step4 import STEP4_SCENARIOS  # Phase 10 Step 4 (appended last)
+
+SCENARIOS = SCENARIOS + STEP4_SCENARIOS
 BY_ID = {s.id: s for s in SCENARIOS}
