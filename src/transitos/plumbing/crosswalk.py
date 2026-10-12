@@ -224,14 +224,52 @@ class SqliteCrosswalk:
         for r in rows:
             if r.canonical_id != entry.canonical_id and _overlaps(r, entry):
                 raise CrosswalkConflict(r)
-        if same:   # the same open mapping already exists: release the parked events only
-            out = self._pop(conn, entry)
-            return out
+        covered = entry.valid_from is not None and any(
+            r.canonical_id == entry.canonical_id and valid_at(r, entry.valid_from) for r in rows)
+        if same or covered:   # the same mapping already holds at that time: release the parked events only
+            return self._pop(conn, entry)
         return self.resolve_in(conn, entry)
 
     def pick(self, entry: CrosswalkEntry) -> list[CloudEvent]:
         with self.db.tx() as c:
             return self.pick_in(c, entry)
+
+    # ------------------------------------------------------------------ device moved (G1, A144)
+    def move_in(self, conn: sqlite3.Connection, entry: CrosswalkEntry) -> list[CloudEvent]:
+        """'Device moved' from the panel: at time T (the entry's valid_from, else the earliest parked event's own
+        time) the native id stops belonging to the vehicle it maps to and starts belonging to `entry.canonical_id`.
+        The row valid at T is closed at T (history before T untouched) and a row for the new vehicle opens at T
+        (ending where the closed row ended). A second identical move is a no-op; a move that would leave
+        overlapping rows, or one with no row to close, is refused (CrosswalkConflict, nothing written)."""
+        key = (entry.agency, entry.product, entry.native_id)
+        parked = [CloudEvent.model_validate_json(r["payload"]) for r in conn.execute(
+            "SELECT payload FROM xw_unresolved WHERE agency=? AND product=? AND native_id=? ORDER BY rowid",
+            key).fetchall() if r["payload"]]
+        at = entry.valid_from or (min(utc(e.time) for e in parked) if parked else None)
+        rows = [_entry(r) for r in conn.execute(
+            f"SELECT {COLS} FROM xw_entries WHERE agency=? AND product=? AND native_id=?", key).fetchall()]
+        if at is None:   # nothing parked and no time given: only a repeat of a move already made is accepted
+            if any(r.canonical_id == entry.canonical_id and r.valid_to is None for r in rows):
+                return []
+            raise CrosswalkConflict(entry, "a device move needs a time: no parked event and no valid_from")
+        current = [r for r in rows if valid_at(r, at)]
+        if current and all(r.canonical_id == entry.canonical_id for r in current):
+            return self._pop(conn, entry)                     # already moved: no-op
+        if len(current) != 1 or (current[0].valid_from is not None and utc(current[0].valid_from) >= utc(at)):
+            raise CrosswalkConflict(current[0] if current else entry, "no single row to close at the move time")
+        old = current[0]
+        new = entry.model_copy(update={"valid_from": utc(at), "valid_to": old.valid_to, "vin": None, "plate": None,
+                                       "display_name": None})
+        for r in rows:
+            if r is not old and _overlaps(r, new):
+                raise CrosswalkConflict(r)
+        conn.execute("UPDATE xw_entries SET valid_to=? WHERE agency=? AND product=? AND native_id=? AND vf=?",
+                     (_ts(at), *key, _ts(old.valid_from) or ""))
+        return self.resolve_in(conn, new)
+
+    def move(self, entry: CrosswalkEntry) -> list[CloudEvent]:
+        with self.db.tx() as c:
+            return self.move_in(c, entry)
 
     def _pop(self, conn: sqlite3.Connection, entry: CrosswalkEntry) -> list[CloudEvent]:
         rows = conn.execute(
@@ -246,9 +284,9 @@ class CrosswalkConflict(ValueError):
     """A human mapping that would overwrite or overlap existing history (F2). `conflict_row` is the row in the
     way (the panel answers 409 with it)."""
 
-    def __init__(self, row: CrosswalkEntry):
+    def __init__(self, row: CrosswalkEntry, why: str = "conflicts with existing mapping"):
         self.conflict_row = row.model_dump(mode="json")
-        super().__init__(f"conflicts with existing mapping {self.conflict_row}")
+        super().__init__(f"{why}: {self.conflict_row}")
 
 
 def _overlaps(a: CrosswalkEntry, b: CrosswalkEntry) -> bool:

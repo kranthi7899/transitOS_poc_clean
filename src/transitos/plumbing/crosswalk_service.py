@@ -154,10 +154,12 @@ class CrosswalkService:
         return total
 
     # --- operator fix flow ----------------------------------------------------------------------
-    def apply_mapping(self, entry: CrosswalkEntry) -> int:
-        """Add a mapping and republish parked events to events.raw (via the outbox, atomically)."""
+    def apply_mapping(self, entry: CrosswalkEntry, move: bool = False) -> int:
+        """Add a mapping and republish parked events to events.raw (via the outbox, atomically). `move=True` is the
+        panel's 'device moved' action (G1): the id's current row closes at the event time, the new one opens."""
         with self.db.tx() as c:
-            parked = self.xw.pick_in(c, entry)   # F2: a human mapping never rewrites history
+            # F2: a human mapping never rewrites history
+            parked = self.xw.move_in(c, entry) if move else self.xw.pick_in(c, entry)
             for ev in parked:
                 outbox.add(c, ev, TOPIC_RAW, f"{PUBLISHER[ev.type]}:{entry.native_id}",
                            dedupe_id=f"republish:{ev.id}:{uuid.uuid4().hex[:8]}")

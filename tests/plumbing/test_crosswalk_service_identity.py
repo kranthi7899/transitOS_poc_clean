@@ -233,7 +233,7 @@ def test_g1_device_moved_releases_a_contradiction_parked_event(bus, svc, xw):
     seed(xw)
     at = S + timedelta(hours=1)
     run(bus, svc, fault("c", "T-90", at, native_vin=VIN_2))
-    entry = lambda canon: CrosswalkEntry(agency=AG, product="telematics", native_id="T-90", entity="vehicle",  # noqa: E731
+    entry = lambda canon: CrosswalkEntry(agency=AG, product="telematics", native_id="T-90", entity="vehicle",
                                          canonical_id=canon)
     svc.apply_mapping(entry("veh-1"))                       # plain pick of the id's own vehicle
     ok, _ = run(bus, svc)
