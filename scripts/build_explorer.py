@@ -36,7 +36,8 @@ SOURCES = [
 def clean_snapshot(state):
     allowed = ("clock", "reasoner", "trace", "history", "assessment", "identities", "visible_alerts",
                "invariant_violations", "agency", "policy", "runs", "writes", "audit", "vehicles", "blocks",
-               "operators", "work_orders", "alerts", "dead_letters", "events", "escalations")
+               "operators", "work_orders", "alerts", "dead_letters", "events", "escalations",
+               "product_records", "product_baseline", "notifications")
     out = {key: state[key] for key in allowed}
     out.update({"generation": "recorded-replay", "busy": False, "error": None, "spend": None, "memory": [],
                 "history_revisions": len(out["history"])})
@@ -111,12 +112,18 @@ def build(output: Path):
     demo = output / "demo"
     demo.mkdir(exist_ok=True)
     assets = ROOT / "src" / "transitos" / "panel" / "console"
-    shutil.copytree(assets, demo / "assets", dirs_exist_ok=True, ignore=shutil.ignore_patterns("index.html"))
+    shutil.copytree(assets, demo / "assets", dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.html"))
     (demo / "assets" / "index.html").unlink(missing_ok=True)  # obsolete generated copy, never a source file
     html = (assets / "index.html").read_text().replace('<html lang="en">', '<html lang="en" data-mode="replay">')
     html = html.replace('/assets/', './assets/').replace('href="/"', 'href="../index.html"')
     html = html.replace('<main>', '<main><div class="notice replay-notice">Recorded replay of an actual integrated run. Controls select captured states; no live approvals, product writes or model calls happen here. <a href="../index.html">Back to repository explorer</a>.</div>')
     (demo / "index.html").write_text(html)
+    product_html = (assets / "product.html").read_text().replace('<html lang="en">', '<html lang="en" data-mode="replay">')
+    product_html = product_html.replace('/assets/', './assets/').replace('href="/"', 'href="./index.html"')
+    product_html = product_html.replace('READ-ONLY LIVE VIEW', 'RECORDED REPLAY VIEW')
+    product_html = product_html.replace("Keep this tab open beside the dispatcher to see updates.",
+        "This page follows captured dispatcher replay states in this browser; no live product calls happen here.")
+    (demo / "product.html").write_text(product_html)
     (demo / "replay.json").write_text(json.dumps(record_replay(), separators=(",", ":")) + "\n")
     eval_path = ROOT / "eval-report.json"
     report = json.loads(eval_path.read_text()) if eval_path.is_file() else None

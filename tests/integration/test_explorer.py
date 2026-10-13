@@ -31,6 +31,9 @@ def test_replay_has_real_effects_and_exact_branch_endpoints():
     assert states["return"]["clock"] != states["return_direct"]["clock"]
     assert all(not state["invariant_violations"] and not state["memory"] for state in states.values())
     assert states["done"]["history_revisions"] == 10
+    assert states["approved"]["product_records"]["scheduling"]["records"]["/blocks"][0]["vehicle"] == "BUS-45"
+    assert states["done"]["notifications"]
+    assert states["ready"]["product_baseline"] == states["done"]["product_baseline"]
     for edges in replay["edges"].values():
         assert all(target in states for target in edges.values())
 

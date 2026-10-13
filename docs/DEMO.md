@@ -60,3 +60,13 @@ Code review fixes: stale return approval now refuses before resuming; native cle
 ## Explore and retain context
 
 `make explorer-serve` opens a zero-cost static repository explorer and recorded dispatcher replay at http://127.0.0.1:8111. Use `make console` for actual local execution. The console’s Incident memory view shows successful, separately approved incidents retained across resets; every new incident still needs fresh checks and new approval. Runtime memory is local and excluded from the explorer. See [EXPLORER.md](EXPLORER.md) and [AGENT_MEMORY.md](AGENT_MEMORY.md).
+
+## Show the product records changing
+
+Open **Product workspaces → All products** for the dispatcher estate board. Select an individual product, then **Open in its own tab** to keep Scheduling or Maintenance beside the dispatcher. Each original workspace reads an existing independent FastAPI mock application's native API and store. All are hosted together for the local demo; these are not real vendor frontends or separately deployed production platforms. Expand **Inspect native records & format** to show JSON field names and IDs versus the workforce CSV export.
+
+Before the fault, Scheduling shows BUS-44 on blk-1. After recovery approval, the block shows BUS-45 and Workforce shows OP-2; Maintenance has the open work order for asset 1106. The workflow waits for repair while that replacement assignment stands. Physical arrival/GPS is not tracked, so the update says assignment confirmed. After **Simulate completed repair**, Maintenance shows the closed work order while Scheduling still shows BUS-44 out of service. Only **Approve return to service** changes BUS-44 to ready in the roster; blk-1 remains on BUS-45.
+
+**Dispatcher updates** and the latest-update strip report evidence-backed milestones without external messages. Updates accumulate in this demo session, deduplicate, and reset with the world. Product tabs poll the cached system snapshot; viewing a product cannot authorize actions. The hosted product pages follow recorded dispatcher replay states in the same browser and are labelled accordingly.
+
+Product-workspace delivery verification (2026-10-13): `TRANSITOS_REASONER=stub make verify` → **1715 passed, 181 skipped in 94.34s; 50/50 scenarios; lint clean; data-check OK**. `make explorer` → **8/8 behavioral evals, zero paid calls**. Earlier console results above are historical.

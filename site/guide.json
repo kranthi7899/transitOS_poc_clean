@@ -1,6 +1,6 @@
 {
   "name": "TransitOS",
-  "base_commit": "03fb958",
+  "base_commit": "d6e7c29",
   "modules": [
     {
       "id": "products",
@@ -87,10 +87,10 @@
       "title": "Dispatcher console",
       "path": "src/transitos/integration/console.py",
       "description": "One serialized worker drives the actual system. Graph updates, approvals and current product state reach the browser.",
-      "line": 71,
-      "sha256": "9a3d6f8191f52a32b8bfd883b27b271e5577e8120033dcaabe600627d947b767",
-      "excerpt": "\n\nclass DemoSession:\n    def __init__(self, reasoner: Reasoner | None = None, memory: IncidentMemory | None = None):\n        self.memory = memory or IncidentMemory()\n        self.reasoner = MemoryReasoner(reasoner or reasoner_from_env(), self.memory, AGENCY)\n        self.lock = threading.RLock()\n        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix=\"transitos-demo\")\n        self.busy = False\n        self.error: str | None = None\n        self.trace: list[dict] = []\n        self.world = IntegrationWorld(reasoner=self.reasoner, bus=\"sqlite\", db=\"sqlite\")\n        self.snapshot: dict = {}\n        self.reset()\n\n    @property\n    def system(self):\n        return self.world.system\n\n    def reset(self):\n        self.generation = uuid.uuid4().hex\n        self.trace = []\n        self.assessment = None\n        self.world.apply(BY_ID[\"operator_swap_needed\"])\n        self.system.graph = GraphObserver(self.system.graph, self)\n        self.publish()\n\n    def capture_assessment(self, data):\n        \"\"\"Expand the existing pure clearance result for display; never invent passed checks.\n\n        Plan.clearance deliberately stores only noteworthy items. The console also shows native\n        passes by evaluating the exact plan on the workflow's own proposal/revalidation facts.\n        \"\"\"\n        run, mf = data.get(\"run\") or {}, (data.get(\"ctx\") or {}).get(\"mf\") or {}\n        plan = run.get(\"plan\")\n        if not plan or not mf.get(\"clearance\"):\n            return\n        steps = plan[\"steps\"]",
-      "url": "https://github.com/kranthi7899/transitOS_poc_clean/blob/main/src/transitos/integration/console.py#L71"
+      "line": 72,
+      "sha256": "587d3004299ccdac6065a2fcf972bacc618fd585aa6d07aaaea8b8a385242bea",
+      "excerpt": "\n\nclass DemoSession:\n    def __init__(self, reasoner: Reasoner | None = None, memory: IncidentMemory | None = None):\n        self.memory = memory or IncidentMemory()\n        self.reasoner = MemoryReasoner(reasoner or reasoner_from_env(), self.memory, AGENCY)\n        self.lock = threading.RLock()\n        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix=\"transitos-demo\")\n        self.busy = False\n        self.error: str | None = None\n        self.trace: list[dict] = []\n        self.world = IntegrationWorld(reasoner=self.reasoner, bus=\"sqlite\", db=\"sqlite\")\n        self.snapshot: dict = {}\n        self.reset()\n\n    @property\n    def system(self):\n        return self.world.system\n\n    def reset(self):\n        self.generation = uuid.uuid4().hex\n        self.trace = []\n        self.assessment = None\n        self.notifications, self.notification_keys = [], set()\n        self.product_baseline = None\n        self.world.apply(BY_ID[\"operator_swap_needed\"])\n        self.system.graph = GraphObserver(self.system.graph, self)\n        self.publish()\n\n    def capture_assessment(self, data):\n        \"\"\"Expand the existing pure clearance result for display; never invent passed checks.\n\n        Plan.clearance deliberately stores only noteworthy items. The console also shows native\n        passes by evaluating the exact plan on the workflow's own proposal/revalidation facts.\n        \"\"\"\n        run, mf = data.get(\"run\") or {}, (data.get(\"ctx\") or {}).get(\"mf\") or {}\n        plan = run.get(\"plan\")\n        if not plan or not mf.get(\"clearance\"):",
+      "url": "https://github.com/kranthi7899/transitOS_poc_clean/blob/main/src/transitos/integration/console.py#L72"
     },
     {
       "id": "memory",
@@ -115,7 +115,7 @@
   ],
   "evals": {
     "schema_version": 1,
-    "base_commit": "03fb958",
+    "base_commit": "d6e7c29",
     "scope": "Offline behavioral evals, not live-model quality scoring",
     "paid_calls": 0,
     "scenario_count": 50,

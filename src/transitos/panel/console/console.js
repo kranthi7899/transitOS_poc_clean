@@ -1,5 +1,6 @@
 "use strict";
 let state = null, view = "operations", pending = false, lastRender = "", localError = "", replay = null, replayNode = "ready";
+let selectedProduct="all", seenUpdate=0, updateGeneration="";
 const isReplay = document.documentElement.dataset.mode === "replay";
 const $ = id => document.getElementById(id);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -15,7 +16,7 @@ function native(id, product="scheduling") { return state?.identities?.[id]?.[pro
 function tag(text, color="gray") {return `<span class="tag ${color}">${esc(text)}</span>`;}
 function setView(next) {
   view = next; window.scrollTo({top:0,behavior:"auto"});
-  const titles = {operations:["Operations","Your fleet. One coordinated response.","See the signal, review the plan, keep service moving."],orchestration:["Orchestration","The workflow behind the response.","Real graph activity. Durable waits. Controlled product actions."],audit:["Decision audit","A decision you can explain.","Evidence, approvals and outcomes, connected in one incident."],memory:["Incident memory","Experience stays. Authority does not.","Bounded historical context for this agency and vehicle."],vision:["Platform vision","From one workflow to a connected estate.","Prove the foundation today. Extend it to more operational moments."]};
+  const titles = {operations:["Operations","Your fleet. One coordinated response.","See the signal, review the plan, keep service moving."],estate:["Product workspaces","Different products. Connected evidence.","Inspect native records, before/after changes and product-owned state."],updates:["Dispatcher updates","Know what changed. Know what is waiting.","Evidence-backed milestones from the integrated workflow."],orchestration:["Orchestration","The workflow behind the response.","Real graph activity. Durable waits. Controlled product actions."],audit:["Decision audit","A decision you can explain.","Evidence, approvals and outcomes, connected in one incident."],memory:["Incident memory","Experience stays. Authority does not.","Bounded historical context for this agency and vehicle."],vision:["Platform vision","From one workflow to a connected estate.","Prove the foundation today. Extend it to more operational moments."]};
   $("view-name").textContent = titles[next][0]; $("page-title").textContent=titles[next][1];$("page-description").textContent=titles[next][2];
   document.querySelectorAll(".view").forEach(el => el.hidden = el.id !== `${next}-view`);
   document.querySelectorAll("[data-view]").forEach(el => el.classList.toggle("active", el.dataset.view===next));
@@ -52,7 +53,7 @@ function render() {
   $("metrics").innerHTML=metric("Needs your attention",waiting?1:0,r?.status==="RETURNING"?"Return-to-service decision":r?.status==="ESCALATED"?"Review the escalation":"Concrete approvals only","◇","alert")+metric("Affected service blocks",r?state.blocks.length:0,"Current demonstration incident","◫")+metric("Unassigned ready spares",state.vehicles.filter(v=>v.status==="ready"&&v.id!=="veh-1"&&!state.blocks.some(b=>b.vehicle_id===v.id&&new Date(b.end)>new Date(state.clock))).length,`Agency minimum reserve: ${state.policy.limits.min_spares}`,"▱")+metric("Product actions completed",state.writes.filter(w=>w.ok&&!w.compensation).length,r?"Recorded adapter effects":"No product writes before approval","↗");
   if(!r) $("attention").innerHTML=`<div class="empty-attention"><span>✓</span><h3>No incident awaiting action</h3><p>Inject the simulated vehicle fault to start the service-continuity story.</p></div>`;
   else {const [label,color]=statuses[r.status]||[r.status,"teal"];$("attention").innerHTML=`<div class="attention-card selected"><div class="alert-top">${tag(label,color)}<span class="incident-number">INCIDENT 01</span></div><h3>BUS-44 · Vehicle fault</h3><p>Stop lamp reported. One service block needs replacement cover.</p><div class="attention-meta"><span>Telematics → 4 products</span><strong>Plan v${r.plan_version}</strong></div></div>`;}
-  renderIncident(r,plan,preservedName,checked); renderProducts();renderGraph();renderAudit();renderMemory();
+  renderIncident(r,plan,preservedName,checked); renderProducts();renderGraph();renderAudit();renderMemory(); renderEstate(); renderUpdates();
   document.querySelectorAll("button[data-command]").forEach(el=>el.disabled ||= state.busy||pending);
   if(isReplay){
     document.querySelectorAll("button[data-command]").forEach(el=>{el.disabled ||= !replay?.edges?.[replayNode]?.[el.dataset.command];el.textContent=el.dataset.command==="approve"?"Replay this approval":"Replay rejection";});
@@ -85,7 +86,7 @@ function renderIncident(r,plan,dispatcher,checked) {
 function renderProducts(){
   const r=run(),writes=state.writes.filter(w=>w.ok&&!w.compensation),wo=state.work_orders[0],blk=state.blocks[0];
   const data=[["⌁","Telematics",r?"Signed fault received · T-77":"Monitoring the seeded vehicle",r?"Signal resolved":"Ready to emit"],["▤","Maintenance",wo?`${wo.native_no} · ${wo.status}`:"No work order opened",wo?"Repair record linked":"Awaiting approved action"],["▱","Scheduling",r?`${native(blk?.vehicle_id)} covers ${blk?.id}`:"BUS-44 assigned to blk-1",writes.some(w=>w.action==="reassign_block")?"Block reassigned":"Original assignment"],["♙","Workforce",`Current assignment · ${native(blk?.operator_id)}`,writes.some(w=>w.action==="assign_operator")?"Operator reassigned":"Hours & qualifications ready"],["◉","Rider comms",state.alerts.length?"Service-change alert published":"No alert sent",state.visible_alerts.length?"Visible to simulated riders":state.alerts.length?"Visibility delay pending":"Last action in the plan"]];
-  $("products").innerHTML=data.map(([icon,title,description,status])=>`<article class="product"><div class="product-icon">${icon}</div><h3>${title}</h3><p>${esc(description)}</p><span class="product-state">${esc(status)}</span></article>`).join("");
+  $("products").innerHTML=data.map(([icon,title,description,status],i)=>`<article class="product"><button class="product-open" data-workspace="${["telematics","maintenance","scheduling","workforce","alerts"][i]}" aria-label="Inspect ${title} records"><div class="product-icon">${icon}</div><h3>${title}</h3><p>${esc(description)}</p><span class="product-state">${esc(status)} · Inspect records ↗</span></button></article>`).join("");
 }
 function renderGraph(){
   const r=run(),seen=new Set(state.trace.map(t=>t.node));
@@ -102,12 +103,24 @@ function renderMemory(){
   const episodes=state.memory||[];
   $("memory").innerHTML=`<div class="audit-card"><h3>${isReplay?"The hosted replay contains no runtime memory":"Recent approved history · agency-a / veh-1"}</h3><p class="muted">${isReplay?"Run the local console to inspect persistent incident memory.":episodes.length?`${episodes.length} recent completed incident${episodes.length===1?"":"s"}. Only bounded outcomes reach the reasoner; current facts and a new approval still govern this run.`:"No completed approved incident recorded yet. Finish the repair and return flow to establish the first episode."}</p>${episodes.map((m,i)=>`<div class="audit-row"><span class="step-icon">${i+1}</span><div><strong>${esc(m.trigger_type)} · ${esc(m.outcome)}</strong><p>Approved scopes: ${esc(m.approved_scopes.join(" · "))}</p><p>${esc(m.actions.map(a=>labels[a]||a).join(" → "))}</p><details><summary>Source run and retained fields</summary><pre>${pretty(m)}</pre></details></div><small>Simulated episode</small></div>`).join("")}</div><div class="audit-card"><h3>Memory boundaries</h3><p class="muted">Past assignments and availability never become current facts. Rejections and failed runs do not become success memories. A memory failure cannot grant authority or break the workflow. Secrets, raw vendor descriptions and operator identities stay out of model memory.</p></div>`;
 }
+function renderEstate(){
+  $("estate").innerHTML=TransitProducts.board(state,selectedProduct);
+  document.querySelectorAll(".product-switch [data-workspace]").forEach(b=>{b.classList.toggle("active",b.dataset.workspace===selectedProduct);b.setAttribute("aria-pressed",String(b.dataset.workspace===selectedProduct));});
+}
+function renderUpdates(){
+  if(updateGeneration!==state.generation){updateGeneration=state.generation;seenUpdate=0;}
+  const notices=state.notifications||[],unseen=notices.filter(n=>n.id>seenUpdate).length;
+  $("update-count").textContent=unseen;$("update-badge").textContent=unseen;
+  $("dispatcher-updates").innerHTML=TransitProducts.updates(state);
+  const latest=notices.at(-1);$("latest-update").hidden=!latest;
+  if(latest){const text=`${latest.title} · ${latest.detail}`;if($("latest-update").textContent!==text)$("latest-update").textContent=text;}
+}
 async function command(action) {
   if(!state||pending||state.busy)return;
   if(isReplay){
     const next=action==="reset"?"ready":replay.edges[replayNode]?.[action];
     if(!next){localError="This branch was not recorded. Use the local live console for other actions.";render();return;}
-    replayNode=next;localError="";lastRender="";await refresh();return;
+    replayNode=next;localStorage.setItem("transitos-replay-node",next);localError="";lastRender="";await refresh();return;
   }
   pending=true;localError="";render();
   const r=run(),payload={action,generation:state.generation,plan_version:r?.plan_version,scope:r?.status==="RETURNING"?"return_to_service":"plan",user:$("dispatcher")?.value||"Dispatcher",acknowledged:[...document.querySelectorAll("input[name=ack]:checked")].map(el=>el.value)};
@@ -121,7 +134,9 @@ async function refresh(){try{
   render();
 }catch{$("error").hidden=false;$("error").textContent=isReplay?"Replay could not load. Serve this site over HTTP rather than opening it as a file.":"Cannot reach the local demo. Check that the console server is running.";}}
 document.querySelectorAll("[data-view]").forEach(el=>el.addEventListener("click",()=>setView(el.dataset.view)));
-document.addEventListener("click",event=>{const button=event.target.closest("[data-command]");if(button)command(button.dataset.command);});
+document.addEventListener("click",event=>{const button=event.target.closest("[data-command]");if(button)command(button.dataset.command);const workspace=event.target.closest("[data-workspace]");if(workspace){selectedProduct=workspace.dataset.workspace;setView("estate");if(state)renderEstate();}});
 $("trigger").addEventListener("click",()=>command("trigger"));$("repair").addEventListener("click",()=>command("repair"));$("advance").addEventListener("click",()=>command("advance"));$("pause").addEventListener("click",()=>command(state.policy.kill_switch?"resume":"pause"));
 $("reset").addEventListener("click",()=>$("reset-dialog").showModal());$("cancel-reset").addEventListener("click",()=>$("reset-dialog").close());$("confirm-reset").addEventListener("click",()=>{$("reset-dialog").close();command("reset");});
+$("mark-seen").addEventListener("click",()=>{seenUpdate=state?.notifications?.at(-1)?.id||0;renderUpdates();});
+if(isReplay)localStorage.setItem("transitos-replay-node","ready");
 refresh();setInterval(refresh,800);

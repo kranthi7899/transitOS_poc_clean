@@ -108,3 +108,56 @@ def test_unknown_safety_data_requires_explicit_acknowledgement(console):
         "action": "approve", "generation": s["generation"], "plan_version": 1})
     assert response.status_code == 409 and state(console)["writes"] == []
     assert act(console, "approve", acknowledged=required)["runs"][0]["status"] == "WAITING_FOR_REPAIR"
+
+
+def native_record(s, product, path):
+    return s["product_records"][product]["records"][path]
+
+
+def test_native_product_records_confirm_changes_and_separate_return(console):
+    before = state(console)
+    assert native_record(before, "scheduling", "/blocks")[0]["vehicle"] == "BUS-44"
+    baseline = before["product_baseline"]
+    assert native_record(before, "workforce", "/export/operators.csv")["format"] == "text/csv"
+    proposal = act(console, "trigger")
+    assert native_record(proposal, "telematics", "/faults/current")[0]["vehicle"]["id"] == "T-77"
+    assert native_record(proposal, "maintenance", "/workorders") == []
+    recovery = act(console, "approve")
+    assert native_record(recovery, "scheduling", "/blocks")[0]["vehicle"] == "BUS-45"
+    assert native_record(recovery, "workforce", "/assignments/blk-1")["operator"] == "OP-2"
+    assert native_record(recovery, "maintenance", "/workorders")[0]["asset"] == "1106"
+    assert native_record(recovery, "alerts", "/alerts") == []
+    assert native_record(act(console, "advance"), "alerts", "/alerts")
+    returning = act(console, "repair")
+    assert native_record(returning, "maintenance", "/workorders")[0]["status"] == "closed"
+    assert next(v for v in native_record(returning, "scheduling", "/vehicles") if v["id"] == "BUS-44")["status"] == "out_of_service"
+    done = act(console, "approve", scope="return_to_service")
+    assert next(v for v in native_record(done, "scheduling", "/vehicles") if v["id"] == "BUS-44")["status"] == "ready"
+    assert native_record(done, "scheduling", "/blocks")[0]["vehicle"] == "BUS-45"
+    assert done["product_baseline"] == baseline
+    # UI evidence is the same record returned directly by the actual independent mock application.
+    session = console.app.state.demo
+    assert native_record(done, "scheduling", "/blocks") == session.world.mocks.clients["scheduling"].get("/blocks", headers=session.world._h).json()
+
+
+def test_product_workspaces_are_read_only_and_notifications_do_not_duplicate(console):
+    for product in ("telematics", "maintenance", "scheduling", "workforce", "alerts"):
+        assert console.get(f"/products/{product}").status_code == 200
+    assert console.get("/products/unknown").status_code == 404
+    assert state(console)["writes"] == [] and state(console)["notifications"] == []
+    act(console, "trigger")
+    recovery = act(console, "approve")
+    titles = {n["title"] for n in recovery["notifications"]}
+    assert {"Replacement bus assignment confirmed", "Workflow waiting for repair", "Rider alert published"} <= titles
+    assert not any("arrived" in title.lower() for title in titles)
+    ids = [n["key"] for n in recovery["notifications"]]
+    assert len(ids) == len(set(ids))
+    session = console.app.state.demo
+    session.publish()
+    assert state(console)["notifications"] == recovery["notifications"]
+    for _ in range(3):
+        assert state(console)["runs"][0]["status"] == "WAITING_FOR_REPAIR"
+    returning = act(console, "repair")
+    assert any(n["title"] == "Return-to-service approval needed" for n in returning["notifications"])
+    assert len(returning["writes"]) == 5
+    assert act(console, "reset")["notifications"] == []

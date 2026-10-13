@@ -24,6 +24,7 @@ from transitos.verification.scenarios import AGENCY, BY_ID
 from transitos.workflow.memory import IncidentMemory, MemoryReasoner
 from transitos.workflow.reasoning import Reasoner, reasoner_from_env
 
+from .product_views import PRODUCTS, read_products, update_notifications
 from .world import IntegrationWorld
 
 ASSETS = Path(__file__).resolve().parents[1] / "panel" / "console"
@@ -89,6 +90,8 @@ class DemoSession:
         self.generation = uuid.uuid4().hex
         self.trace = []
         self.assessment = None
+        self.notifications, self.notification_keys = [], set()
+        self.product_baseline = None
         self.world.apply(BY_ID["operator_swap_needed"])
         self.system.graph = GraphObserver(self.system.graph, self)
         self.publish()
@@ -135,6 +138,12 @@ class DemoSession:
                      "identities": {v.id: self.system.xw.all_ids(AGENCY, v.id) for v in obs.vehicles},
                      "visible_alerts": self.world.mocks.clients["alerts"].get("/alerts", headers=self.world._h).json(),
                      "invariant_violations": [v.model_dump() for v in violations]})
+        products = read_products(self.world)
+        if self.product_baseline is None:
+            self.product_baseline = copy.deepcopy(products)
+        update_notifications(self, data)
+        data.update({"product_records": products, "product_baseline": self.product_baseline,
+                     "notifications": list(self.notifications)})
         with self.lock:
             self.snapshot = data
 
@@ -258,6 +267,12 @@ def create_app(reasoner: Reasoner | None = None, memory: IncidentMemory | None =
     @app.get("/")
     def index():
         return FileResponse(ASSETS / "index.html")
+
+    @app.get("/products/{product}")
+    def product_workspace(product: str):
+        if product not in PRODUCTS:
+            raise HTTPException(404, "Unknown simulated product")
+        return FileResponse(ASSETS / "product.html")
 
     app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
     return app
