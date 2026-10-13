@@ -1,4 +1,15 @@
-# TransitOS orchestration POC
+<h1 align="center">
+  <img src="docs/assets/readme/hero.svg" alt="TransitOS orchestration POC — simulated products, Level 2, human approval" width="100%">
+</h1>
+
+<p align="center">
+  <img src="docs/assets/readme/icon.svg" alt="TransitOS connected-routes icon" width="48"><br>
+  <strong>One signal. Five products. A person in control.</strong><br>
+  <a href="https://kranthi7899.github.io/transitOS_poc_clean/">Interactive explorer</a> ·
+  <a href="docs/DEMO.md">Run the demo</a> ·
+  <a href="#design-principles">Design principles</a> ·
+  <a href="#the-mock-products-and-the-mock-data">Simulated products</a>
+</p>
 
 A proof of concept for **cross-product agentic orchestration** in a transit agency, built at autonomy **Level 2: act with approval**. The agent proposes, a dispatcher approves, and only then does anything get written.
 
@@ -25,16 +36,19 @@ The agent never writes until a human approves a concrete plan. The rider alert i
 
 ## Design principles
 
-| Principle | How it is enforced |
+![Governed decision path: evidence, code checks, proposal, human approval, controlled writes](docs/assets/readme/approval-flow.svg)
+
+
+| Safety boundary | Enforcement |
 |---|---|
-| Hard limits are code, never model output | Last spare, operator hours, vehicle qualification and lift needs are checked in code before the plan is shown, and again at write time against live product state. |
-| Writes are idempotent | Key = `<run_id>:<step>:<plan_version>`. A retried or duplicated write has no second effect. |
-| Every write has a compensation | A failure mid-plan runs the saga in reverse (one undo per pass), or escalates with the exact state. |
-| Rider alert is last | It is the final step of the plan, and nothing is undone after an alert attempt. |
-| No write inside an interrupt | A node that waits for a human performs no write, so a resume that re-runs the node is safe. |
-| Kill switch | Per agency, checked on every write. A blocked write is never retried. |
-| Append-only audit | Every revision of every decision is stored, with the model, the human decision and the idempotency keys. |
-| The LLM is replaceable | All reasoning goes through one interface in `workflow/reasoning.py`. The default is a stub plus a code-ranked fallback. The dispatcher demo supports OpenAI; the legacy Haiku adapter remains optional. |
+| <img src="docs/assets/readme/shield.svg" width="24" alt=""> **Hard limits stay in code** | Last spare, operator hours, vehicle qualification and lift needs are checked in code before the plan is shown, and again at write time against live product state. |
+| <img src="docs/assets/readme/repeat.svg" width="24" alt=""> **Idempotent writes** | Key = `<run_id>:<step>:<plan_version>`. A retried or duplicated write has no second effect. |
+| <img src="docs/assets/readme/undo.svg" width="24" alt=""> **Compensation** | A failure mid-plan runs the saga in reverse (one undo per pass), or escalates with the exact state. |
+| <img src="docs/assets/readme/alert.svg" width="24" alt=""> **Rider alert last** | It is the final step of the plan, and nothing is undone after an alert attempt. |
+| <img src="docs/assets/readme/pause.svg" width="24" alt=""> **Safe interrupts** | A node that waits for a human performs no write, so a resume that re-runs the node is safe. |
+| <img src="docs/assets/readme/stop.svg" width="24" alt=""> **Kill switch** | Per agency, checked on every write. A blocked write is never retried. |
+| <img src="docs/assets/readme/audit.svg" width="24" alt=""> **Append-only audit** | Every revision of every decision is stored, with the model, the human decision and the idempotency keys. |
+| <img src="docs/assets/readme/agent.svg" width="24" alt=""> **Replaceable reasoning** | All reasoning goes through one interface in `workflow/reasoning.py`. The default is a stub plus a code-ranked fallback. The dispatcher demo supports OpenAI; the legacy Haiku adapter remains optional. |
 
 ## Architecture
 
@@ -83,15 +97,18 @@ The agent never writes until a human approves a concrete plan. The rider alert i
 
 ## The mock products and the mock data
 
+![Synthetic fleet: 12 vehicles, 10 operators, two agencies](docs/assets/readme/fleet.svg)
+
+
 Five simulated products, each a FastAPI app with a `/sim` admin surface to seed data, trigger faults, advance the clock and inject failures.
 
-| Mock | Modeled on (public docs) | Role | Notable behavior |
+| Simulated product | Public-doc inspiration | Operational role | Behavior to explore |
 |---|---|---|---|
-| Telematics | Samsara-style | Fault codes (SPN/FMI, lamps), DVIR defects | Signed webhook (HMAC-SHA256) plus a REST feed. Duplicates and late delivery under chaos. |
-| Maintenance | FASTER-style | PM schedules, work orders | Polled. Accepts an idempotency key. Rate-limits (429) under chaos. |
-| Scheduling | TripShot-style | Vehicles, blocks, status | No idempotency keys, and no endpoint to cancel a block. Rejects a reassign if the spare lacks the needs. |
-| Workforce | CSV-export style | Operators, hours, qualifications | Reads come from a daily CSV. The assign write can fail. |
-| Rider alerts | GTFS-Realtime service-alert style | Rider-facing alerts | Eventually visible: an alert appears only after a delay on the simulated clock. |
+| <img src="docs/assets/readme/signal.svg" width="24" alt=""> **Telematics** | Samsara-style | Fault codes (SPN/FMI, lamps), DVIR defects | Signed webhook (HMAC-SHA256) plus a REST feed. Duplicates and late delivery under chaos. |
+| <img src="docs/assets/readme/workorder.svg" width="24" alt=""> **Maintenance** | FASTER-style | PM schedules, work orders | Polled. Accepts an idempotency key. Rate-limits (429) under chaos. |
+| <img src="docs/assets/readme/bus.svg" width="24" alt=""> **Scheduling** | TripShot-style | Vehicles, blocks, status | No idempotency keys, and no endpoint to cancel a block. Rejects a reassign if the spare lacks the needs. |
+| <img src="docs/assets/readme/people.svg" width="24" alt=""> **Workforce** | CSV-export style | Operators, hours, qualifications | Reads come from a daily CSV. The assign write can fail. |
+| <img src="docs/assets/readme/alert.svg" width="24" alt=""> **Rider alerts** | GTFS-Realtime service-alert style | Rider-facing alerts | Eventually visible: an alert appears only after a delay on the simulated clock. |
 
 **Each product uses its own ids.** One bus is `BUS-44` in scheduling, `T-77` in telematics, and asset `1106` in maintenance. Operators are `OP-310`. Only the crosswalk maps these to canonical ids (`veh-1`, `op-1`), which is the cross-product identity problem the POC is built to exercise.
 
