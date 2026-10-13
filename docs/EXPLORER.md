@@ -20,6 +20,8 @@ For actual execution, use `make console` or `make console-openai` (see [DEMO.md]
 
 ## Hosting
 
+Live: **https://kranthi7899.github.io/transitOS_poc_clean/**. The first deployment succeeded on 2026-10-13 and was verified in Chrome.
+
 GitHub Pages serves static HTML/CSS/JavaScript, not our Python backend ([GitHub documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)). `site/` is ready to host as a static artifact. A manual Actions workflow packages the committed site and deploys it after Pages is configured for GitHub Actions. It does not publish on every push.
 
 1. Decide the site's audience. A Pages site can be publicly readable even if the source repository is private; no repository visibility change is required by this implementation.

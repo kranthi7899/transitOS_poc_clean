@@ -6,9 +6,9 @@ A proof of concept for **cross-product agentic orchestration** in a transit agen
 
 ## Explore the project interactively
 
-Run **`make explorer-serve`** and open **http://127.0.0.1:8111** for a clickable architecture map, source-linked guide, learning path, evaluation evidence and dispatcher replay. The replay includes approval, rejection, repair and a separate return-to-service approval, captured from the actual integrated workflow. It uses no API credits.
+**[Open the interactive TransitOS explorer →](https://kranthi7899.github.io/transitOS_poc_clean/)** for a clickable architecture map, source-linked guide, learning path, evaluation evidence and dispatcher replay. For a local copy, run `make explorer-serve` and open http://127.0.0.1:8111. The replay includes approval, rejection, repair and a separate return-to-service approval, captured from the actual integrated workflow. It uses no API credits.
 
-This original explorer takes inspiration from [OpenWiki](https://github.com/dakjdakd/openwiki). GitHub READMEs cannot run its JavaScript, so the interactive experience lives in `site/`, ready for GitHub Pages. Hosting is not yet verified; [hosting instructions](docs/EXPLORER.md#hosting) cover the prepared manual deployment workflow. No screenshots are needed.
+This original explorer takes inspiration from [OpenWiki](https://github.com/dakjdakd/openwiki). GitHub READMEs cannot run its JavaScript, so the interactive experience lives in `site/`, ready for GitHub Pages. The [live explorer](https://kranthi7899.github.io/transitOS_poc_clean/) is deployed on GitHub Pages and was verified in Chrome. [Hosting instructions](docs/EXPLORER.md#hosting) cover updates through the manual deployment workflow. No screenshots are needed.
 
 For actual workflow execution, run **`make console`** and open **http://127.0.0.1:8110**. The console shows Needs Attention, human approvals, actual LangGraph activity, product state, audit and incident memory. [Demo instructions](docs/DEMO.md) explain the recording sequence.
 
