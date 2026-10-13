@@ -1,4 +1,4 @@
-.PHONY: llm-spend llm-smoke llm-report setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
+.PHONY: explorer explorer-serve evals console console-openai demo-openai openai-spend openai-smoke llm-spend llm-smoke llm-report setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
 setup:
 	uv sync
 test:
@@ -12,6 +12,22 @@ report:
 	uv run python -m transitos.verification.report --world transitos.integration.world:make_world --out verification-report.json
 demo:
 	uv run python -m transitos.integration.demo
+console:
+	TRANSITOS_REASONER=stub uv run python -m transitos.integration.console
+console-openai:
+	TRANSITOS_REASONER=openai uv run python -m transitos.integration.console
+demo-openai:
+	TRANSITOS_REASONER=openai uv run python -m transitos.integration.demo
+openai-spend:
+	uv run python -m transitos.workflow.reasoning_openai
+openai-smoke:
+	TRANSITOS_LIVE_OPENAI=1 uv run pytest -q tests/llm/test_live_openai.py
+evals:
+	TRANSITOS_REASONER=stub uv run python -m transitos.verification.demo_evals
+explorer: evals
+	TRANSITOS_REASONER=stub uv run python scripts/build_explorer.py
+explorer-serve: explorer
+	uv run python -m http.server 8111 --bind 127.0.0.1 --directory site
 verify: schemas lint test report data-check
 
 # ---- Phase 10 external-data pipeline (the only target that touches the network is `data`; needs `uv sync --extra data`) ----

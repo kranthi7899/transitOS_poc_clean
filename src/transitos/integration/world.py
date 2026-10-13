@@ -40,6 +40,7 @@ from transitos.tools.read_adapters import map_block, map_vehicle, map_work_order
 from transitos.verification.latency import detection_latency
 from transitos.verification.model import AuditEvent, Observation, WriteRecord
 from transitos.verification.scenarios import AGENCY, NATIVE_ASSET, T0, Scenario
+from transitos.workflow.reasoning import Reasoner
 from transitos.world.actors import (
     DispatcherActor,
     ForemanActor,
@@ -62,7 +63,8 @@ ACTION_PRODUCT = {"set_vehicle_unavailable": "scheduling", "set_vehicle_availabl
 
 class IntegrationWorld:
     supports_world_lag = True
-    def __init__(self) -> None:
+    def __init__(self, *, reasoner: Reasoner | None = None, bus: str | None = None, db: str | None = None) -> None:
+        self.reasoner, self.bus, self.db = reasoner, bus, db
         self.system: System | None = None
         self._acks: dict[str, list[str]] = {}
         self.engine: WorldEngine | None = None          # Phase 10 Step 3: set when the scenario has a world_script
@@ -82,7 +84,7 @@ class IntegrationWorld:
         self._drop_data_dir()   # the previous scenario's directory (its system is already closed above)
         data_dir = tempfile.mkdtemp(prefix="transitos-world-")
         self._data_dir_cleanup = weakref.finalize(self, shutil.rmtree, data_dir, True)   # also removed at exit
-        self.system = s = System(AGENCY, self.mocks, data_dir)
+        self.system = s = System(AGENCY, self.mocks, data_dir, reasoner=self.reasoner, bus=self.bus, db=self.db)
         self._acks = {}
         s.policy_patch = {"vehicle_fit": fit} if (fit := getattr(t, "vehicle_fit", "allow_larger")) != "allow_larger" else {}
         self._apply_step4(t)

@@ -29,4 +29,5 @@ docs/JOURNAL.md
 .env.*
 !.env.example
 verification-report-llm.json
+eval-report.json
 

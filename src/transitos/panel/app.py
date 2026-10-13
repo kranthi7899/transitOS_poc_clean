@@ -183,9 +183,12 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
                agencies: list[str] | None = None,
                clock: Callable[[], datetime] | None = None,
                poll_rejects: Callable[[str | None], list[dict[str, Any]]] | None = None,
+               conflicts: Callable[[str | None], list[dict[str, Any]]] | None = None,
                dismiss_reject: Callable[[int, str, str], dict[str, Any] | None] | None = None) -> FastAPI:
     """clock: time source for panel-created events (the sim clock in the integrated system).
-    poll_rejects: bug sweep B (A155), the watch adapters' open record rejects for an agency (None = all)."""
+    poll_rejects: bug sweep B (A155), the watch adapters' open record rejects for an agency (None = all).
+    conflicts: A160/N23, crosswalk data conflicts (an id naming several vehicles, a vehicle with several ids) for an
+    agency (None = all), listed read-only for a person."""
     app = FastAPI(title="TransitOS panel")
     unresolved = unresolved or (crosswalk if hasattr(crosswalk, "list_unresolved") else None)
 
@@ -195,6 +198,8 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
             raise HTTPException(404, "run not found")
         if body.decision == "edit":
             raise HTTPException(422, "return-to-service takes approve or reject")
+        if body.plan_version != run.plan_version:
+            raise HTTPException(409, f"stale plan_version: current is {run.plan_version}")
         if run.status == "DONE":
             return {**_summary(run), "already_decided": True}
         if run.status != "RETURNING":
@@ -282,6 +287,11 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
     @app.get("/unresolved")
     def unresolved_list(agency: str | None = None):
         return unresolved.list_unresolved(agency) if unresolved else []
+
+    @app.get("/conflicts")
+    def conflicts_list(agency: str | None = None):
+        """A160/N23: crosswalk conflicts the system treats as unknown; a person fixes the mapping, nothing is picked."""
+        return conflicts(agency) if conflicts else []
 
     @app.get("/poll-rejects")
     def poll_rejects_list(agency: str | None = None):
@@ -458,6 +468,17 @@ def create_app(*, gateway: RunGateway, crosswalk: Crosswalk, events: EventSink,
             body += ("<h2>Unreadable product records</h2><div class='card'><table><tr><th>Agency</th><th>Product</th>"
                      "<th>Native ID</th><th>Reason</th><th>First seen</th><th>Last seen</th><th>Dismiss</th></tr>"
                      f"{rrows}</table></div>")
+        clashes = conflicts(agency) if conflicts else []
+        if clashes:   # A160/N23: shown only when there are any; these ids stay unknown until a person fixes the mapping
+            what = {"native_id_shared": "One id names several vehicles",
+                    "vehicle_has_several_ids": "One vehicle has several ids in this product"}
+            crows = "".join(
+                f"<tr><td>{_e(c['agency'])}</td><td>{_e(c['product'])}</td><td>{_e(what.get(c['kind'], c['kind']))}</td>"
+                f"<td>{_e(', '.join(c['native_ids']))}</td><td>{_e(', '.join(c['canonical_ids']))}</td></tr>"
+                for c in clashes)
+            body += ("<h2>Conflicting ID mappings</h2><div class='card'>Treated as unknown until the mapping is "
+                     "corrected.<table><tr><th>Agency</th><th>Product</th><th>Conflict</th><th>Native IDs</th>"
+                     f"<th>Vehicles</th></tr>{crows}</table></div>")
         return _page("Unresolved IDs", body)
 
     @app.post("/ui/poll-rejects/{reject_id}/dismiss")

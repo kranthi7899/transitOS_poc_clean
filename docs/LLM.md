@@ -1,3 +1,17 @@
+# Reasoning providers
+
+## OpenAI dispatcher demo (current owner choice)
+
+The owner changed provider to OpenAI (A197), superseding the earlier Haiku-only restriction for the demonstration. `TRANSITOS_REASONER=openai` selects `workflow/reasoning_openai.py` through the existing client interface. The default stays `stub`; Anthropic remains available for compatibility.
+
+Set `OPENAI_API_KEY` in the git-ignored `.env.local`. Use `make console-openai` for the browser, `make demo-openai` for the narrated CLI, `make openai-spend` for the app ledger, and `make openai-smoke` for one opt-in paid scenario. OpenAI uses existing httpx: no additional dependency or SDK installation.
+
+The demo is pinned to `gpt-4o-mini`, proposal-only, strict JSON Schema output via Responses, with a persistent $0.50 maximum application ceiling and conservative reservations on uncertain failures. The organisation ceiling never overrides this cap. Code still validates and ranks every answer; errors fall back visibly. See [DEMO.md](DEMO.md) for spend details and the recording workflow.
+
+## Legacy Anthropic configuration
+
+The Haiku-only statement and recorded costs below describe the earlier adapter, not the OpenAI demo.
+
 # Claude Haiku as the reasoner (optional)
 
 By default TransitOS uses the deterministic stub plus the code-ranked fallback: no model, no network, no cost.

@@ -181,6 +181,33 @@ class SqliteCrosswalk:
                 out[product] = native
         return out
 
+    def conflicts(self, agency: str | None = None, at: datetime | None = None) -> list[dict]:
+        """A160/N23: the data conflicts all_ids and lookup treat as unknown, listed for a person (read-only; nothing is
+        picked here). Valid at `at` (now on the store's clock): `kind` "native_id_shared" = one native id names several
+        vehicles; "vehicle_has_several_ids" = one vehicle has several native ids in one product (vehicle entities only).
+        Each item: {agency, product, kind, native_ids, canonical_ids}, in a deterministic order."""
+        at = self._at(at)
+        agencies = [agency] if agency else [r["agency"] for r in self.db.execute(
+            "SELECT DISTINCT agency FROM xw_entries ORDER BY agency").fetchall()]
+        out: list[dict] = []
+        for ag in agencies:
+            live = [r for r in self.rows(ag) if r.entity in VEHICLE_ENTITIES
+                    and (valid_at(r, at) if at is not None else r.valid_to is None)]
+            by_native: dict[tuple[str, str], set[str]] = {}
+            by_vehicle: dict[tuple[str, str], set[str]] = {}
+            for r in live:
+                by_native.setdefault((r.product, r.native_id), set()).add(r.canonical_id)
+                by_vehicle.setdefault((r.product, r.canonical_id), set()).add(r.native_id)
+            for (product, native), vehicles in sorted(by_native.items()):
+                if len(vehicles) > 1:
+                    out.append({"agency": ag, "product": product, "kind": "native_id_shared",
+                                "native_ids": [native], "canonical_ids": sorted(vehicles)})
+            for (product, vehicle), natives in sorted(by_vehicle.items()):
+                if len(natives) > 1:
+                    out.append({"agency": ag, "product": product, "kind": "vehicle_has_several_ids",
+                                "native_ids": sorted(natives), "canonical_ids": [vehicle]})
+        return out
+
     # ------------------------------------------------------------------ parked events
     def add_unresolved(self, agency: str, product: str, native_id: str, event_id: str,
                        event: CloudEvent | None = None) -> None:

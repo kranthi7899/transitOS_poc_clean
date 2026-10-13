@@ -45,6 +45,7 @@ packages = ["src/transitos"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
+    "openai_live: opt-in paid OpenAI one-scenario rehearsal; TRANSITOS_LIVE_OPENAI=1, cumulative app cap $0.50",
     "kafka: needs a reachable Kafka broker (auto-skipped unless 127.0.0.1:9092 answers or TRANSITOS_KAFKA is set)",
     "kafka_admin: also stops/starts the project-local broker via scripts/kafka.sh (needs TRANSITOS_KAFKA_ADMIN=1)",
     "postgres: needs a reachable Postgres (auto-skipped unless 127.0.0.1:54329 answers or TRANSITOS_PG is set)",

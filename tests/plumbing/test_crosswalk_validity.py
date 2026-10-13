@@ -278,3 +278,27 @@ def test_h2_an_ended_second_row_is_no_conflict(db):
     xw.resolve(e("maintenance", "M-9", "veh-1", valid_to=S))
     xw.resolve(e("maintenance", "M-9", "veh-2", valid_from=S))
     assert xw.all_ids(AG, "veh-2") == {"maintenance": "M-9"} and xw.lookup(AG, "maintenance", "M-9") == "veh-2"
+
+
+# A160/N23: the conflicts all_ids and lookup treat as unknown are listed for a person, read-only.
+
+def test_conflicts_lists_a_shared_native_id_and_a_vehicle_with_two_ids(db):
+    xw = SqliteCrosswalk(db, clock=lambda: S)
+    xw.resolve(e("maintenance", "M-9", "veh-1"))
+    xw.resolve(e("maintenance", "M-9", "veh-2", valid_from=S - timedelta(hours=1)))
+    xw.resolve(e("scheduling", "BUS-1", "veh-3"))
+    xw.resolve(e("scheduling", "BUS-2", "veh-3", valid_from=S - timedelta(hours=1)))
+    xw.resolve(e("telematics", "T-1", "veh-4"))                                     # clean: not listed
+    assert xw.conflicts(AG) == [
+        {"agency": AG, "product": "maintenance", "kind": "native_id_shared",
+         "native_ids": ["M-9"], "canonical_ids": ["veh-1", "veh-2"]},
+        {"agency": AG, "product": "scheduling", "kind": "vehicle_has_several_ids",
+         "native_ids": ["BUS-1", "BUS-2"], "canonical_ids": ["veh-3"]}]
+    assert xw.conflicts() == xw.conflicts(AG)                                       # no agency = every agency
+    assert xw.conflicts(AG, at=S - timedelta(days=2)) == []                         # nothing valid before either row
+
+
+def test_conflicts_ignores_ended_and_reused_ids(db):
+    xw = SqliteCrosswalk(db, clock=lambda: S)
+    _reused_1106(xw)                                                                # veh-1 ended at S, veh-2 from S
+    assert xw.conflicts(AG) == []

@@ -169,6 +169,9 @@ def build_prompt(facts: Mapping[str, Any]) -> str:
         "pulled_vehicle": _pick(facts.get("vehicle"), ("id", "type", "status")), "blocks": blocks,
         "previous_errors": [str(e)[:200] for e in (facts.get("previous_errors") or [])[:5]],
     }
+    if facts.get("prior_incidents"):
+        data["prior_incidents"] = [_pick(row, ("outcome", "trigger_type", "simulated"))
+                                   for row in facts["prior_incidents"][:3]]
     body = json.dumps(data, sort_keys=True, separators=(",", ":")).replace("<", "\\u003c")
     return "Choose per the rules in the system message.\n<data>" + body + "</data>"
 

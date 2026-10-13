@@ -4,6 +4,14 @@ A proof of concept for **cross-product agentic orchestration** in a transit agen
 
 > **Every product in this repo is simulated.** The five mock products are modeled on the shapes of public documentation. They are not the real products, do not call them, and must never be presented as them. All data is synthetic.
 
+## Explore the project interactively
+
+Run **`make explorer-serve`** and open **http://127.0.0.1:8111** for a clickable architecture map, source-linked guide, learning path, evaluation evidence and dispatcher replay. The replay includes approval, rejection, repair and a separate return-to-service approval, captured from the actual integrated workflow. It uses no API credits.
+
+This original explorer takes inspiration from [OpenWiki](https://github.com/dakjdakd/openwiki). GitHub READMEs cannot run its JavaScript, so the interactive experience lives in `site/`, ready for GitHub Pages. Hosting is not yet verified; [hosting instructions](docs/EXPLORER.md#hosting) cover the prepared manual deployment workflow. No screenshots are needed.
+
+For actual workflow execution, run **`make console`** and open **http://127.0.0.1:8110**. The console shows Needs Attention, human approvals, actual LangGraph activity, product state, audit and incident memory. [Demo instructions](docs/DEMO.md) explain the recording sequence.
+
 ## The scenario
 
 A bus reports a serious engine fault. Today, a person has to notice it, open a work order in the maintenance system, pull the bus in the scheduling system, find a spare and a qualified operator, reassign the block, and tell riders. TransitOS does that as one governed workflow:
@@ -26,7 +34,7 @@ The agent never writes until a human approves a concrete plan. The rider alert i
 | No write inside an interrupt | A node that waits for a human performs no write, so a resume that re-runs the node is safe. |
 | Kill switch | Per agency, checked on every write. A blocked write is never retried. |
 | Append-only audit | Every revision of every decision is stored, with the model, the human decision and the idempotency keys. |
-| The LLM is replaceable | All reasoning goes through one interface in `workflow/reasoning.py`. The default is a stub plus a code-ranked fallback. The provider choice is still open. |
+| The LLM is replaceable | All reasoning goes through one interface in `workflow/reasoning.py`. The default is a stub plus a code-ranked fallback. The dispatcher demo supports OpenAI; the legacy Haiku adapter remains optional. |
 
 ## Architecture
 
@@ -96,6 +104,10 @@ Five simulated products, each a FastAPI app with a `/sim` admin surface to seed 
 
 Full HTTP shapes are in `docs/MOCK_API.md`.
 
+## Dispatcher browser demo
+
+`make console` starts the free rehearsal at **http://127.0.0.1:8110**. `make console-openai` uses the OpenAI key in `.env.local` with a persistent **$0.50** app ceiling. Needs Attention, approvals, actual LangGraph activity, five product lanes, repair/return and audit are visible in one scenario. See [docs/DEMO.md](docs/DEMO.md) for the launch and recording sequence. All products remain simulated.
+
 ## Run it
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
@@ -103,7 +115,7 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 ```
 uv sync
 make demo      # narrated happy path through the real wiring
-make verify    # schemas + lint + tests + the 49-scenario report + offline data check
+make verify    # schemas + lint + tests + the 50-scenario report + offline data check
 uv run python -m transitos.mocks.run   # serve the five mocks on localhost:8101-8105
 ```
 
@@ -121,24 +133,35 @@ The same interfaces run in three profiles:
 
 Run `make kafka-down` / `make postgres-down` when finished. Project paths containing a space are handled by `scripts/kafka.sh`, because Kafka's own scripts do not quote paths.
 
-## Optional: Claude Haiku as the reasoner
+## Optional model reasoning
 
-The reasoning step can use **Claude Haiku** instead of the stub (off by default; `make verify` never calls it). It picks
-among options the hard rules already allow and explains the choice; every answer is re-checked and any failure falls
-back to the code-ranked plan. A hard spend cap (default $3, never above $10) is checked before every call. See
-[docs/LLM.md](docs/LLM.md).
+The default stub costs nothing. `make console-openai` uses OpenAI with a persistent **$0.50 cumulative application cap**, checked before each request. Keep `OPENAI_API_KEY` in the ignored `.env.local` or environment. Never put it in the frontend, README or Git history. The organization spend limit does not add prepaid credits. `make openai-spend` shows the local ledger. The legacy Haiku adapter remains optional. See [LLM.md](docs/LLM.md).
+
+## Agent memory
+
+Coding agents use [AGENTS.md](AGENTS.md) and [the context map](docs/AGENT_MEMORY.md) to recover project decisions and verification commands. Runtime agents retain bounded successful incident summaries in ignored local SQLite storage, scoped to the same agency and vehicle. Memory survives demo resets, is visible in the console, and is never exported into the static site. It supplies historical context; every new proposal still needs fresh facts, code safety checks and human approval.
+
+## Tests and behavioral evals
+
+```sh
+make verify      # contracts, lint, unit/integration tests, 50 scenarios, data checks
+make evals       # eight focused behavioral evals; zero model calls
+make explorer    # evals + regenerate source guide and recorded replay
+```
+
+The focused evals exercise the complete approval loop, rejection, stale approvals, missing safety evidence, adversarial model output, scoped memory, spend ceiling and kill switch. They evaluate application behavior; they do not establish live model quality or production readiness.
 
 ## Verification
 
 Track F runs 50 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure). Scenarios that depend on product lag or wire formats are marked real-world-only and skipped on the stand-in world instead of faking agreement. Two scenarios are recorded as **known gaps**, not clean passes (the orchestrator cannot know a fault has cleared).
 
-Last run: lint clean, 50/50 scenarios on all three profiles.
+Historical Phase 10 baseline (before the console/explorer additions): lint clean, 50/50 scenarios on all three profiles. Current local verification (2026-10-13): **1713 passed, 181 skipped in 78.18s; 50/50 scenarios; lint clean; data-check OK**. The eight focused behavioral evals also passed with zero paid calls. Kafka/Postgres have not been rerun for these additions.
 
 | Profile | Tests |
 |---|---|
-| Local | 1684 passed, 178 skipped (Kafka and Postgres cases skip without a server) |
-| Kafka | 1733 passed, 129 skipped |
-| Postgres | 1771 passed, 91 skipped |
+| Local | 1687 passed, 180 skipped (Kafka and Postgres cases skip without a server) |
+| Kafka | 1736 passed, 131 skipped |
+| Postgres | 1776 passed, 91 skipped |
 
 Scenario families:
 - **Original 24:** severe fault with a spare, operator swap, PM overdue (urgent and minor), DVIR defect, last spare, wheelchair and lift mismatches, operator hours, unqualified operator, duplicates, human work order already exists, unresolved vehicle id, product down on read, approval rejected and expired, compensation, kill switch, spare taken after proposal.
@@ -149,10 +172,10 @@ Scenario families:
 
 ## Known gaps
 
-- No reconciliation for partial writes, no rider-alert correction, no authentication on the panel, no real LLM provider, and a single-threaded driver.
+- No reconciliation for partial writes, no rider-alert correction, no authentication on the panel, a single-threaded driver, and no production authentication.
 - The orchestrator cannot know a fault has cleared (the telematics mock sends no clear event), so it pulls a bus whose fault already cleared. The detection-latency numbers restate scripted delays; they do not measure how fast the orchestrator reacts.
 - A close stamped in the second 01:30 of a daylight-saving fall-back, with no offset in the product's data, is recorded an hour early.
-- Many assumptions are still open. They are listed with the question to ask each real product owner in `docs/ASSUMPTIONS.md` (about 140 rows).
+- Many assumptions are still open. They are listed with the question to ask each real product owner in `docs/ASSUMPTIONS.md` (including decisions A197–A204 for the console, explorer and memory).
 
 ## Conventions
 

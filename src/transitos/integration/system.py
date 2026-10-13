@@ -223,6 +223,7 @@ class System:
                                   audit=StoreAuditReader(self), killswitch=KillSwitchPort(self.killswitch, self._log_ks),
                                   unresolved=CrosswalkUnresolved(self), agencies=[a], clock=self.clock.now,
                                   poll_rejects=lambda ag: list_rejects(self.db, agency=ag),
+                                  conflicts=lambda ag: self.xw.conflicts(ag),
                                   dismiss_reject=lambda rid, user, why: dismiss_reject(   # round 3 (A175): sim time
                                       self.db, rid, by=user, reason=why, at=self.clock.now().isoformat()))
         self.panel_client = TestClient(self.panel)

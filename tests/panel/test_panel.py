@@ -142,6 +142,13 @@ def test_return_to_service_approval_is_a_separate_scope(env):
     assert c.post(f"/runs/{RID}/decision", json={**body, "decision": "edit"}).status_code == 422
 
 
+def test_return_approval_rejects_stale_version_before_resuming(env):
+    c, gw, *_ = env
+    gw.runs[RID].status = "RETURNING"
+    response = c.post(f"/runs/{RID}/decision", json={**dec(version=0), "scope": "return_to_service"})
+    assert response.status_code == 409 and gw.resume_calls == []
+
+
 def test_defect_event_time_uses_injected_clock():
     t = datetime(2026, 10, 10, 6, 0, tzinfo=UTC)
     sink = FakeEventSink()
@@ -149,3 +156,19 @@ def test_defect_event_time_uses_injected_clock():
                      killswitch=FakeKillSwitch(), clock=lambda: t)
     TestClient(app).post("/defects", json={"agency": "ag1", "native_vehicle_id": "T-77", "defect_text": "x"})
     assert sink.events[0].time == t
+
+
+def test_conflicts_are_listed_read_only_in_the_api_and_the_unresolved_page():
+    items = [{"agency": "ag1", "product": "maintenance", "kind": "native_id_shared",
+              "native_ids": ["M-9"], "canonical_ids": ["veh-1", "veh-2"]}]
+    seen = []
+    app = create_app(gateway=FakeRunGateway(), crosswalk=FakeCrosswalk(), events=FakeEventSink(),
+                     audit=FakeAuditReader(), killswitch=FakeKillSwitch(),
+                     conflicts=lambda ag: seen.append(ag) or items)
+    c = TestClient(app)
+    assert c.get("/conflicts", params={"agency": "ag1"}).json() == items and seen == ["ag1"]
+    page = c.get("/ui/unresolved").text
+    assert "Conflicting ID mappings" in page and "M-9" in page and "veh-1, veh-2" in page
+    quiet = TestClient(create_app(gateway=FakeRunGateway(), crosswalk=FakeCrosswalk(), events=FakeEventSink(),
+                                  audit=FakeAuditReader(), killswitch=FakeKillSwitch()))
+    assert quiet.get("/conflicts").json() == [] and "Conflicting ID mappings" not in quiet.get("/ui/unresolved").text

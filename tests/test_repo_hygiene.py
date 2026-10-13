@@ -1,9 +1,9 @@
-"""Secrets must never be committed: fails if any tracked file contains something shaped like an Anthropic API key."""
+"""Secrets must never be committed: detect Anthropic and OpenAI key-shaped strings."""
 import re
 import subprocess
 from pathlib import Path
 
-KEY = re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}")
+KEY = re.compile(r"sk-(?:ant-|proj-|svcacct-)?[A-Za-z0-9_\-]{20,}")
 
 
 def test_no_api_key_is_tracked_in_git():
