@@ -88,3 +88,40 @@ def update_notifications(session, data):
         title, detail = stages[run["status"]]
         add(f"status:{run['status']}:{run['plan_version']}", title, detail,
             severity="decision" if run["status"] in ("AWAITING_APPROVAL", "RETURNING", "ESCALATED") else "info")
+
+
+def read_identity(world):
+    """Expose actual current crosswalk and resolved-event evidence, never fabricate aliases."""
+    from transitos.contracts.envelope import TOPIC_RESOLVED
+    from transitos.plumbing.resolver import valid_at
+
+    system, agency = world.system, world.system.agency
+    now = system.clock.now()
+    rows = system.xw.rows(agency)
+    groups = []
+    for canonical, label, entity in (("veh-1", "Incident vehicle", "vehicle"),
+                                     ("veh-2", "Replacement vehicle", "vehicle"),
+                                     ("op-1", "Original operator", "operator"),
+                                     ("op-2", "Replacement operator", "operator")):
+        entities = ("operator",) if entity == "operator" else ("vehicle", "asset")
+        aliases = system.xw.all_ids(agency, canonical, at=now, entities=entities)
+        evidence = []
+        for entry in rows:
+            if entry.canonical_id != canonical or entry.entity not in entities:
+                continue
+            item = entry.model_dump(mode="json")
+            item["active"] = valid_at(entry, now)
+            item["usable"] = item["active"] and aliases.get(entry.product) == entry.native_id
+            evidence.append(item)
+        groups.append({"canonical": canonical, "label": label, "entity": entity, "aliases": aliases,
+            "status": "review_required" if any(r["active"] and not r["usable"] for r in evidence) else
+                      "mapped" if aliases else "unmapped", "rows": evidence})
+    events = [{"id": ev.id, "type": ev.type, "time": ev.time.isoformat(), "canonical": ev.canonicalid,
+               "native": ev.data.get("native_vehicle_id") or ev.data.get("native_asset_id") or
+                         ev.data.get("native_operator_id"),
+               "refs": ev.data.get("refs"), "resolution": ev.data.get("identity")}
+              for _, _, ev in system.bus.messages(TOPIC_RESOLVED)
+              if ev.type in ("VehicleFaultDetected", "WorkOrderOpened", "WorkOrderClosed")]
+    return {"agency": agency, "at": system.clock.iso(), "groups": groups, "events": events,
+            "conflicts": system.xw.conflicts(agency, at=now),
+            "method": "Existing agency-scoped crosswalk, checked at the current simulated time. Demo mappings are seeded; identity is not guessed by the model."}

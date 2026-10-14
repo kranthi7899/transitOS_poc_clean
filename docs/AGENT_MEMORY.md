@@ -4,8 +4,8 @@
 
 Read `AGENTS.md` at session start. This file is a compact map, not a second assumptions register:
 
-- Current behavior: `docs/ASSUMPTIONS.md` (including A197-A205), frozen contracts, then source. Phase prompts/handoffs are historical when newer owner decisions supersede them.
-- Native product evidence: `integration/product_views.py` reads existing mock APIs; `panel/console/product-views.js` renders combined/individual views. Notifications are in-app observed milestones, never invented arrival. See A205 and the product-record section of `docs/DEMO.md`.
+- Current behavior: `docs/ASSUMPTIONS.md` (including A197-A206), frozen contracts, then source. Phase prompts/handoffs are historical when newer owner decisions supersede them.
+- Native product evidence: `integration/product_views.py` reads existing mock APIs; `panel/console/product-views.js` renders combined/individual views. Notifications are in-app observed milestones, never invented arrival. Identity bridge reads actual current crosswalk and resolved events (A206); seeded mappings are not LLM inference. See A205 and the product-record section of `docs/DEMO.md`.
 - Actual local console: `integration/console.py`, `panel/console/`, `docs/DEMO.md`. Scenario: `operator_swap_needed`; all products simulated; code checks options; humans approve plan and return; rider alert last.
 - Interactive repository: `scripts/build_explorer.py`, `docs/explorer/`, generated `site/`, `docs/EXPLORER.md`. The web replay selects captured states; it does not run Python or make model calls. Source sampling is allowlisted. Do not claim hosted deployment succeeded until its URL is verified.
 - Reasoning: one interface in `workflow/reasoning.py`; default stub; OpenAI `gpt-4o-mini` adapter under a persistent $0.50 app maximum; legacy Haiku optional. Keys stay in ignored local configuration, never browser code, reports or commits.

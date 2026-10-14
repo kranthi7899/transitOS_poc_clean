@@ -24,7 +24,7 @@ from transitos.verification.scenarios import AGENCY, BY_ID
 from transitos.workflow.memory import IncidentMemory, MemoryReasoner
 from transitos.workflow.reasoning import Reasoner, reasoner_from_env
 
-from .product_views import PRODUCTS, read_products, update_notifications
+from .product_views import PRODUCTS, read_identity, read_products, update_notifications
 from .world import IntegrationWorld
 
 ASSETS = Path(__file__).resolve().parents[1] / "panel" / "console"
@@ -143,7 +143,7 @@ class DemoSession:
             self.product_baseline = copy.deepcopy(products)
         update_notifications(self, data)
         data.update({"product_records": products, "product_baseline": self.product_baseline,
-                     "notifications": list(self.notifications)})
+                     "notifications": list(self.notifications), "identity_bridge": read_identity(self.world)})
         with self.lock:
             self.snapshot = data
 

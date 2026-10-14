@@ -21,7 +21,7 @@ A proof of concept for **cross-product agentic orchestration** in a transit agen
 
 This original explorer takes inspiration from [OpenWiki](https://github.com/dakjdakd/openwiki). GitHub READMEs cannot run its JavaScript, so the interactive experience lives in `site/`, ready for GitHub Pages. The [live explorer](https://kranthi7899.github.io/transitOS_poc_clean/) is deployed on GitHub Pages and was verified in Chrome. [Hosting instructions](docs/EXPLORER.md#hosting) cover updates through the manual deployment workflow. No screenshots are needed.
 
-For actual workflow execution, run **`make console`** and open **http://127.0.0.1:8110**. The console shows Needs Attention, human approvals, actual LangGraph activity, product state, audit and incident memory. **Product workspaces** adds a combined dispatcher board and five individual tabs showing native API/CSV records and before/after changes; **Dispatcher updates** reports actual milestones and workflow waits. [Demo instructions](docs/DEMO.md) explain the recording sequence.
+For actual workflow execution, run **`make console`** and open **http://127.0.0.1:8110**. The console shows Needs Attention, human approvals, actual LangGraph activity, product state, audit and incident memory. **Product workspaces** adds a combined dispatcher board and five individual tabs showing native API/CSV records and before/after changes. Its **Identity bridge** shows native IDs, canonical identities and actual resolved-event references; **Dispatcher updates** reports actual milestones and workflow waits. [Demo instructions](docs/DEMO.md) explain the recording sequence.
 
 ## The scenario
 
@@ -172,7 +172,7 @@ The focused evals exercise the complete approval loop, rejection, stale approval
 
 Track F runs 50 scenarios against the real integrated system, checking invariants after each (no write before approval, rider alert last, hard limits never violated, idempotent duplicates, compensation on failure). Scenarios that depend on product lag or wire formats are marked real-world-only and skipped on the stand-in world instead of faking agreement. Two scenarios are recorded as **known gaps**, not clean passes (the orchestrator cannot know a fault has cleared).
 
-Historical Phase 10 baseline (before the console/explorer additions): lint clean, 50/50 scenarios on all three profiles. Current local verification (2026-10-13): **1715 passed, 181 skipped in 94.34s; 50/50 scenarios; lint clean; data-check OK**. The eight focused behavioral evals also passed with zero paid calls. Kafka/Postgres have not been rerun for these additions.
+Historical Phase 10 baseline (before the console/explorer additions): lint clean, 50/50 scenarios on all three profiles. Current local verification (2026-10-14): **1717 passed, 181 skipped in 94.59s; 50/50 scenarios; lint clean; data-check OK**. The eight focused behavioral evals also passed with zero paid calls. Kafka/Postgres have not been rerun for these additions.
 
 | Profile | Tests |
 |---|---|

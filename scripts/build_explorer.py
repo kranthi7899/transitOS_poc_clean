@@ -37,7 +37,7 @@ def clean_snapshot(state):
     allowed = ("clock", "reasoner", "trace", "history", "assessment", "identities", "visible_alerts",
                "invariant_violations", "agency", "policy", "runs", "writes", "audit", "vehicles", "blocks",
                "operators", "work_orders", "alerts", "dead_letters", "events", "escalations",
-               "product_records", "product_baseline", "notifications")
+               "product_records", "product_baseline", "notifications", "identity_bridge")
     out = {key: state[key] for key in allowed}
     out.update({"generation": "recorded-replay", "busy": False, "error": None, "spend": None, "memory": [],
                 "history_revisions": len(out["history"])})

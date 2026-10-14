@@ -161,3 +161,32 @@ def test_product_workspaces_are_read_only_and_notifications_do_not_duplicate(con
     assert any(n["title"] == "Return-to-service approval needed" for n in returning["notifications"])
     assert len(returning["writes"]) == 5
     assert act(console, "reset")["notifications"] == []
+
+
+def test_identity_bridge_uses_real_crosswalk_and_resolved_event(console):
+    s = state(console)
+    groups = {g["canonical"]: g for g in s["identity_bridge"]["groups"]}
+    assert groups["veh-1"]["aliases"] == {"scheduling": "BUS-44", "telematics": "T-77", "maintenance": "1106"}
+    assert groups["op-2"]["aliases"] == {"workforce": "OP-2"}
+    assert all(g["status"] == "mapped" for g in groups.values())
+    assert all(r["usable"] and r["agency"] == s["agency"] for g in groups.values() for r in g["rows"])
+    assert not s["identity_bridge"]["events"]
+    proposal = act(console, "trigger")
+    fault = next(e for e in proposal["identity_bridge"]["events"] if e["type"] == "VehicleFaultDetected")
+    assert fault["native"] == "T-77" and fault["canonical"] == "veh-1"
+    assert fault["refs"] == {"canonical": "veh-1", "telematics": "T-77", "maintenance": "1106", "scheduling": "BUS-44"}
+    assert proposal["writes"] == []
+
+
+def test_identity_bridge_never_selects_a_conflicting_native_alias(console):
+    from transitos.contracts.crosswalk import CrosswalkEntry
+    session = console.app.state.demo
+    session.system.xw.resolve(CrosswalkEntry(agency=session.system.agency, product="telematics",
+        native_id="T-77", entity="vehicle", canonical_id="veh-2", valid_from=session.system.clock.now()))
+    session.publish()
+    bridge = state(console)["identity_bridge"]
+    assert bridge["conflicts"]
+    incident = next(g for g in bridge["groups"] if g["canonical"] == "veh-1")
+    assert incident["status"] == "review_required" and "telematics" not in incident["aliases"]
+    assert any(r["native_id"] == "T-77" and not r["usable"] for r in incident["rows"])
+    assert state(console)["writes"] == []

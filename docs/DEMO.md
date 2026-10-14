@@ -70,3 +70,11 @@ Before the fault, Scheduling shows BUS-44 on blk-1. After recovery approval, the
 **Dispatcher updates** and the latest-update strip report evidence-backed milestones without external messages. Updates accumulate in this demo session, deduplicate, and reset with the world. Product tabs poll the cached system snapshot; viewing a product cannot authorize actions. The hosted product pages follow recorded dispatcher replay states in the same browser and are labelled accordingly.
 
 Product-workspace delivery verification (2026-10-13): `TRANSITOS_REASONER=stub make verify` → **1715 passed, 181 skipped in 94.34s; 50/50 scenarios; lint clean; data-check OK**. `make explorer` → **8/8 behavioral evals, zero paid calls**. Earlier console results above are historical.
+
+## Explain identity before the fault (A206)
+
+Start in **Product workspaces → All products → Identity resolution**. The Identity bridge reads the actual crosswalk: T-77 in telematics, asset 1106 in maintenance and BUS-44 in scheduling map to veh-1. Inspect each product's local identity card and the native asset register. OP-2 is a workforce-native operator ID mapped to op-2; this scenario does not give scheduling or alerts their own operator IDs. Those products join through the service block.
+
+Inject the fault, then return to the Identity bridge to see the actual resolved fault event, canonical key and destination references. Explain the two directions: native observation → adapter → event → identity resolution → workflow; approved response → controlled tool → native product API → read-back. The crosswalk is an identity map, not the communication transport. These demo mappings are seeded and checked for agency/time validity; a conflict needs human review, never a model guess. Separate Git branches are development organization, not proof of separate deployed platforms.
+
+Identity-view verification (2026-10-14): `TRANSITOS_REASONER=stub make verify` → **1717 passed, 181 skipped in 94.59s; 50/50 scenarios; lint clean; data-check OK**. Targeted console tests: **10 passed**. Offline evals: **8/8 passed, zero paid calls**. Chrome verified native mappings and the actual fault-event destination references before approval.
