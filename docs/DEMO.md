@@ -17,6 +17,14 @@ For OpenAI reasoning, put `OPENAI_API_KEY=...` in the git-ignored `.env.local`, 
 
 `gpt-4o-mini` generates a strict JSON proposal through the Responses API. Code validates it and ranks feasible plans; approvals still control all writes. An API failure, refusal or invalid plan uses the validated deterministic fallback and says so. No external tools are exposed to the model. Standard prices checked on 2026-10-12: $0.15 / million input and $0.60 / million output tokens ([official model page](https://developers.openai.com/api/docs/models/gpt-4o-mini)).
 
+## Live presentation launch
+
+From the project folder, run **`make present`** and open **http://127.0.0.1:8112**. Keep the terminal running. This uses the configured OpenAI key and the existing $0.50 app cap; startup itself makes no paid request. Stop an existing server with Ctrl+C before starting another on this port. `make present-free` uses the same URL with the deterministic stub for a free/offline rehearsal; describe the mode shown on screen accurately.
+
+For another take, use **Operations → Reset scenario**. Reset clears this isolated product world, incident and dispatcher updates; it preserves spend and successful incident memory. Start with zero product writes and an enabled **Inject vehicle fault** button.
+
+Presentation order: **Product workspaces / Identity bridge → Operations / fault and proposal → Orchestration / approval wait → recovery approval → product changes and Dispatcher updates → completed repair and separate return approval → Decision audit / DONE**. Keep Scheduling and Maintenance open in their own tabs to show actual native records changing. The hosted Pages site remains a recorded replay.
+
 ## Budget
 
 The OpenAI demo has a **$0.50 cumulative application ceiling**, even if `TRANSITOS_LLM_CAP_USD` is larger. Set that variable lower to tighten it. This protects the owner's stated $4.99 available credits; the organisation's $120 ceiling is not the demo budget. The app cannot inspect account credit balance or spend by other applications.

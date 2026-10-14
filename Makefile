@@ -1,4 +1,4 @@
-.PHONY: explorer explorer-serve evals console console-openai demo-openai openai-spend openai-smoke llm-spend llm-smoke llm-report setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
+.PHONY: present present-free explorer explorer-serve evals console console-openai demo-openai openai-spend openai-smoke llm-spend llm-smoke llm-report setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
 setup:
 	uv sync
 test:
@@ -12,6 +12,13 @@ report:
 	uv run python -m transitos.verification.report --world transitos.integration.world:make_world --out verification-report.json
 demo:
 	uv run python -m transitos.integration.demo
+# Live presentation uses one stable URL; stop the existing server before starting.
+present:
+	@echo "TransitOS LIVE demo · simulated products · http://127.0.0.1:8112"
+	TRANSITOS_REASONER=openai uv run python -m uvicorn transitos.integration.console:create_app --factory --host 127.0.0.1 --port 8112 --log-level warning
+present-free:
+	@echo "TransitOS FREE rehearsal · deterministic reasoning · http://127.0.0.1:8112"
+	TRANSITOS_REASONER=stub uv run python -m uvicorn transitos.integration.console:create_app --factory --host 127.0.0.1 --port 8112 --log-level warning
 console:
 	TRANSITOS_REASONER=stub uv run python -m transitos.integration.console
 console-openai:
