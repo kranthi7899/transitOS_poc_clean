@@ -1,4 +1,13 @@
 .PHONY: present present-free explorer explorer-serve evals console console-openai demo-openai openai-spend openai-smoke llm-spend llm-smoke llm-report setup test lint verify schemas demo report data data-check kafka-up kafka-down kafka-status kafka-topics kafka-purge kafka-test verify-kafka postgres-up postgres-down postgres-status postgres-purge postgres-test verify-postgres
+.PHONY: maintenance-databricks
+.PHONY: connected connected-openai
+connected:
+	TRANSITOS_REASONER=stub uv run --extra databricks python -m transitos.integration.connected launch --reasoner stub
+connected-openai:
+	TRANSITOS_REASONER=openai uv run --extra databricks python -m transitos.integration.connected launch --reasoner openai
+# Opt-in connected product; browser sign-in + trial compute, no OpenAI calls.
+maintenance-databricks:
+	uv run --extra databricks python -m transitos.mocks.databricks_maintenance
 setup:
 	uv sync
 test:

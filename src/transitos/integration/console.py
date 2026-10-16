@@ -6,7 +6,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -31,7 +31,7 @@ ASSETS = Path(__file__).resolve().parents[1] / "panel" / "console"
 
 
 class Command(BaseModel):
-    action: Literal["trigger", "approve", "reject", "repair", "advance", "reset", "pause", "resume"]
+    action: Literal["trigger", "approve", "reject", "repair", "advance", "reset", "pause", "resume", "refresh"]
     generation: str
     plan_version: int | None = None
     scope: Literal["plan", "return_to_service"] = "plan"
@@ -70,15 +70,17 @@ class GraphObserver:
 
 
 class DemoSession:
-    def __init__(self, reasoner: Reasoner | None = None, memory: IncidentMemory | None = None):
+    def __init__(self, reasoner: Reasoner | None = None, memory: IncidentMemory | None = None, *,
+                 world_factory=IntegrationWorld, agency: str = AGENCY):
+        self.agency = agency
         self.memory = memory or IncidentMemory()
-        self.reasoner = MemoryReasoner(reasoner or reasoner_from_env(), self.memory, AGENCY)
+        self.reasoner = MemoryReasoner(reasoner or reasoner_from_env(), self.memory, agency)
         self.lock = threading.RLock()
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="transitos-demo")
         self.busy = False
         self.error: str | None = None
         self.trace: list[dict] = []
-        self.world = IntegrationWorld(reasoner=self.reasoner, bus="sqlite", db="sqlite")
+        self.world = world_factory(reasoner=self.reasoner, bus="sqlite", db="sqlite")
         self.snapshot: dict = {}
         self.reset()
 
@@ -132,12 +134,17 @@ class DemoSession:
         data.update({"generation": self.generation, "clock": self.system.clock.iso(),
                      "reasoner": self.reasoner.name, "spend": spend,
                      "assessment": self.assessment,
-                     "memory": self.memory.recall(AGENCY, run["vehicle_id"] if run else "veh-1"),
+                     "memory": self.memory.recall(self.agency, run["vehicle_id"] if run else "veh-1"),
                      "trace": list(self.trace[-120:]),
                      "history": [r.model_dump(mode="json") for r in history],
-                     "identities": {v.id: self.system.xw.all_ids(AGENCY, v.id) for v in obs.vehicles},
+                     "identities": {id: self.system.xw.all_ids(self.agency, id,
+                                        entities=("operator",) if id.startswith("op-") else ("vehicle", "asset"))
+                                    for id in [*[v.id for v in obs.vehicles], *[o.id for o in obs.operators]]},
                      "visible_alerts": self.world.mocks.clients["alerts"].get("/alerts", headers=self.world._h).json(),
-                     "invariant_violations": [v.model_dump() for v in violations]})
+                     "invariant_violations": [v.model_dump() for v in violations],
+                     "storage_profile": getattr(self.world, "storage_profile", "local"),
+                     "connected_instance": getattr(self.world, "instance", None),
+                     "observed_at": datetime.now(UTC).isoformat()})
         products = read_products(self.world)
         if self.product_baseline is None:
             self.product_baseline = copy.deepcopy(products)
@@ -189,6 +196,9 @@ class DemoSession:
             run = self.snapshot["runs"][0] if self.snapshot["runs"] else None
             if command.action == "reset":
                 self.reset()
+            elif command.action == "refresh":
+                # Poll native product events; only already-authorised workflow work may execute.
+                s.run_until_idle()
             elif command.action == "trigger":
                 self.world.mocks.clients["telematics"].post("/sim/fault", headers=self.world._h,
                     json={"vehicle": "T-77", "spn": 520, "fmi": 3, "lamps": {"stop": True}}).raise_for_status()
@@ -222,8 +232,9 @@ class DemoSession:
         self.world._drop_data_dir()
 
 
-def create_app(reasoner: Reasoner | None = None, memory: IncidentMemory | None = None) -> FastAPI:
-    session = DemoSession(reasoner, memory)
+def create_app(reasoner: Reasoner | None = None, memory: IncidentMemory | None = None, *,
+               session: DemoSession | None = None) -> FastAPI:
+    session = session or DemoSession(reasoner, memory)
 
     @asynccontextmanager
     async def lifespan(app):

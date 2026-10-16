@@ -5,6 +5,7 @@ window.TransitProducts=(()=>{
   const json=v=>e(JSON.stringify(v,null,2));
   const list=v=>Array.isArray(v)?v:[];
   const record=(s,key,path,base=false)=>(base?s.product_baseline:s.product_records)?.[key]?.records?.[path];
+  const assignment=(s,base=false)=>record(s,"workforce",(base?s.product_baseline:s.product_records)?.workforce?.assignment_path||"/assignments/blk-1",base);
   const chip=(v,changed=false)=>`<span class="record-value ${changed?"record-changed":""}">${e(v)}${changed?" <small>CHANGED</small>":""}</span>`;
   const table=(heads,rows)=>`<div class="record-table-wrap"><table class="record-table"><thead><tr>${heads.map(h=>`<th>${e(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")||`<tr><td colspan="${heads.length}">No record available yet.</td></tr>`}</tbody></table></div>`;
   const row=cells=>`<tr>${cells.map(c=>`<td>${c}</td>`).join("")}</tr>`;
@@ -14,14 +15,14 @@ window.TransitProducts=(()=>{
     if(key==="telematics")return list(record(s,key,"/faults/current")).length?"Fault recorded · T-77":"Monitoring · no fault recorded";
     if(key==="maintenance"){const w=list(record(s,key,"/workorders"))[0];return w?`${w.wo_no} · ${w.status}`:"No incident work order";}
     if(key==="scheduling"){const b=list(record(s,key,"/blocks"))[0],v=list(record(s,key,"/vehicles")).find(v=>v.id==="BUS-44");return `${b?.vehicle||"—"} covers ${b?.id||"—"} · BUS-44 ${v?.status||"unknown"}`;}
-    if(key==="workforce"){const a=record(s,key,"/assignments/blk-1");return `${a?.operator||"—"} assigned to ${a?.block||"—"}`;}
+    if(key==="workforce"){const a=assignment(s);return `${a?.operator||"—"} assigned to ${a?.block||"—"}`;}
     return `${s.alerts.length} published · ${list(record(s,key,"/alerts")).length} visible`;
   }
   function body(s,key){
     if(!s.product_records?.[key])return '<p class="muted">Native product evidence is not included in this recording.</p>';
     let html="";
     if(key==="telematics"){
-      const vehicles=list(record(s,key,"/vehicles")).filter(v=>v.id==="T-77"||v.name==="BUS-45"),faults=list(record(s,key,"/faults/current"));
+      const vehicles=list(record(s,key,"/vehicles")).filter(v=>s.identity_bridge?.groups.some(g=>g.aliases.telematics===v.id)),faults=list(record(s,key,"/faults/current"));
       html=table(["Device ID","Product name","Current fault"],vehicles.map(v=>row([e(v.id),e(v.name),chip(faults.some(f=>f.vehicle.id===v.id)?faults.filter(f=>f.vehicle.id===v.id).map(f=>`${f.fault.lamps.stop?"Stop lamp · ":""}SPN ${f.fault.spn} / FMI ${f.fault.fmi}`).join("; "):"No recorded fault",faults.some(f=>f.vehicle.id===v.id))])));
       html+='<p class="product-note">No GPS or arrival event is modeled here. The fault remains recorded until explicitly cleared; repair closure does not prove a telematics clear signal.</p>';
     }
@@ -32,16 +33,16 @@ window.TransitProducts=(()=>{
       html+='<p class="product-note">Maintenance owns the repair record. A closed order resumes the workflow, then a person decides return to service.</p>';
     }
     if(key==="scheduling"){
-      const vehicles=list(record(s,key,"/vehicles")).filter(v=>["BUS-44","BUS-45"].includes(v.id)),before=list(record(s,key,"/vehicles",true));
+      const vehicles=list(record(s,key,"/vehicles")).filter(v=>s.identity_bridge?.groups.some(g=>g.aliases.scheduling===v.id)),before=list(record(s,key,"/vehicles",true));
       html=table(["Vehicle roster","Before incident","Current availability"],vehicles.map(v=>{const b=before.find(b=>b.id===v.id);return row([e(v.id),e(b?.status),chip(v.status,v.status!==b?.status)]);}));
       const blocks=list(record(s,key,"/blocks")),baseline=list(record(s,key,"/blocks",true));
       html+='<h3 class="record-subhead">Service block assignment</h3>'+table(["Block","Before incident","Current vehicle"],blocks.map(b=>{const old=baseline.find(o=>o.id===b.id);return row([e(b.id),e(old?.vehicle),chip(b.vehicle,b.vehicle!==old?.vehicle)]);}));
       html+='<p class="product-note">“Ready” means available in the roster, not reassigned to this block. A changed block confirms assignment; physical arrival is not tracked.</p>';
     }
     if(key==="workforce"){
-      const a=record(s,key,"/assignments/blk-1"),old=record(s,key,"/assignments/blk-1",true);
+      const a=assignment(s),old=assignment(s,true);
       html=table(["Block","Before incident","Current operator"],[row([e(a?.block),e(old?.operator),chip(a?.operator,a?.operator!==old?.operator)])]);
-      html+='<h3 class="record-subhead">Native CSV roster</h3>'+table(["Operator","Hours today","Licence","Extra board"],list(record(s,key,"/export/operators.csv")?.rows).filter(o=>["OP-1","OP-2"].includes(o.operator)).map(o=>row([e(o.operator),e(o.hours_today),e(o.licence_class),e(o.on_extra_board)])));
+      html+='<h3 class="record-subhead">Native CSV roster</h3>'+table(["Operator","Hours today","Licence","Extra board"],list(record(s,key,"/export/operators.csv")?.rows).filter(o=>s.identity_bridge?.groups.some(g=>g.aliases.workforce===o.operator)).map(o=>row([e(o.operator),e(o.hours_today),e(o.licence_class),e(o.on_extra_board)])));
       html+='<p class="product-note">The adapter parses a CSV export for qualifications and hours; operator reassignment is a separate API action.</p>';
     }
     if(key==="alerts"){

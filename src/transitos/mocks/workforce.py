@@ -119,6 +119,11 @@ def create_app(clock: SimClock, chaos: Chaos, db_path: Any = None) -> FastAPI:
     def get_operator(oid: str, a: str = tenant):
         return rendered(op(a, oid))
 
+    @app.get("/assignments")
+    def list_assignments(a: str = tenant):
+        """Native read-only roster for fleet-wide operational evidence."""
+        return st.all(a, "assignments")
+
     @app.get("/assignments/{bid}")
     def get_assignment(bid: str, a: str = tenant):
         d = st.get(a, "assignments", bid)

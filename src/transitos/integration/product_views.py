@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import UTC, datetime
+
+import httpx
 
 PRODUCTS = {
     "telematics": ("Signal Desk", "Telematics", "Signed webhook + JSON feed", "device / vehicle.id"),
@@ -19,12 +22,24 @@ def read_products(world):
     paths = {"telematics": ("/vehicles", "/faults/current"),
              "maintenance": ("/assets", "/workorders"),
              "scheduling": ("/vehicles", "/blocks", "/status-changes"),
-             "workforce": ("/export/operators.csv", "/assignments/blk-1"), "alerts": ("/alerts",)}
+             "workforce": ("/export/operators.csv", "/assignments", "/assignments/blk-1"), "alerts": ("/alerts",)}
     for key, endpoints in paths.items():
         name, role, wire, identity = PRODUCTS[key]
         records = {}
         for path in endpoints:
-            response = world.mocks.clients[key].get(path, headers=world._h)
+            if key == "workforce" and path.startswith("/assignments/"):
+                blocks = result.get("scheduling", {}).get("records", {}).get("/blocks", [])
+                if isinstance(blocks, list) and blocks:
+                    runs = world.system.runs()
+                    steps = (runs[0].get("plan") or {}).get("steps", []) if runs else []
+                    block = next((step["params"]["block_id"] for step in steps if step["action"] == "assign_operator"),
+                                 blocks[0]["id"])
+                    path = f"/assignments/{block}"
+            try:
+                response = world.mocks.clients[key].get(path, headers=world._h)
+            except httpx.HTTPError:
+                records[path] = {"unavailable": True, "reason": "Product read failed"}
+                continue
             if response.status_code != 200:
                 records[path] = {"unavailable": True, "http_status": response.status_code}
             elif path.endswith(".csv"):
@@ -33,7 +48,12 @@ def read_products(world):
             else:
                 records[path] = response.json()
         result[key] = {"name": name, "role": role, "format": wire, "identity": identity,
-                       "records": records, "captured_at": world.system.clock.iso()}
+                       "records": records, "captured_at": world.system.clock.iso(),
+                       "observed_at": datetime.now(UTC).isoformat()}
+        if key == "workforce":
+            result[key]["assignment_path"] = next((p for p in records if p.startswith("/assignments/")), None)
+        if key == "telematics" and getattr(world, "storage_profile", None) == "databricks":
+            result[key]["format"] = "JSON feed backfill over localhost HTTP"
     return result
 
 
@@ -49,7 +69,8 @@ def update_notifications(session, data):
     run = next(iter(data["runs"]), None)
     if not run:
         return
-    add("fault", "Vehicle fault received", "T-77 / BUS-44: signed telematics event started the workflow.", "telematics")
+    source = "product feed event" if getattr(session.world, "storage_profile", None) == "databricks" else "signed telematics event"
+    add("fault", "Vehicle fault received", f"T-77 / BUS-44: {source} started the workflow.", "telematics")
     messages = {"gather": ("Product evidence gathered", "Native records resolved for this incident."),
                 "check": ("Safety checks evaluated", "Code evaluates current facts; the model cannot relax hard limits."),
                 "reason": ("Recovery proposal prepared", "Read the returned rationale and model/fallback label in Operations.")}
@@ -99,10 +120,17 @@ def read_identity(world):
     now = system.clock.now()
     rows = system.xw.rows(agency)
     groups = []
-    for canonical, label, entity in (("veh-1", "Incident vehicle", "vehicle"),
-                                     ("veh-2", "Replacement vehicle", "vehicle"),
-                                     ("op-1", "Original operator", "operator"),
-                                     ("op-2", "Replacement operator", "operator")):
+    entities_to_show = [("veh-1", "Incident vehicle", "vehicle"), ("veh-2", "Replacement vehicle", "vehicle"),
+                        ("op-1", "Original operator", "operator"), ("op-2", "Replacement operator", "operator")]
+    if getattr(world, "storage_profile", None) == "databricks":
+        runs = system.runs()
+        steps = (runs[0].get("plan") or {}).get("steps", []) if runs else []
+        replacements = sorted({st["params"]["to_vehicle_id"] for st in steps if st["action"] == "reassign_block"})
+        operators = sorted({st["params"]["operator_id"] for st in steps if st["action"] == "assign_operator"})
+        entities_to_show = [("veh-1", "Incident vehicle", "vehicle"), ("op-1", "Original operator", "operator")]
+        entities_to_show += [(v, "Proposed replacement vehicle", "vehicle") for v in replacements]
+        entities_to_show += [(o, "Proposed replacement operator", "operator") for o in operators]
+    for canonical, label, entity in entities_to_show:
         entities = ("operator",) if entity == "operator" else ("vehicle", "asset")
         aliases = system.xw.all_ids(agency, canonical, at=now, entities=entities)
         evidence = []

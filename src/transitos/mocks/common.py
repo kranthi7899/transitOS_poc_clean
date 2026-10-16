@@ -19,7 +19,9 @@ from .store import Store
 class Ctx:
     def __init__(self, product: str, clock: SimClock, chaos: Chaos, db_path: Any) -> None:
         self.product, self.clock, self.chaos = product, clock, chaos
-        self.store = Store(db_path)
+        # An opt-in connected profile can inject the same storage interface.
+        # The ordinary local profile remains SQLite with no external dependency.
+        self.store = db_path if isinstance(db_path, Store) else Store(db_path)
 
     def tenant(self, x_agency: str | None = Header(default=None)) -> str:
         """FastAPI dependency for every non-/sim route: tenancy + chaos guard."""

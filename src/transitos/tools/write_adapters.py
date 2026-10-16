@@ -203,7 +203,8 @@ class SchedulingWriter(_Base):
         native = self._native_vehicle(agency, vehicle_id, "scheduling")
         # changed_by marks the change as ours so the resulting VehicleStatusChanged is ignored (caused_by_us)
         self.http.request(agency, "POST", f"/vehicles/{native}/{path}",
-                          json={**body, "changed_by": f"{SYSTEM_ACTOR}:{key}"})
+                          json={**body, "changed_by": f"{SYSTEM_ACTOR}:{key}"},
+                          headers={"Idempotency-Key": key})
         back = self.reader.get_vehicle(agency, vehicle_id)
         if back.status != "ok":
             return Result.part(None, "scheduling", f"write sent, readback failed: {back.note}")
@@ -230,7 +231,7 @@ class SchedulingWriter(_Base):
                 self._recheck(agency, block_id, to_vehicle_id)
             # A57: compensation is a restore of the prior assignment; the product accepts it even while that
             # vehicle is out of service (new assignments there stay refused).
-            hdr = {"X-Restore": "true"} if compensation else {}
+            hdr = {"Idempotency-Key": key, **({"X-Restore": "true"} if compensation else {})}
             self.http.request(agency, "POST", f"/blocks/{block_id}/reassign", json={"vehicle": native_to},
                               headers=hdr)
             back = self.reader.get_block(agency, block_id)
@@ -292,7 +293,8 @@ class WorkforceWriter(_Base):
                 raise ProductUnavailable("crosswalk", f"no workforce id for {operator_id}")
             if not compensation:
                 self._recheck(agency, block_id, operator_id)
-            self.http.request(agency, "POST", f"/blocks/{block_id}/operator", json={"operator": native_op})
+            self.http.request(agency, "POST", f"/blocks/{block_id}/operator", json={"operator": native_op},
+                              headers={"Idempotency-Key": key})
             back = self.sched.get_block(agency, block_id)
             if back.status != "ok":
                 return Result.part(None, "scheduling", f"write sent, readback failed: {back.note}")
@@ -337,7 +339,7 @@ class AlertsWriter(_Base):
     def publish_rider_alert(self, agency: str, block_id: str, message: str, key: str) -> Result[dict]:
         def go() -> Result[dict]:
             header = message.strip().split("\n")[0][:100]
-            raw: Any = self.http.json(agency, "POST", "/alerts", json={
+            raw: Any = self.http.json(agency, "POST", "/alerts", headers={"Idempotency-Key": key}, json={
                 "block": block_id, "header_text": header, "description_text": message})
             # Alerts are eventually visible (visible_after on sim clock): do not wait for read-back.
             return Result.success({"alert_id": raw["id"], "block_id": block_id}, note="eventually_visible")

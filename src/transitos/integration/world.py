@@ -189,7 +189,7 @@ class IntegrationWorld:
 
     @property
     def _h(self) -> dict:
-        return {"X-Agency": AGENCY}
+        return {"X-Agency": self.system.agency if self.system else AGENCY}
 
     def _install_chaos(self) -> None:
         s, ch = self.system, self.chaos
@@ -255,7 +255,7 @@ class IntegrationWorld:
         self.system.run_until_idle()  # approval timers fire (logged as expiry by the system)
 
     def set_kill_switch(self, on: bool) -> None:
-        r = self.system.panel_client.post("/killswitch", json={"agency": AGENCY, "on": on})
+        r = self.system.panel_client.post("/killswitch", json={"agency": self.system.agency, "on": on})
         r.raise_for_status()
 
     def close_work_order(self, run_id: str) -> None:
@@ -305,6 +305,7 @@ class IntegrationWorld:
 
     def observe(self) -> Observation:
         s = self.system
+        agency = s.agency
         xw = SimpleNamespace(crosswalk=s.xw)
         runs = [RunState.model_validate(r) for r in s.runs()]
         writes = list(s.writes.records)
@@ -319,13 +320,13 @@ class IntegrationWorld:
         assign = {d["block"]: d["operator"] for d in self._docs("workforce", "assignments")}
         blocks = []
         for b in self._docs("scheduling", "blocks"):
-            blk: Block = map_block(xw, AGENCY, b)  # type: ignore[arg-type]
+            blk: Block = map_block(xw, agency, b)  # type: ignore[arg-type]
             if b["id"] in assign:
-                blk = blk.model_copy(update={"operator_id": s.xw.lookup(AGENCY, "workforce", assign[b["id"]])})
+                blk = blk.model_copy(update={"operator_id": s.xw.lookup(agency, "workforce", assign[b["id"]])})
             blocks.append(blk)
-        vehicles: list[Vehicle] = [map_vehicle(xw, AGENCY, v) for v in self._docs("scheduling", "vehicles")]  # type: ignore[arg-type]
-        wos: list[WorkOrder] = [map_work_order(xw, AGENCY, w) for w in self._docs("maintenance", "wo")]  # type: ignore[arg-type]
-        ops = [Operator(id=s.xw.lookup(AGENCY, "workforce", o["operator"]) or o["operator"],
+        vehicles: list[Vehicle] = [map_vehicle(xw, agency, v) for v in self._docs("scheduling", "vehicles")]  # type: ignore[arg-type]
+        wos: list[WorkOrder] = [map_work_order(xw, agency, w) for w in self._docs("maintenance", "wo")]  # type: ignore[arg-type]
+        ops = [Operator(id=s.xw.lookup(agency, "workforce", o["operator"]) or o["operator"],
                         qualifications=[q for q in str(o["qualifications"]).split(";") if q],
                         lift_trained=bool(o["lift_trained"]), hours_today=float(o["hours_today"]),
                         hours_week=float(o["hours_week"]), on_extra_board=bool(o["on_extra_board"]))
@@ -336,7 +337,7 @@ class IntegrationWorld:
         dead = [{"event_id": e.id, "reason": e.failurereason, "native": e.data.get("native_vehicle_id")
                  or e.data.get("native_asset_id")} for _, _, e in s.bus.messages(TOPIC_FAILED)]
         events = [{"type": e.type, "time": e.time.isoformat(), "id": e.id} for _, _, e in s.bus.messages(TOPIC_RAW)]
-        return Observation(agency=AGENCY, policy=s.policy(), runs=runs, writes=writes,
+        return Observation(agency=agency, policy=s.policy(), runs=runs, writes=writes,
                            audit=sorted(audit, key=lambda a: a.seq), vehicles=vehicles, blocks=blocks,
                            operators=ops, work_orders=wos, alerts=self._docs("alerts", "alerts"),
                            dead_letters=dead, attached_events=dict(attached),

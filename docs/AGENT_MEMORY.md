@@ -1,5 +1,9 @@
 # TransitOS agent memory
 
+## Current dispatcher workspace (A211)
+
+The default console uses a retro green two-panel fleet/response layout. All native fleet records are retained; evidence is inline and approvals remain visible. See docs/INTERFACE_BETA.md. The connected Databricks profile uses five local APIs and console port 8212; local rehearsal ports still use local stores. Product refresh is explicit; optional 60-second sync defaults off. No visible beta label. Frozen contracts unchanged.
+
 ## Coding-agent context
 
 Read `AGENTS.md` at session start. This file is a compact map, not a second assumptions register:
@@ -11,6 +15,8 @@ Read `AGENTS.md` at session start. This file is a compact map, not a second assu
 - Reasoning: one interface in `workflow/reasoning.py`; default stub; OpenAI `gpt-4o-mini` adapter under a persistent $0.50 app maximum; legacy Haiku optional. Keys stay in ignored local configuration, never browser code, reports or commits.
 - Verify: `make verify` (offline), `make evals` (eight focused offline behavior cases), `make explorer` (evals + actual-system recording). Live OpenAI checks are opt-in and counted in the real app ledger. Old test counts are historical evidence; report only observed commands/results.
 - Preserve owner files and local tooling. Do not copy external reference documents, runtime `.local/` files or journal state into public artifacts. Only journal-writer edits journal files; journal remains local.
+- Databricks first product (A207-A208): owner imported 202 baseline rows into four workspace product schemas and created an empty maintenance.work_orders table. `make maintenance-databricks` starts optional mocks/databricks_maintenance.py on 8103 using browser OAuth and explicit connection environment settings; docs/DATABRICKS.md has the owner-run read/create/replay/cancel check. This service is not wired to the console; no live success may be claimed from offline tests. Owner wants to perform browser changes themselves. Keep account settings/exports in ignored .local/; frozen contracts unchanged.
+- Live maintenance milestone 2026-10-15: owner authorized agent to verify the manual test. Local GET + exact POST replay (capital-D key Databricks-check:create_work_order:1, asset1106, description "synthetic connection api test", system-opened) returned same order; independent Databricks SQL confirmed exactly one simulated agency-042 work-order row, still open. Browser controls were unreliable, so HTTP/SQL completed verification. That was the first milestone; subsequent A209 acceptance verified the complete connected run, scheduling restart and cancellation. See docs/DATABRICKS.md for current evidence.
 
 ## Runtime episodic memory
 
@@ -25,3 +31,7 @@ Memory survives **Reset scenario** and console restart. Completed episodes from 
 ## Evaluation boundaries
 
 The offline eval suite checks actual effects, adversarial fake model IDs, explicit acknowledgement, stale approvals, kill switch, spend refusal and memory isolation. It is not a live-model quality benchmark and does not prove production readiness. `make verify` still runs the broader 50-scenario system report, with known gaps identified. Use `make openai-smoke` only when a provider-level recheck is justified and within the unchanged app cap.
+
+- Connected Databricks profile (A209): `make connected` / `.local/start-connected.sh <instance> stub`; five native HTTP product processes 8201–8205, console8212. Original imports are baseline; runtime api_state/live_* views are separate. OAuth cache under ignored .local is credential-bearing and owner-only. No cloud reset; instance names isolate rehearsals. See docs/DATABRICKS.md for recovery limits and measured acceptance.
+
+- Dispatcher beta (A210): default index.html now loads workspace-model.js + workspace.js + workspace.css. Persistent queue/case, contextual drawers, fleet search, stage strip, version-bound approval and actual per-key product read-back labels. Existing console.js is legacy source; product.html still uses product-app.js/console.css. Read-only no-show/payroll previews never submit runtime commands. See docs/INTERFACE_BETA.md and docs/DEMO.md; local free beta URL is 8114 when launched. tests/panel/test_workspace_model.py runs Node presentation checks against the real offline recorder. No private client research files/assets were copied into repo.

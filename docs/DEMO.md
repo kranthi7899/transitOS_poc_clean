@@ -2,6 +2,12 @@
 
 Every product and agency is simulated. The console drives one real integrated LangGraph workflow using the existing `operator_swap_needed` scenario. No real fleet system is connected.
 
+## Current operations interface
+
+The default interface shows fleet monitoring and incident response side by side. Select a vehicle to inspect its native evidence without leaving the decision. Sync products refreshes evidence; automatic sync is optional and off initially. Existing approvals, source labels and simulation markers remain visible.
+
+For the full imported synthetic fleet, use the opt-in connected profile on **http://127.0.0.1:8212** after configuring the environment described in `docs/DATABRICKS.md`. Local rehearsal below uses a smaller local fixture, not the imported Databricks dataset. The hosted explorer is a recorded replay.
+
 ## Launch
 
 From the project root:
@@ -86,3 +92,27 @@ Start in **Product workspaces → All products → Identity resolution**. The Id
 Inject the fault, then return to the Identity bridge to see the actual resolved fault event, canonical key and destination references. Explain the two directions: native observation → adapter → event → identity resolution → workflow; approved response → controlled tool → native product API → read-back. The crosswalk is an identity map, not the communication transport. These demo mappings are seeded and checked for agency/time validity; a conflict needs human review, never a model guess. Separate Git branches are development organization, not proof of separate deployed platforms.
 
 Identity-view verification (2026-10-14): `TRANSITOS_REASONER=stub make verify` → **1717 passed, 181 skipped in 94.59s; 50/50 scenarios; lint clean; data-check OK**. Targeted console tests: **10 passed**. Offline evals: **8/8 passed, zero paid calls**. Chrome verified native mappings and the actual fault-event destination references before approval.
+
+## Dispatcher beta workspace
+
+The default console now uses a persistent attention queue and a case workspace.
+Product records, identity mapping, rule checks, alternatives, graph activity and
+history open in an evidence drawer rather than requiring product tabs. Search the
+fleet from the header or press `/`; Escape closes evidence. A “Review decision”
+button jumps to the version-bound approval form in the same case.
+
+Use `TRANSITOS_REASONER=stub .venv/bin/python -m uvicorn transitos.integration.console:create_app --factory --host 127.0.0.1 --port 8114 --log-level warning`
+for an isolated, free beta rehearsal, then open http://127.0.0.1:8114.
+The same frontend is served by the connected Databricks launcher at 8212; cloud
+requests consume trial compute. The 8114 rehearsal uses local simulated products.
+
+Start the vehicle fault, inspect the plan, approve recovery, advance the clock for
+rider-feed visibility, simulate repair closure, then separately approve return.
+Rehearsal controls are expandable in the queue. Reset is unavailable on Databricks
+instances and never clears model spending or retained incident memory.
+
+Operator no-show and payroll items are read-only illustrative design previews,
+not executable scenarios. They do not change real queue counts or submit decisions.
+Product acceptance is distinct from current native verification; earlier withdrawal
+is labelled superseded after return. No arrival, GPS, delivery receipt or unprovided
+passenger count is invented. See docs/INTERFACE_BETA.md for rationale and boundaries.

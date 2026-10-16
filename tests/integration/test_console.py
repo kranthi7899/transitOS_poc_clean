@@ -190,3 +190,14 @@ def test_identity_bridge_never_selects_a_conflicting_native_alias(console):
     assert incident["status"] == "review_required" and "telematics" not in incident["aliases"]
     assert any(r["native_id"] == "T-77" and not r["usable"] for r in incident["rows"])
     assert state(console)["writes"] == []
+
+
+def test_refresh_preserves_decision_and_exports_complete_native_roster(console):
+    before = state(console)
+    after = act(console, "refresh")
+    assert after["generation"] == before["generation"]
+    assert after["runs"] == [] and after["writes"] == []
+    assert after["observed_at"] >= before["observed_at"]
+    assert len(native_record(after, "workforce", "/assignments")) == len(after["blocks"])
+    assert after["identities"]["op-2"]["workforce"] == "OP-2"
+    assert all(p["observed_at"] for p in after["product_records"].values())
